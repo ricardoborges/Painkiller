@@ -9,8 +9,40 @@ class IssueTrackerPort(ABC):
     """Abstract port for issue tracking backends (SQLite, Redmine, GitLab, GitHub)."""
 
     @abstractmethod
-    async def create_project(self, name: str, repo_path: str, default_branch: str = "main") -> Project:
+    async def create_project(
+        self,
+        name: str,
+        repo_path: str,
+        description: str = "",
+        purpose: str = "",
+        solution_description: str = "",
+        attachments: Optional[Sequence[str]] = None,
+        default_branch: str = "main",
+    ) -> Project:
         """Create or register a project."""
+        pass
+
+    @abstractmethod
+    async def list_projects(self) -> list[Project]:
+        """List all registered projects."""
+        pass
+
+    @abstractmethod
+    async def update_project(
+        self,
+        project_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        purpose: Optional[str] = None,
+        solution_description: Optional[str] = None,
+        attachments: Optional[Sequence[str]] = None,
+    ) -> Project:
+        """Update an existing project."""
+        pass
+
+    @abstractmethod
+    async def delete_project(self, project_id: str) -> None:
+        """Delete a project and its associated tasks."""
         pass
 
     @abstractmethod

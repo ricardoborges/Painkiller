@@ -12,6 +12,7 @@ from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
 from painkiller.adapters.llm.litellm_adapter import LiteLLMAdapter
 from painkiller.engine.orchestrator import PainkillerOrchestrator
 from painkiller.interrogation.wizard import InterrogationWizard
+from painkiller.api.routes.auth import router as auth_router
 from painkiller.api.routes.projects import router as projects_router
 from painkiller.api.routes.tasks import router as tasks_router
 from painkiller.api.routes.interrogation import router as interrogation_router
@@ -61,6 +62,7 @@ def create_app(
     app.state.wizard = wizard
 
     # Register routers
+    app.include_router(auth_router)
     app.include_router(projects_router)
     app.include_router(tasks_router)
     app.include_router(interrogation_router)

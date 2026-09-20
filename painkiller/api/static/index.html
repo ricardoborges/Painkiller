@@ -9,17 +9,21 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-dark: #0a0d14;
-      --bg-card: rgba(18, 24, 38, 0.7);
+      --bg-dark: #090d16;
+      --bg-surface: #101726;
+      --bg-card: rgba(19, 28, 48, 0.65);
       --border-card: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(99, 102, 241, 0.4);
       --primary: #6366f1;
+      --primary-hover: #4f46e5;
       --primary-glow: rgba(99, 102, 241, 0.25);
-      --accent: #06b6d4;
+      --accent-cyan: #06b6d4;
       --accent-warn: #f59e0b;
       --accent-danger: #ef4444;
       --accent-success: #10b981;
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
+      --text-sub: #64748b;
     }
 
     * {
@@ -30,7 +34,9 @@
 
     body {
       background-color: var(--bg-dark);
-      background-image: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 60%);
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(99, 102, 241, 0.12) 0%, transparent 40%),
+        radial-gradient(circle at 85% 85%, rgba(6, 182, 212, 0.08) 0%, transparent 40%);
       color: var(--text-main);
       font-family: 'Plus Jakarta Sans', sans-serif;
       min-height: 100vh;
@@ -38,442 +44,974 @@
       flex-direction: column;
     }
 
+    /* Top Navigation Header */
     header {
       border-bottom: 1px solid var(--border-card);
-      backdrop-filter: blur(12px);
-      padding: 1.25rem 2.5rem;
+      backdrop-filter: blur(16px);
+      padding: 1.1rem 2.5rem;
       display: flex;
       justify-content: space-between;
       align-items: center;
       position: sticky;
       top: 0;
       z-index: 50;
-      background: rgba(10, 13, 20, 0.8);
+      background: rgba(9, 13, 22, 0.85);
     }
 
-    .logo {
+    .brand-logo {
       display: flex;
       align-items: center;
       gap: 0.75rem;
       font-size: 1.35rem;
       font-weight: 800;
       letter-spacing: -0.03em;
+      cursor: pointer;
+    }
+
+    .brand-logo span {
       background: linear-gradient(135deg, #fff 30%, #94a3b8 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
 
-    .logo-badge {
-      background: var(--primary);
-      color: #fff;
+    .badge-engine {
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: #818cf8;
       font-size: 0.7rem;
       font-weight: 700;
-      padding: 0.2rem 0.5rem;
+      padding: 0.2rem 0.55rem;
       border-radius: 6px;
-      -webkit-text-fill-color: initial;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
     }
 
-    .nav-tabs {
+    .header-actions {
       display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    .user-pill {
+      display: flex;
+      align-items: center;
       gap: 0.5rem;
       background: rgba(255, 255, 255, 0.04);
-      padding: 0.3rem;
-      border-radius: 10px;
       border: 1px solid var(--border-card);
+      padding: 0.4rem 0.85rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
     }
 
-    .nav-btn {
-      background: transparent;
+    .user-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-success);
+      box-shadow: 0 0 8px var(--accent-success);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      color: #fff;
       border: none;
-      color: var(--text-muted);
-      padding: 0.5rem 1.2rem;
+      padding: 0.6rem 1.25rem;
       border-radius: 8px;
       font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s;
+      box-shadow: 0 0 15px var(--primary-glow);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+      transform: translateY(-1px);
+    }
+
+    .btn-outline {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-card);
+      color: var(--text-muted);
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s;
     }
 
-    .nav-btn.active {
-      background: var(--primary);
+    .btn-outline:hover {
+      border-color: rgba(255, 255, 255, 0.2);
       color: #fff;
-      box-shadow: 0 0 15px var(--primary-glow);
     }
 
+    /* App Container */
     main {
       flex: 1;
-      padding: 2rem 2.5rem;
-      max-width: 1600px;
+      padding: 2.5rem;
+      max-width: 1500px;
       margin: 0 auto;
       width: 100%;
     }
 
-    /* Section Views */
-    .tab-content {
+    /* Views */
+    .view-section {
       display: none;
     }
-    .tab-content.active {
+    .view-section.active {
       display: block;
     }
 
-    /* Interrogation View */
-    .chat-container {
-      display: grid;
-      grid-template-columns: 1fr 420px;
-      gap: 2rem;
-      height: calc(100vh - 180px);
+    /* Login View */
+    .login-wrapper {
+      min-height: calc(100vh - 180px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
-    .chat-pane {
+    .login-card {
       background: var(--bg-card);
       border: 1px solid var(--border-card);
-      border-radius: 16px;
+      border-radius: 18px;
+      padding: 2.5rem;
+      width: 100%;
+      max-width: 440px;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    }
+
+    .login-header {
+      margin-bottom: 2rem;
+      text-align: center;
+    }
+
+    .login-header h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .login-header p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .form-group {
+      margin-bottom: 1.25rem;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
+      gap: 0.45rem;
     }
 
-    .chat-messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1.5rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
+    .form-group label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
-    .message {
-      max-width: 80%;
-      padding: 1rem 1.25rem;
-      border-radius: 12px;
-      line-height: 1.5;
-      font-size: 0.95rem;
-    }
-
-    .message.agent {
-      align-self: flex-start;
-      background: rgba(99, 102, 241, 0.12);
-      border: 1px solid rgba(99, 102, 241, 0.25);
-      border-top-left-radius: 2px;
-    }
-
-    .message.user {
-      align-self: flex-end;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid var(--border-card);
-      border-top-right-radius: 2px;
-    }
-
-    .chat-input-bar {
-      padding: 1rem 1.5rem;
-      border-top: 1px solid var(--border-card);
-      display: flex;
-      gap: 0.75rem;
-      background: rgba(10, 13, 20, 0.4);
-    }
-
-    .chat-input {
-      flex: 1;
+    .form-control {
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid var(--border-card);
-      border-radius: 10px;
+      border-radius: 8px;
       padding: 0.75rem 1rem;
       color: #fff;
       font-size: 0.95rem;
       outline: none;
+      transition: border-color 0.2s;
     }
 
-    .chat-input:focus {
+    .form-control:focus {
       border-color: var(--primary);
+      box-shadow: 0 0 0 2px var(--primary-glow);
     }
 
-    .btn-send {
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      padding: 0 1.5rem;
-      border-radius: 10px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.2s;
+    textarea.form-control {
+      min-height: 100px;
+      resize: vertical;
+      line-height: 1.5;
     }
 
-    .spec-sidebar {
+    /* Projects Dashboard View */
+    .dashboard-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 2rem;
+    }
+
+    .dashboard-title h1 {
+      font-size: 1.75rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.35rem;
+    }
+
+    .dashboard-title p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    .projects-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .project-card {
       background: var(--bg-card);
       border: 1px solid var(--border-card);
       border-radius: 16px;
-      padding: 1.5rem;
+      padding: 1.6rem;
       display: flex;
       flex-direction: column;
+      gap: 1.1rem;
+      backdrop-filter: blur(12px);
+      transition: all 0.25s ease;
+      position: relative;
+    }
+
+    .project-card:hover {
+      border-color: var(--border-hover);
+      transform: translateY(-3px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
       gap: 1rem;
     }
 
-    .spec-box {
-      flex: 1;
-      background: rgba(0, 0, 0, 0.3);
-      border: 1px solid var(--border-card);
-      border-radius: 10px;
-      padding: 1rem;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.85rem;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      color: #cbd5e1;
+    .card-name {
+      font-size: 1.15rem;
+      font-weight: 700;
+      line-height: 1.3;
+      color: #fff;
     }
 
-    /* Kanban Board */
-    .kanban-board {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 1.25rem;
-      align-items: start;
+    .card-badge {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-card);
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.2rem 0.6rem;
+      border-radius: 20px;
+      white-space: nowrap;
     }
 
-    .kanban-column {
-      background: var(--bg-card);
-      border: 1px solid var(--border-card);
-      border-radius: 14px;
-      padding: 1.2rem;
-      min-height: 500px;
+    .card-section {
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      gap: 0.3rem;
     }
 
-    .column-title {
-      font-size: 0.85rem;
+    .card-section-label {
+      font-size: 0.72rem;
       font-weight: 700;
+      color: var(--primary);
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
+      letter-spacing: 0.06em;
+    }
+
+    .card-section-text {
+      font-size: 0.88rem;
+      color: #cbd5e1;
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .attachments-chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.2rem;
+    }
+
+    .attachment-chip {
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: #67e8f9;
+      font-size: 0.72rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .card-footer-actions {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 0.5rem;
+      margin-top: auto;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-card);
     }
 
-    .task-card {
-      background: rgba(255, 255, 255, 0.03);
+    .btn-start {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: #fff;
+      border: none;
+      padding: 0.55rem 1.15rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.2s;
+    }
+
+    .btn-start:hover {
+      box-shadow: 0 0 15px rgba(16, 185, 129, 0.35);
+      transform: translateY(-1px);
+    }
+
+    .card-secondary-btns {
+      display: flex;
+      gap: 0.4rem;
+    }
+
+    .btn-icon {
+      background: rgba(255, 255, 255, 0.04);
       border: 1px solid var(--border-card);
-      border-radius: 10px;
-      padding: 1rem;
+      color: var(--text-muted);
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-icon:hover {
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .btn-icon.danger:hover {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: var(--accent-danger);
+      color: #fca5a5;
+    }
+
+    /* Modal Styling */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(10px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-card);
+      border-radius: 20px;
+      width: 100%;
+      max-width: 680px;
+      max-height: 90vh;
       display: flex;
       flex-direction: column;
-      gap: 0.6rem;
-      transition: transform 0.2s, border-color 0.2s;
+      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
     }
 
-    .task-card:hover {
-      border-color: rgba(255, 255, 255, 0.2);
-      transform: translateY(-2px);
+    .modal-header {
+      padding: 1.5rem 2rem;
+      border-bottom: 1px solid var(--border-card);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
 
-    .task-card.awaiting {
-      border-color: var(--accent-warn);
-      box-shadow: 0 0 10px rgba(245, 158, 11, 0.15);
+    .modal-header h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
     }
 
-    .task-title {
-      font-size: 0.95rem;
-      font-weight: 600;
+    .modal-body {
+      padding: 2rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
     }
 
-    .task-desc {
-      font-size: 0.82rem;
-      color: var(--text-muted);
-      line-height: 1.4;
+    .modal-footer {
+      padding: 1.25rem 2rem;
+      border-top: 1px solid var(--border-card);
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
     }
 
-    .task-btn {
-      background: rgba(99, 102, 241, 0.15);
-      border: 1px solid var(--primary);
-      color: #fff;
-      padding: 0.4rem 0.8rem;
-      border-radius: 6px;
-      font-size: 0.75rem;
-      font-weight: 600;
+    /* File Drop Area */
+    .dropzone {
+      border: 2px dashed rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: center;
       cursor: pointer;
+      transition: all 0.2s;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .dropzone:hover {
+      border-color: var(--primary);
+      background: rgba(99, 102, 241, 0.05);
+    }
+
+    .file-input-hidden {
+      display: none;
+    }
+
+    /* Interrogation View (Questions generated by Aider/Superpowers) */
+    .interrogation-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 18px;
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      height: calc(100vh - 200px);
+      overflow: hidden;
+    }
+
+    .chat-col {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border-card);
+    }
+
+    .chat-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .chat-bubble {
+      max-width: 80%;
+      padding: 1.1rem 1.4rem;
+      border-radius: 14px;
+      line-height: 1.55;
+      font-size: 0.95rem;
+    }
+
+    .chat-bubble.agent {
       align-self: flex-start;
+      background: rgba(99, 102, 241, 0.12);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-top-left-radius: 4px;
+    }
+
+    .chat-bubble.user {
+      align-self: flex-end;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border-card);
+      border-top-right-radius: 4px;
+    }
+
+    .chat-bar {
+      padding: 1.25rem 2rem;
+      border-top: 1px solid var(--border-card);
+      display: flex;
+      gap: 0.85rem;
+      background: rgba(9, 13, 22, 0.5);
+    }
+
+    .side-col {
+      padding: 1.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      background: var(--bg-card);
+      border: 1px dashed var(--border-card);
+      border-radius: 16px;
+      grid-column: 1 / -1;
     }
   </style>
 </head>
 <body>
+
+  <!-- Header -->
   <header>
-    <div class="logo">
+    <div class="brand-logo" onclick="showProjectsView()">
       <span>Painkiller</span>
-      <span class="logo-badge">Agent Engine</span>
+      <span class="badge-engine">Agent Orchestrator</span>
     </div>
-    <div class="nav-tabs">
-      <button class="nav-btn active" onclick="switchTab('interrogation')">Interrogação & Requisitos</button>
-      <button class="nav-btn" onclick="switchTab('kanban')">Quadro Kanban</button>
+    <div class="header-actions" id="headerActions" style="display: none;">
+      <button class="btn-primary" onclick="openNewProjectModal()">
+        <span>+</span> Novo Projeto
+      </button>
+      <div class="user-pill">
+        <span class="user-dot"></span>
+        <span id="userNameDisplay">admin</span>
+      </div>
+      <button class="btn-outline" onclick="logout()">Sair</button>
     </div>
   </header>
 
   <main>
-    <!-- Interrogation Tab -->
-    <div id="tab-interrogation" class="tab-content active">
-      <div class="chat-container">
-        <div class="chat-pane">
-          <div id="chatMessages" class="chat-messages">
-            <div class="message agent">
-              Olá! Sou o agente de interrogação do <strong>Painkiller</strong>. Descreva qual software ou funcionalidade você deseja construir hoje.
+    <!-- View 1: Login -->
+    <section id="viewLogin" class="view-section active">
+      <div class="login-wrapper">
+        <div class="login-card">
+          <div class="login-header">
+            <h2>Acessar Painkiller</h2>
+            <p>Plataforma de criação automatizada de software</p>
+          </div>
+          <form onsubmit="handleLogin(event)">
+            <div class="form-group">
+              <label>Usuário</label>
+              <input type="text" id="loginUser" class="form-control" value="admin" required>
             </div>
-          </div>
-          <div class="chat-input-bar">
-            <input type="text" id="userInput" class="chat-input" placeholder="Digite sua resposta ou objetivo...">
-            <button class="btn-send" onclick="sendMessage()">Enviar</button>
-          </div>
-        </div>
-        <div class="spec-sidebar">
-          <h3>Especificação Arquitetural</h3>
-          <p style="font-size: 0.85rem; color: var(--text-muted);">Construída iterativamente com suas respostas.</p>
-          <div id="specBox" class="spec-box">Nenhuma especificação compilada ainda.</div>
-          <button id="commitBtn" class="btn-send" style="padding: 0.8rem;" disabled onclick="commitBacklog()">Decompor em Backlog</button>
+            <div class="form-group">
+              <label>Senha</label>
+              <input type="password" id="loginPass" class="form-control" value="123456" required>
+            </div>
+            <div id="loginError" style="color: var(--accent-danger); font-size: 0.85rem; margin-bottom: 1rem; display: none;"></div>
+            <button type="submit" class="btn-primary" style="width: 100%; justify-content: center; padding: 0.8rem;">
+              Entrar na Plataforma
+            </button>
+          </form>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Kanban Tab -->
-    <div id="tab-kanban" class="tab-content">
-      <div class="kanban-board">
-        <div class="kanban-column">
-          <div class="column-title">Backlog <span id="count-backlog">0</span></div>
-          <div id="col-BACKLOG"></div>
+    <!-- View 2: Projects Dashboard -->
+    <section id="viewProjects" class="view-section">
+      <div class="dashboard-header">
+        <div class="dashboard-title">
+          <h1>Projetos</h1>
+          <p>Gerencie o contexto, propósito e inicie a orquestração dos seus agentes.</p>
         </div>
-        <div class="kanban-column">
-          <div class="column-title">Pronto (Ready) <span id="count-ready">0</span></div>
-          <div id="col-READY"></div>
-        </div>
-        <div class="kanban-column">
-          <div class="column-title">Executando (Docker) <span id="count-running">0</span></div>
-          <div id="col-RUNNING"></div>
-        </div>
-        <div class="kanban-column">
-          <div class="column-title">Aguardando Analista <span id="count-awaiting">0</span></div>
-          <div id="col-AWAITING_ANALYST"></div>
-        </div>
-        <div class="kanban-column">
-          <div class="column-title">Concluído / Revisão <span id="count-completed">0</span></div>
-          <div id="col-IN_REVIEW"></div>
+        <button class="btn-primary" onclick="openNewProjectModal()">
+          <span>+</span> Novo Projeto
+        </button>
+      </div>
+
+      <div id="projectsGrid" class="projects-grid">
+        <!-- Injected via JavaScript -->
+      </div>
+    </section>
+
+    <!-- View 3: Interrogation (Triggered by "Iniciar") -->
+    <section id="viewInterrogation" class="view-section">
+      <div class="dashboard-header">
+        <div class="dashboard-title">
+          <button class="btn-outline" style="margin-bottom: 0.75rem;" onclick="showProjectsView()">← Voltar aos Projetos</button>
+          <h1 id="interrogationProjectTitle">Interrogação do Projeto</h1>
+          <p>O agente analisou seu contexto e formulou questionamentos para alinhar a especificação.</p>
         </div>
       </div>
-    </div>
+
+      <div class="interrogation-panel">
+        <div class="chat-col">
+          <div id="interrogationChat" class="chat-log">
+            <!-- Messages -->
+          </div>
+          <div class="chat-bar">
+            <input type="text" id="interrogationInput" class="form-control" placeholder="Responda ao questionamento do agente..." onkeydown="if(event.key==='Enter') sendInterrogationReply()">
+            <button class="btn-primary" onclick="sendInterrogationReply()">Enviar</button>
+          </div>
+        </div>
+        <div class="side-col">
+          <h3>Contexto & Especificação</h3>
+          <p style="font-size: 0.82rem; color: var(--text-muted);">Construída e refinada a partir dos seus documentos e respostas.</p>
+          <div id="specPreviewBox" style="flex: 1; background: rgba(0,0,0,0.3); border: 1px solid var(--border-card); border-radius: 10px; padding: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; overflow-y: auto; white-space: pre-wrap; color: #cbd5e1;">Aguardando refinamento dos requisitos...</div>
+          <button id="btnCommitBacklog" class="btn-primary" style="width: 100%; justify-content: center;" disabled onclick="commitProjectBacklog()">
+            Gerar Backlog de Tarefas
+          </button>
+        </div>
+      </div>
+    </section>
   </main>
 
+  <!-- Modal: Criar / Editar Projeto -->
+  <div id="projectModal" class="modal-backdrop">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 id="modalTitle">Novo Projeto</h3>
+        <button class="btn-icon" onclick="closeProjectModal()">✕</button>
+      </div>
+      <form id="projectForm" onsubmit="handleSaveProject(event)">
+        <div class="modal-body">
+          <input type="hidden" id="modalProjectId">
+
+          <div class="form-group">
+            <label>Nome do Projeto *</label>
+            <input type="text" id="projName" class="form-control" placeholder="Ex: Sistema de Gestão Hospitalar" required>
+          </div>
+
+          <div class="form-group">
+            <label>Descrição Geral</label>
+            <textarea id="projDesc" class="form-control" placeholder="Visão panorâmica do projeto e o que ele contempla..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Propósito do Projeto *</label>
+            <textarea id="projPurpose" class="form-control" placeholder="Por que este projeto está sendo criado? Qual dor de negócio ele resolve?" required></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Descrição da Solução Desejada *</label>
+            <textarea id="projSolution" class="form-control" placeholder="Como a solução técnica, regras e arquitetura devem se comportar?" required></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Anexar Documentos de Contextualização (.md, .docx, .pdf, .txt)</label>
+            <div class="dropzone" onclick="document.getElementById('fileUploadInput').click()">
+              <p style="font-weight: 600; margin-bottom: 0.25rem;">Clique para selecionar arquivos</p>
+              <p style="font-size: 0.8rem; color: var(--text-muted);">Arraste ou escolha especificações, PRDs ou diagramas</p>
+            </div>
+            <input type="file" id="fileUploadInput" class="file-input-hidden" multiple onchange="handleFileSelection(event)">
+            <div id="selectedFilesList" class="attachments-chip-list"></div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn-outline" onclick="closeProjectModal()">Cancelar</button>
+          <button type="submit" class="btn-primary" id="btnSaveProject">Salvar Projeto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
-    let currentSessionId = null;
-    let currentProjectId = "proj-default";
+    let activeProject = null;
+    let activeSessionId = null;
+    let selectedFilesToUpload = [];
 
-    function switchTab(tab) {
-      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-
-      if (tab === 'interrogation') {
-        document.querySelector('.nav-btn:nth-child(1)').classList.add('active');
-        document.getElementById('tab-interrogation').classList.add('active');
+    // Check Login on load
+    window.addEventListener('DOMContentLoaded', () => {
+      const token = sessionStorage.getItem('pk_token');
+      if (token) {
+        setLoggedIn(true);
+        loadProjects();
       } else {
-        document.querySelector('.nav-btn:nth-child(2)').classList.add('active');
-        document.getElementById('tab-kanban').classList.add('active');
-        fetchTasks();
+        setLoggedIn(false);
+      }
+    });
+
+    function setLoggedIn(logged) {
+      if (logged) {
+        document.getElementById('viewLogin').classList.remove('active');
+        document.getElementById('viewProjects').classList.add('active');
+        document.getElementById('headerActions').style.display = 'flex';
+      } else {
+        document.getElementById('viewProjects').classList.remove('active');
+        document.getElementById('viewInterrogation').classList.remove('active');
+        document.getElementById('viewLogin').classList.add('active');
+        document.getElementById('headerActions').style.display = 'none';
       }
     }
 
-    async function sendMessage() {
-      const input = document.getElementById('userInput');
-      const text = input.value.trim();
-      if (!text) return;
+    async function handleLogin(e) {
+      e.preventDefault();
+      const username = document.getElementById('loginUser').value;
+      const password = document.getElementById('loginPass').value;
+      const errBox = document.getElementById('loginError');
 
-      appendMessage(text, 'user');
-      input.value = '';
-
-      if (!currentSessionId) {
-        // Start session
-        const res = await fetch('/api/interrogation/start', {
+      try {
+        const res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project_id: currentProjectId, goal: text })
+          body: JSON.stringify({ username, password })
         });
+        if (!res.ok) {
+          errBox.innerText = 'Usuário ou senha incorretos.';
+          errBox.style.display = 'block';
+          return;
+        }
         const data = await res.json();
-        currentSessionId = data.session_id;
-        appendMessage(data.question, 'agent');
+        sessionStorage.setItem('pk_token', data.token);
+        setLoggedIn(true);
+        loadProjects();
+      } catch (err) {
+        errBox.innerText = 'Erro ao conectar com o servidor.';
+        errBox.style.display = 'block';
+      }
+    }
+
+    function logout() {
+      sessionStorage.removeItem('pk_token');
+      setLoggedIn(false);
+    }
+
+    function showProjectsView() {
+      document.getElementById('viewInterrogation').classList.remove('active');
+      document.getElementById('viewProjects').classList.add('active');
+      loadProjects();
+    }
+
+    // Load and render projects
+    async function loadProjects() {
+      try {
+        const res = await fetch('/api/projects');
+        const projects = await res.json();
+        renderProjects(projects);
+      } catch (err) {
+        console.error('Erro ao carregar projetos:', err);
+      }
+    }
+
+    function renderProjects(projects) {
+      const grid = document.getElementById('projectsGrid');
+      grid.innerHTML = '';
+
+      if (!projects || projects.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state">
+            <h3 style="font-size: 1.25rem; margin-bottom: 0.5rem;">Nenhum projeto cadastrado</h3>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Crie seu primeiro projeto contextualizado para iniciar a orquestração.</p>
+            <button class="btn-primary" onclick="openNewProjectModal()" style="margin: 0 auto;">Criar Primeiro Projeto</button>
+          </div>
+        `;
+        return;
+      }
+
+      projects.forEach(p => {
+        const card = document.createElement('div');
+        card.className = 'project-card';
+
+        const attCount = (p.attachments || []).length;
+        const attChips = (p.attachments || []).map(path => {
+          const name = path.split('\\').pop().split('/').pop();
+          return `<span class="attachment-chip">📎 ${name}</span>`;
+        }).join('');
+
+        card.innerHTML = `
+          <div class="card-top">
+            <div class="card-name">${p.name}</div>
+            <span class="card-badge">${new Date(p.created_at).toLocaleDateString('pt-BR')}</span>
+          </div>
+
+          <div class="card-section">
+            <span class="card-section-label">Propósito</span>
+            <div class="card-section-text">${p.purpose || 'Não informado'}</div>
+          </div>
+
+          <div class="card-section">
+            <span class="card-section-label">Solução Desejada</span>
+            <div class="card-section-text">${p.solution_description || 'Não informado'}</div>
+          </div>
+
+          <div class="card-section">
+            <span class="card-section-label">Anexos de Contexto (${attCount})</span>
+            <div class="attachments-chip-list">
+              ${attChips || '<span style="font-size:0.75rem; color:var(--text-sub);">Nenhum anexo</span>'}
+            </div>
+          </div>
+
+          <div class="card-footer-actions">
+            <button class="btn-start" onclick="startProjectInterrogation('${p.id}')">
+              <span>▶</span> Iniciar
+            </button>
+            <div class="card-secondary-btns">
+              <button class="btn-icon" title="Editar Projeto" onclick="openEditProjectModal('${p.id}')">✏</button>
+              <button class="btn-icon danger" title="Excluir Projeto" onclick="deleteProject('${p.id}', '${p.name}')">🗑</button>
+            </div>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    // Project Modal
+    function openNewProjectModal() {
+      document.getElementById('modalTitle').innerText = 'Novo Projeto';
+      document.getElementById('modalProjectId').value = '';
+      document.getElementById('projName').value = '';
+      document.getElementById('projDesc').value = '';
+      document.getElementById('projPurpose').value = '';
+      document.getElementById('projSolution').value = '';
+      document.getElementById('selectedFilesList').innerHTML = '';
+      selectedFilesToUpload = [];
+      document.getElementById('projectModal').classList.add('open');
+    }
+
+    async function openEditProjectModal(projectId) {
+      const res = await fetch(`/api/projects/${projectId}`);
+      if (!res.ok) return alert('Projeto não encontrado.');
+      const p = await res.json();
+
+      document.getElementById('modalTitle').innerText = 'Editar Projeto';
+      document.getElementById('modalProjectId').value = p.id;
+      document.getElementById('projName').value = p.name || '';
+      document.getElementById('projDesc').value = p.description || '';
+      document.getElementById('projPurpose').value = p.purpose || '';
+      document.getElementById('projSolution').value = p.solution_description || '';
+      selectedFilesToUpload = [];
+
+      const attChips = (p.attachments || []).map(path => {
+        const name = path.split('\\').pop().split('/').pop();
+        return `<span class="attachment-chip">📎 ${name}</span>`;
+      }).join('');
+      document.getElementById('selectedFilesList').innerHTML = attChips;
+
+      document.getElementById('projectModal').classList.add('open');
+    }
+
+    function closeProjectModal() {
+      document.getElementById('projectModal').classList.remove('open');
+    }
+
+    function handleFileSelection(e) {
+      const files = Array.from(e.target.files);
+      selectedFilesToUpload = files;
+      const list = document.getElementById('selectedFilesList');
+      list.innerHTML = '';
+      files.forEach(f => {
+        const chip = document.createElement('span');
+        chip.className = 'attachment-chip';
+        chip.innerText = `📄 ${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+        list.appendChild(chip);
+      });
+    }
+
+    async function handleSaveProject(e) {
+      e.preventDefault();
+      const id = document.getElementById('modalProjectId').value;
+      const name = document.getElementById('projName').value;
+      const description = document.getElementById('projDesc').value;
+      const purpose = document.getElementById('projPurpose').value;
+      const solution_description = document.getElementById('projSolution').value;
+
+      let savedProject = null;
+
+      if (id) {
+        // Edit
+        const res = await fetch(`/api/projects/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description, purpose, solution_description })
+        });
+        savedProject = await res.json();
       } else {
-        // Reply
-        const res = await fetch('/api/interrogation/reply', {
+        // Create
+        const res = await fetch('/api/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: currentSessionId, answer: text })
+          body: JSON.stringify({ name, description, purpose, solution_description })
         });
-        const data = await res.json();
-        appendMessage(data.reply, 'agent');
-        if (data.is_complete) {
-          document.getElementById('specBox').innerText = data.reply.replace('ESPECIFICAÇÃO_CONCLUÍDA:', '');
-          document.getElementById('commitBtn').removeAttribute('disabled');
+        savedProject = await res.json();
+      }
+
+      // Upload selected attachments
+      if (selectedFilesToUpload.length > 0 && savedProject && savedProject.id) {
+        for (const file of selectedFilesToUpload) {
+          const formData = new FormData();
+          formData.append('file', file);
+          await fetch(`/api/projects/${savedProject.id}/attachments`, {
+            method: 'POST',
+            body: formData
+          });
         }
       }
+
+      closeProjectModal();
+      loadProjects();
     }
 
-    function appendMessage(text, sender) {
-      const chat = document.getElementById('chatMessages');
-      const div = document.createElement('div');
-      div.className = `message ${sender}`;
-      div.innerText = text;
-      chat.appendChild(div);
+    async function deleteProject(projectId, name) {
+      if (!confirm(`Deseja realmente excluir o projeto "${name}" e todos os seus dados?`)) return;
+      await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+      loadProjects();
+    }
+
+    // Trigger Aider / Superpowers Interrogation
+    async function startProjectInterrogation(projectId) {
+      const res = await fetch(`/api/projects/${projectId}/start-interrogation`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+
+      activeProject = projectId;
+      activeSessionId = data.session_id;
+
+      document.getElementById('viewProjects').classList.remove('active');
+      document.getElementById('viewInterrogation').classList.add('active');
+
+      const chat = document.getElementById('interrogationChat');
+      chat.innerHTML = '';
+
+      appendInterrogationMessage(data.question, 'agent');
+    }
+
+    async function sendInterrogationReply() {
+      const input = document.getElementById('interrogationInput');
+      const text = input.value.trim();
+      if (!text || !activeSessionId) return;
+
+      appendInterrogationMessage(text, 'user');
+      input.value = '';
+
+      const res = await fetch('/api/interrogation/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: activeSessionId, answer: text })
+      });
+      const data = await res.json();
+      appendInterrogationMessage(data.reply, 'agent');
+
+      if (data.is_complete) {
+        document.getElementById('specPreviewBox').innerText = data.reply.replace('ESPECIFICAÇÃO_CONCLUÍDA:', '').trim();
+        document.getElementById('btnCommitBacklog').removeAttribute('disabled');
+      }
+    }
+
+    function appendInterrogationMessage(text, sender) {
+      const chat = document.getElementById('interrogationChat');
+      const bubble = document.createElement('div');
+      bubble.className = `chat-bubble ${sender}`;
+      bubble.innerText = text;
+      chat.appendChild(bubble);
       chat.scrollTop = chat.scrollHeight;
     }
 
-    async function commitBacklog() {
-      if (!currentSessionId) return;
+    async function commitProjectBacklog() {
+      if (!activeSessionId) return;
       const res = await fetch('/api/interrogation/commit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: currentSessionId })
+        body: JSON.stringify({ session_id: activeSessionId })
       });
       const tasks = await res.json();
-      alert(`Backlog gerado com sucesso! ${tasks.length} tarefas criadas.`);
-      switchTab('kanban');
-    }
-
-    async function fetchTasks() {
-      const res = await fetch(`/api/projects/${currentProjectId}/tasks`);
-      if (!res.ok) return;
-      const tasks = await res.json();
-
-      ['BACKLOG', 'READY', 'RUNNING', 'AWAITING_ANALYST', 'IN_REVIEW'].forEach(st => {
-        const col = document.getElementById(`col-${st}`);
-        if (col) col.innerHTML = '';
-      });
-
-      tasks.forEach(t => {
-        const col = document.getElementById(`col-${t.status}`);
-        if (!col) return;
-        const card = document.createElement('div');
-        card.className = `task-card ${t.status === 'AWAITING_ANALYST' ? 'awaiting' : ''}`;
-        card.innerHTML = `
-          <div class="task-title">${t.title}</div>
-          <div class="task-desc">${t.description}</div>
-          ${t.status === 'READY' ? `<button class="task-btn" onclick="dispatchTask('${t.id}')">Executar no Docker</button>` : ''}
-          ${t.status === 'AWAITING_ANALYST' ? `<button class="task-btn" style="background:#f59e0b; border-color:#f59e0b" onclick="answerClarification('${t.id}')">Responder Dúvida</button>` : ''}
-        `;
-        col.appendChild(card);
-      });
-    }
-
-    async function dispatchTask(taskId) {
-      await fetch(`/api/tasks/${taskId}/dispatch`, { method: 'POST' });
-      fetchTasks();
-    }
-
-    async function answerClarification(taskId) {
-      const answer = prompt('Digite sua resposta para o agente:');
-      if (!answer) return;
-      await fetch(`/api/tasks/${taskId}/clarification`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answer })
-      });
-      fetchTasks();
+      alert(`Backlog gerado com sucesso! ${tasks.length} tarefas atômicas decompostas.`);
+      showProjectsView();
     }
   </script>
 </body>

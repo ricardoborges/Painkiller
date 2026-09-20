@@ -3,7 +3,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Any
 from sqlalchemy import (
     Column,
     String,
@@ -34,6 +34,10 @@ class ProjectRecord(Base):
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False)
     repo_path = Column(String, nullable=False)
+    description = Column(Text, default="")
+    purpose = Column(Text, default="")
+    solution_description = Column(Text, default="")
+    attachments = Column(Text, default="[]")
     default_branch = Column(String, default="main")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -81,25 +85,38 @@ class SQLiteIssueTracker(IssueTrackerPort):
     async def close(self) -> None:
         await self.engine.dispose()
 
-    async def create_project(self, name: str, repo_path: str, default_branch: str = "main") -> Project:
+    async def create_project(
+        self,
+        name: str,
+        repo_path: str,
+        description: str = "",
+        purpose: str = "",
+        solution_description: str = "",
+        attachments: Optional[Sequence[str]] = None,
+        default_branch: str = "main",
+    ) -> Project:
         proj_id = f"proj-{uuid.uuid4().hex[:8]}"
         record = ProjectRecord(
             id=proj_id,
             name=name,
             repo_path=repo_path,
+            description=description,
+            purpose=purpose,
+            solution_description=solution_description,
+            attachments=json.dumps(list(attachments or [])),
             default_branch=default_branch,
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
             session.add(record)
             await session.commit()
-            return Project(
-                id=record.id,
-                name=record.name,
-                repo_path=record.repo_path,
-                default_branch=record.default_branch,
-                created_at=record.created_at,
-            )
+            return self._to_project_domain(record)
+
+    async def list_projects(self) -> list[Project]:
+        async with self.session_factory() as session:
+            res = await session.execute(select(ProjectRecord).order_by(ProjectRecord.created_at.desc()))
+            records = res.scalars().all()
+            return [self._to_project_domain(r) for r in records]
 
     async def get_project(self, project_id: str) -> Optional[Project]:
         async with self.session_factory() as session:
@@ -107,13 +124,67 @@ class SQLiteIssueTracker(IssueTrackerPort):
             record = res.scalar_one_or_none()
             if not record:
                 return None
-            return Project(
-                id=record.id,
-                name=record.name,
-                repo_path=record.repo_path,
-                default_branch=record.default_branch,
-                created_at=record.created_at,
-            )
+            return self._to_project_domain(record)
+
+    async def update_project(
+        self,
+        project_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        purpose: Optional[str] = None,
+        solution_description: Optional[str] = None,
+        attachments: Optional[Sequence[str]] = None,
+    ) -> Project:
+        values: dict[str, Any] = {}
+        if name is not None:
+            values["name"] = name
+        if description is not None:
+            values["description"] = description
+        if purpose is not None:
+            values["purpose"] = purpose
+        if solution_description is not None:
+            values["solution_description"] = solution_description
+        if attachments is not None:
+            values["attachments"] = json.dumps(list(attachments))
+
+        async with self.session_factory() as session:
+            if values:
+                await session.execute(
+                    update(ProjectRecord)
+                    .where(ProjectRecord.id == project_id)
+                    .values(**values)
+                )
+                await session.commit()
+            res = await session.execute(select(ProjectRecord).where(ProjectRecord.id == project_id))
+            record = res.scalar_one_or_none()
+            if not record:
+                raise ValueError(f"Project {project_id} not found")
+            return self._to_project_domain(record)
+
+    async def delete_project(self, project_id: str) -> None:
+        from sqlalchemy import delete
+        async with self.session_factory() as session:
+            # Delete tasks and clarifications first
+            tasks_res = await session.execute(select(TaskRecord.id).where(TaskRecord.project_id == project_id))
+            task_ids = tasks_res.scalars().all()
+            if task_ids:
+                await session.execute(delete(ClarificationRecord).where(ClarificationRecord.task_id.in_(task_ids)))
+                await session.execute(delete(TaskRecord).where(TaskRecord.project_id == project_id))
+            await session.execute(delete(ProjectRecord).where(ProjectRecord.id == project_id))
+            await session.commit()
+
+    def _to_project_domain(self, record: ProjectRecord) -> Project:
+        return Project(
+            id=record.id,
+            name=record.name,
+            repo_path=record.repo_path,
+            description=record.description or "",
+            purpose=record.purpose or "",
+            solution_description=record.solution_description or "",
+            attachments=json.loads(record.attachments or "[]"),
+            default_branch=record.default_branch,
+            created_at=record.created_at,
+        )
 
     async def create_task(
         self,

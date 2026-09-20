@@ -84,6 +84,10 @@ class Project(BaseModel):
     id: str
     name: str
     repo_path: str
+    description: str = ""
+    purpose: str = ""
+    solution_description: str = ""
+    attachments: list[str] = Field(default_factory=list)
     default_branch: str = "main"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
