@@ -34,15 +34,6 @@ def create_app(
         # Startup
         tracker: SQLiteIssueTracker = app.state.tracker
         await tracker.init_db()
-
-        # Seed default project if none exists
-        default_proj = await tracker.get_project("proj-default")
-        if not default_proj:
-            await tracker.create_project(
-                name="Default Workspace",
-                repo_path=os.getcwd(),
-                default_branch="main",
-            )
         yield
         # Shutdown
         await tracker.close()
