@@ -65,11 +65,29 @@ class AnalysisOrchestrator:
 
     # ---- ciclo de vida -------------------------------------------------
 
-    async def start(self, project: Project) -> AnalysisSession:
+    async def start(self, project: Project, force_new: bool = False) -> AnalysisSession:
+        if not force_new:
+            active = await self.get_active(project.id)
+            if isinstance(active, AnalysisSession):
+                run = self.runs.get(active.id)
+                if run and await self.agent.is_alive(active.id):
+                    return active
+                return await self.resume(project, active.id)
+
         session_id = f"analysis-{uuid.uuid4().hex[:8]}"
-        session = AnalysisSession(id=session_id, project_id=project.id)
+        claude_session_id = str(uuid.uuid4())
+        session = AnalysisSession(
+            id=session_id,
+            project_id=project.id,
+            claude_session_id=claude_session_id,
+            status=AnalysisStatus.STARTING,
+        )
         run = AnalysisRun(session=session, repo_path=project.repo_path)
         self.runs[session_id] = run
+        try:
+            await self.tracker.save_analysis_session(session)
+        except Exception:
+            pass
 
         prompt = build_analysis_prompt(project)
         try:
@@ -77,14 +95,70 @@ class AnalysisOrchestrator:
                 session_id=session_id,
                 repo_path=project.repo_path,
                 prompt=prompt,
+                resume=False,
+                claude_session_id=claude_session_id,
             )
         except Exception as e:
             session.status = AnalysisStatus.FAILED
             session.error = str(e)
+            try:
+                await self.tracker.save_analysis_session(session)
+            except Exception:
+                pass
             raise
 
         session.status = AnalysisStatus.WAITING_AGENT
+        try:
+            await self.tracker.save_analysis_session(session)
+        except Exception:
+            pass
         run.pump = asyncio.create_task(self._pump(run))
+        return session
+
+    async def resume(self, project: Project, session_id: str) -> AnalysisSession:
+        session = await self.tracker.get_analysis_session(session_id)
+        if not isinstance(session, AnalysisSession):
+            run = self.runs.get(session_id)
+            if run:
+                session = run.session
+            else:
+                raise ValueError(f"Sessão {session_id} não encontrada")
+
+        run = self.runs.get(session_id)
+        if not run:
+            run = AnalysisRun(session=session, repo_path=project.repo_path)
+            events = await self.tracker.list_analysis_events(session_id)
+            run.events = list(events) if isinstance(events, (list, tuple)) else []
+            self.runs[session_id] = run
+
+        alive = await self.agent.is_alive(session_id)
+        if not alive:
+            try:
+                session.container_name = await self.agent.start(
+                    session_id=session_id,
+                    repo_path=project.repo_path,
+                    prompt="",
+                    resume=True,
+                    claude_session_id=session.claude_session_id,
+                )
+                session.status = AnalysisStatus.WAITING_ANALYST
+                await self.tracker.save_analysis_session(session)
+            except Exception as e:
+                session.status = AnalysisStatus.FAILED
+                session.error = str(e)
+                try:
+                    await self.tracker.save_analysis_session(session)
+                except Exception:
+                    pass
+                raise
+
+        if hasattr(self.agent, "register_stdin_file"):
+            self.agent.register_stdin_file(session_id, project.repo_path)
+
+        if not run.pump or run.pump.done():
+            run.done = False
+            run.pump = asyncio.create_task(self._pump(run))
+
         return session
 
     async def _pump(self, run: AnalysisRun) -> None:
@@ -95,17 +169,33 @@ class AnalysisOrchestrator:
                 if event.type not in TRANSIENT_EVENTS:
                     run.events.append(event)
                     del run.events[:-REPLAY_LIMIT]
+                    try:
+                        await self.tracker.save_analysis_event(run.session.id, event)
+                    except Exception:
+                        pass
                 for queue in list(run.subscribers):
                     queue.put_nowait(event)
+                try:
+                    await self.tracker.save_analysis_session(run.session)
+                except Exception:
+                    pass
         except Exception as e:
             run.session.status = AnalysisStatus.FAILED
             run.session.error = str(e)
+            try:
+                await self.tracker.save_analysis_session(run.session)
+            except Exception:
+                pass
             failure = AgentEvent(type=AgentEventType.ERROR, text=str(e))
             run.events.append(failure)
             for queue in list(run.subscribers):
                 queue.put_nowait(failure)
         finally:
             run.done = True
+            try:
+                await self.tracker.save_analysis_session(run.session)
+            except Exception:
+                pass
             # None fecha os geradores de SSE que ainda estiverem pendurados.
             for queue in list(run.subscribers):
                 queue.put_nowait(None)
@@ -124,8 +214,17 @@ class AnalysisOrchestrator:
 
     async def send(self, session_id: str, text: str) -> AnalysisSession:
         run = self._require(session_id)
+        user_event = AgentEvent(type=AgentEventType.USER, text=text)
+        try:
+            await self.tracker.save_analysis_event(session_id, user_event)
+        except Exception:
+            pass
         await self.agent.send(session_id, text)
         run.session.status = AnalysisStatus.WAITING_AGENT
+        try:
+            await self.tracker.save_analysis_session(run.session)
+        except Exception:
+            pass
         return run.session
 
     async def finish(self, session_id: str) -> AnalysisSession:
@@ -136,14 +235,52 @@ class AnalysisOrchestrator:
 
     async def stop(self, session_id: str) -> None:
         run = self.runs.pop(session_id, None)
-        if not run:
-            return
-        if run.pump:
+        if run and run.pump:
             run.pump.cancel()
         await self.agent.stop(session_id)
+        session = await self.tracker.get_analysis_session(session_id)
+        if session:
+            session.status = AnalysisStatus.FINISHED
+            try:
+                await self.tracker.save_analysis_session(session)
+            except Exception:
+                pass
 
     def get(self, session_id: str) -> AnalysisSession:
         return self._require(session_id).session
+
+    async def get_or_restore(self, session_id: str) -> AnalysisSession:
+        run = self.runs.get(session_id)
+        if run:
+            return run.session
+        session = await self.tracker.get_analysis_session(session_id)
+        if not isinstance(session, AnalysisSession):
+            raise ValueError(f"Sessão {session_id} não encontrada")
+        project = await self.tracker.get_project(session.project_id)
+        repo_path = project.repo_path if isinstance(project, Project) else ""
+        run = AnalysisRun(session=session, repo_path=repo_path)
+        events = await self.tracker.list_analysis_events(session_id)
+        run.events = list(events) if isinstance(events, (list, tuple)) else []
+        self.runs[session_id] = run
+        if hasattr(self.agent, "register_stdin_file") and repo_path:
+            self.agent.register_stdin_file(session_id, repo_path)
+        alive = await self.agent.is_alive(session_id)
+        if alive and (not run.pump or run.pump.done()):
+            run.done = False
+            run.pump = asyncio.create_task(self._pump(run))
+        return session
+
+    async def get_active(self, project_id: str) -> Optional[AnalysisSession]:
+        for run in self.runs.values():
+            if run.session.project_id == project_id and run.session.status not in (
+                AnalysisStatus.FINISHED,
+                AnalysisStatus.FAILED,
+            ):
+                return run.session
+        active = await self.tracker.get_active_analysis_session(project_id)
+        if isinstance(active, AnalysisSession):
+            return active
+        return None
 
     def _require(self, session_id: str) -> AnalysisRun:
         run = self.runs.get(session_id)
@@ -155,7 +292,10 @@ class AnalysisOrchestrator:
 
     async def subscribe(self, session_id: str) -> AsyncIterator[AgentEvent]:
         """Replay what already happened, then follow the session live."""
-        run = self._require(session_id)
+        run = self.runs.get(session_id)
+        if not run:
+            await self.get_or_restore(session_id)
+            run = self._require(session_id)
         queue: asyncio.Queue = asyncio.Queue()
         backlog = list(run.events)
         run.subscribers.add(queue)
@@ -211,6 +351,11 @@ class AnalysisOrchestrator:
             created[0] = await self.tracker.update_task_status(created[0].id, TaskStatus.READY)
 
         run.session.spec_path = data.get("spec_path")
+        run.session.status = AnalysisStatus.FINISHED
+        try:
+            await self.tracker.save_analysis_session(run.session)
+        except Exception:
+            pass
         return created
 
 

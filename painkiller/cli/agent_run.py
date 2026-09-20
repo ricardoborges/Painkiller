@@ -46,7 +46,7 @@ def agent_run(stdin_file: str, agent_bin: str, idle_timeout: int, agent_args: tu
     offset = 0
     pending = ""
     stdin_closed = False
-    deadline = time.monotonic() + idle_timeout
+    deadline = time.monotonic() + idle_timeout if idle_timeout > 0 else 0
 
     try:
         while True:
@@ -54,7 +54,7 @@ def agent_run(stdin_file: str, agent_bin: str, idle_timeout: int, agent_args: tu
             if code is not None:
                 return sys.exit(code)
 
-            if time.monotonic() > deadline:
+            if idle_timeout > 0 and time.monotonic() > deadline:
                 proc.kill()
                 return sys.exit(124)
 
@@ -65,6 +65,8 @@ def agent_run(stdin_file: str, agent_bin: str, idle_timeout: int, agent_args: tu
                     size = offset
 
                 if size > offset:
+                    if idle_timeout > 0:
+                        deadline = time.monotonic() + idle_timeout
                     with open(stdin_file, "r", encoding="utf-8", errors="replace") as f:
                         f.seek(offset)
                         chunk = f.read()

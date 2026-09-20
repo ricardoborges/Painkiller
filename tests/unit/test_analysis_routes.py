@@ -23,8 +23,20 @@ class ScriptedAgent(AgentSessionPort):
         self.sent: list[str] = []
         self.closed = False
 
-    async def start(self, session_id, repo_path, prompt, env=None, timeout_seconds=3600) -> str:
+    async def start(
+        self,
+        session_id,
+        repo_path,
+        prompt="",
+        env=None,
+        timeout_seconds=3600,
+        resume=False,
+        claude_session_id=None,
+    ) -> str:
         return "pk-analysis-fake"
+
+    async def is_alive(self, session_id) -> bool:
+        return True
 
     async def send(self, session_id, text) -> None:
         self.sent.append(text)
@@ -139,3 +151,23 @@ async def test_unknown_session_is_404_on_every_verb(client):
     assert (
         await client.post("/api/analysis/analysis-nope/message", json={"answer": "x"})
     ).status_code == 404
+
+
+async def test_current_analysis_route(client, tmp_path):
+    pid = await _project(client, tmp_path)
+
+    # Inicialmente nenhuma análise ativa
+    initial = await client.get(f"/api/projects/{pid}/analysis/current")
+    assert initial.status_code == 200
+    assert initial.json()["session"] is None
+
+    # Inicia análise
+    start_res = await client.post(f"/api/projects/{pid}/analysis")
+    assert start_res.status_code == 200
+    sid = start_res.json()["session_id"]
+
+    # Consulta novamente: deve retornar a sessão ativa
+    current = await client.get(f"/api/projects/{pid}/analysis/current")
+    assert current.status_code == 200
+    assert current.json()["session"]["session_id"] == sid
+

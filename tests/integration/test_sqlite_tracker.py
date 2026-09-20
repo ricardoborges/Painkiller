@@ -1,7 +1,14 @@
 """Integration tests for SQLiteIssueTracker adapter."""
 
 import pytest
-from painkiller.core.domain.models import TaskStatus, ClarificationStatus
+from painkiller.core.domain.models import (
+    TaskStatus,
+    ClarificationStatus,
+    AnalysisSession,
+    AnalysisStatus,
+    AgentEvent,
+    AgentEventType,
+)
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 
 
@@ -83,3 +90,45 @@ async def test_clarification_flow(tracker: SQLiteIssueTracker):
     # Pending should now be None
     pending_after = await tracker.get_pending_clarification(task.id)
     assert pending_after is None
+
+
+async def test_analysis_session_persistence(tracker: SQLiteIssueTracker):
+    proj = await tracker.create_project(name="Analysis App", repo_path="/tmp/analysis")
+
+    # 1. Salvar sessão inicial
+    session = AnalysisSession(
+        id="analysis-test-1",
+        project_id=proj.id,
+        status=AnalysisStatus.STARTING,
+        container_name="pk-test-container",
+        claude_session_id="claude-uuid-1",
+    )
+    saved = await tracker.save_analysis_session(session)
+    assert saved.id == "analysis-test-1"
+    assert saved.claude_session_id == "claude-uuid-1"
+
+    # 2. Obter sessão ativa
+    active = await tracker.get_active_analysis_session(proj.id)
+    assert active is not None
+    assert active.id == "analysis-test-1"
+
+    # 3. Salvar eventos da conversa
+    evt1 = AgentEvent(type=AgentEventType.ASSISTANT, text="Olá! Qual o escopo?")
+    evt2 = AgentEvent(type=AgentEventType.USER, text="Um portal de autenticação")
+    await tracker.save_analysis_event(session.id, evt1)
+    await tracker.save_analysis_event(session.id, evt2)
+
+    events = await tracker.list_analysis_events(session.id)
+    assert len(events) == 2
+    assert events[0].type == AgentEventType.ASSISTANT
+    assert events[0].text == "Olá! Qual o escopo?"
+    assert events[1].type == AgentEventType.USER
+    assert events[1].text == "Um portal de autenticação"
+
+    # 4. Finalizar sessão e verificar que get_active retorna None
+    session.status = AnalysisStatus.FINISHED
+    await tracker.save_analysis_session(session)
+
+    active_after = await tracker.get_active_analysis_session(proj.id)
+    assert active_after is None
+

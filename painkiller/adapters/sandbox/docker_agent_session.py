@@ -75,20 +75,27 @@ class DockerAgentSession(AgentSessionPort):
         self,
         session_id: str,
         repo_path: str,
-        prompt: str,
+        prompt: str = "",
         env: Optional[dict[str, str]] = None,
-        timeout_seconds: int = 3600,
+        timeout_seconds: int = 86400,
+        resume: bool = False,
+        claude_session_id: Optional[str] = None,
     ) -> str:
         env_vars = {k: os.environ[k] for k in FORWARDED_ENV if k in os.environ}
         env_vars.update(env or {})
         self._require_credentials(env_vars)
 
+        # Pasta para persistir configurações e memória do Claude Code
+        claude_home = os.path.join(repo_path, ".painkiller", "claude_home")
+        os.makedirs(claude_home, exist_ok=True)
+
         # A fila é criada no lado da API, pelo caminho local; o contêiner a
         # enxerga através do bind mount, que o daemon resolve por outro caminho.
         stdin_path = os.path.join(repo_path, ".painkiller", "agent-stdin.jsonl")
         os.makedirs(os.path.dirname(stdin_path), exist_ok=True)
-        with open(stdin_path, "w", encoding="utf-8"):
-            pass
+        if not resume or not os.path.exists(stdin_path):
+            with open(stdin_path, "w", encoding="utf-8"):
+                pass
         self._stdin_files[session_id] = stdin_path
 
         agent_args = [
@@ -106,6 +113,14 @@ class DockerAgentSession(AgentSessionPort):
         if self.model:
             agent_args.extend(["--model", self.model])
 
+        if resume:
+            if claude_session_id:
+                agent_args.extend(["--resume", claude_session_id])
+            else:
+                agent_args.append("--continue")
+        elif claude_session_id:
+            agent_args.extend(["--session-id", claude_session_id])
+
         command = [
             "painkiller", "agent-run",
             "--stdin-file", "/workspace/" + STDIN_RELATIVE,
@@ -115,13 +130,17 @@ class DockerAgentSession(AgentSessionPort):
 
         container_name = f"pk-analysis-{session_id}-{uuid.uuid4().hex[:6]}"
         loop = asyncio.get_running_loop()
+        volumes = {
+            daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
+            daemon_path(claude_home): {"bind": "/home/node/.claude", "mode": "rw"},
+        }
         container = await loop.run_in_executor(
             None,
             lambda: self.client.containers.run(
                 self.image_name,
                 command=command,
                 name=container_name,
-                volumes={daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"}},
+                volumes=volumes,
                 environment=env_vars,
                 working_dir="/workspace",
                 network=self.network,
@@ -134,9 +153,9 @@ class DockerAgentSession(AgentSessionPort):
         )
         self._containers[session_id] = container
 
-        # O prompt inicial entra pela mesma fila: com --input-format stream-json
-        # o Claude Code ignora um prompt posicional e só lê do stdin.
-        await self.send(session_id, prompt)
+        # O prompt inicial entra pela mesma fila: só envia se for nova sessão
+        if not resume and prompt:
+            await self.send(session_id, prompt)
         return container_name
 
     @staticmethod
@@ -197,15 +216,59 @@ class DockerAgentSession(AgentSessionPort):
         except Exception:
             pass
 
+    def register_stdin_file(self, session_id: str, repo_path: str) -> None:
+        self._stdin_files[session_id] = os.path.join(repo_path, ".painkiller", "agent-stdin.jsonl")
+
+    async def is_alive(self, session_id: str) -> bool:
+        container = self._containers.get(session_id)
+        loop = asyncio.get_running_loop()
+        if not container:
+            try:
+                candidates = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.containers.list(
+                        all=True, filters={"name": f"pk-analysis-{session_id}"}
+                    ),
+                )
+                if candidates:
+                    container = candidates[0]
+                    self._containers[session_id] = container
+                else:
+                    return False
+            except Exception:
+                return False
+
+        try:
+            status = await loop.run_in_executor(
+                None, lambda: (container.reload(), container.status)[1]
+            )
+            return status in ("running", "restarting")
+        except Exception:
+            return False
+
     # ---- streaming -----------------------------------------------------
 
     async def stream(self, session_id: str) -> AsyncIterator[AgentEvent]:
         """Yield parsed agent events until the container exits."""
         container = self._containers.get(session_id)
+        loop = asyncio.get_running_loop()
+        if not container:
+            try:
+                candidates = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.containers.list(
+                        all=True, filters={"name": f"pk-analysis-{session_id}"}
+                    ),
+                )
+                if candidates:
+                    container = candidates[0]
+                    self._containers[session_id] = container
+            except Exception:
+                pass
+
         if not container:
             raise ValueError(f"Sessão {session_id} não está ativa")
 
-        loop = asyncio.get_running_loop()
         logs = container.logs(stream=True, follow=True, stdout=True, stderr=True)
         buffer = b""
 

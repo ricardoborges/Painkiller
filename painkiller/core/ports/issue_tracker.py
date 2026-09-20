@@ -2,7 +2,14 @@
 
 from abc import ABC, abstractmethod
 from typing import Optional, Sequence
-from painkiller.core.domain.models import Project, Task, TaskStatus, ClarificationRequest
+from painkiller.core.domain.models import (
+    Project,
+    Task,
+    TaskStatus,
+    ClarificationRequest,
+    AnalysisSession,
+    AgentEvent,
+)
 
 
 class IssueTrackerPort(ABC):
@@ -109,4 +116,29 @@ class IssueTrackerPort(ABC):
     @abstractmethod
     async def get_pending_clarification(self, task_id: str) -> Optional[ClarificationRequest]:
         """Get the current pending clarification request for a task, if any."""
+        pass
+
+    @abstractmethod
+    async def save_analysis_session(self, session: AnalysisSession) -> AnalysisSession:
+        """Create or update an interactive analysis session."""
+        pass
+
+    @abstractmethod
+    async def get_analysis_session(self, session_id: str) -> Optional[AnalysisSession]:
+        """Retrieve an analysis session by ID."""
+        pass
+
+    @abstractmethod
+    async def get_active_analysis_session(self, project_id: str) -> Optional[AnalysisSession]:
+        """Get the current active (non-finished, non-failed) analysis session for a project."""
+        pass
+
+    @abstractmethod
+    async def save_analysis_event(self, session_id: str, event: AgentEvent) -> None:
+        """Record a canonical agent event for replay and auditing."""
+        pass
+
+    @abstractmethod
+    async def list_analysis_events(self, session_id: str) -> list[AgentEvent]:
+        """Retrieve chronological events recorded for a session."""
         pass

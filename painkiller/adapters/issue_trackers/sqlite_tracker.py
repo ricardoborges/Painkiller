@@ -9,6 +9,7 @@ from sqlalchemy import (
     String,
     DateTime,
     Text,
+    Integer,
     Enum as SQLEnum,
     select,
     update,
@@ -22,6 +23,10 @@ from painkiller.core.domain.models import (
     TaskStatus,
     ClarificationRequest,
     ClarificationStatus,
+    AnalysisSession,
+    AnalysisStatus,
+    AgentEvent,
+    AgentEventType,
 )
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 
@@ -69,6 +74,32 @@ class ClarificationRecord(Base):
     answer = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     answered_at = Column(DateTime, nullable=True)
+
+
+class AnalysisSessionRecord(Base):
+    __tablename__ = "analysis_sessions"
+
+    id = Column(String, primary_key=True)
+    project_id = Column(String, nullable=False, index=True)
+    status = Column(SQLEnum(AnalysisStatus), default=AnalysisStatus.STARTING)
+    container_name = Column(String, nullable=True)
+    claude_session_id = Column(String, nullable=True)
+    exit_code = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    spec_path = Column(String, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AnalysisEventRecord(Base):
+    __tablename__ = "analysis_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, nullable=False, index=True)
+    event_type = Column(SQLEnum(AgentEventType), nullable=False)
+    text = Column(Text, default="")
+    raw = Column(Text, default="{}")
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class SQLiteIssueTracker(IssueTrackerPort):
@@ -345,3 +376,108 @@ class SQLiteIssueTracker(IssueTrackerPort):
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
+
+    async def save_analysis_session(self, session: AnalysisSession) -> AnalysisSession:
+        async with self.session_factory() as db_session:
+            res = await db_session.execute(
+                select(AnalysisSessionRecord).where(AnalysisSessionRecord.id == session.id)
+            )
+            record = res.scalar_one_or_none()
+            now = datetime.now(timezone.utc)
+            if record is None:
+                record = AnalysisSessionRecord(
+                    id=session.id,
+                    project_id=session.project_id,
+                    status=session.status,
+                    container_name=session.container_name,
+                    claude_session_id=session.claude_session_id,
+                    exit_code=session.exit_code,
+                    error=session.error,
+                    spec_path=session.spec_path,
+                    created_at=session.created_at or now,
+                    updated_at=now,
+                )
+                db_session.add(record)
+            else:
+                record.status = session.status
+                record.container_name = session.container_name
+                record.claude_session_id = session.claude_session_id
+                record.exit_code = session.exit_code
+                record.error = session.error
+                record.spec_path = session.spec_path
+                record.updated_at = now
+            await db_session.commit()
+            await db_session.refresh(record)
+            return self._to_analysis_domain(record)
+
+    async def get_analysis_session(self, session_id: str) -> Optional[AnalysisSession]:
+        async with self.session_factory() as db_session:
+            res = await db_session.execute(
+                select(AnalysisSessionRecord).where(AnalysisSessionRecord.id == session_id)
+            )
+            record = res.scalar_one_or_none()
+            if not record:
+                return None
+            return self._to_analysis_domain(record)
+
+    async def get_active_analysis_session(self, project_id: str) -> Optional[AnalysisSession]:
+        async with self.session_factory() as db_session:
+            res = await db_session.execute(
+                select(AnalysisSessionRecord)
+                .where(
+                    AnalysisSessionRecord.project_id == project_id,
+                    AnalysisSessionRecord.status.not_in(
+                        [AnalysisStatus.FINISHED, AnalysisStatus.FAILED]
+                    ),
+                )
+                .order_by(AnalysisSessionRecord.created_at.desc())
+            )
+            record = res.scalars().first()
+            if not record:
+                return None
+            return self._to_analysis_domain(record)
+
+    async def save_analysis_event(self, session_id: str, event: AgentEvent) -> None:
+        async with self.session_factory() as db_session:
+            record = AnalysisEventRecord(
+                session_id=session_id,
+                event_type=event.type,
+                text=event.text,
+                raw=json.dumps(event.raw, ensure_ascii=False),
+                timestamp=event.timestamp or datetime.now(timezone.utc),
+            )
+            db_session.add(record)
+            await db_session.commit()
+
+    async def list_analysis_events(self, session_id: str) -> list[AgentEvent]:
+        async with self.session_factory() as db_session:
+            res = await db_session.execute(
+                select(AnalysisEventRecord)
+                .where(AnalysisEventRecord.session_id == session_id)
+                .order_by(AnalysisEventRecord.id.asc())
+            )
+            records = res.scalars().all()
+            return [
+                AgentEvent(
+                    type=r.event_type,
+                    text=r.text,
+                    raw=json.loads(r.raw or "{}"),
+                    timestamp=r.timestamp,
+                )
+                for r in records
+            ]
+
+    def _to_analysis_domain(self, record: AnalysisSessionRecord) -> AnalysisSession:
+        return AnalysisSession(
+            id=record.id,
+            project_id=record.project_id,
+            status=record.status,
+            container_name=record.container_name,
+            claude_session_id=record.claude_session_id,
+            exit_code=record.exit_code,
+            error=record.error,
+            spec_path=record.spec_path,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+

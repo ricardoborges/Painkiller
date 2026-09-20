@@ -102,6 +102,7 @@ class ExecutionResult(BaseModel):
 class AgentEventType(str, Enum):
     """Kinds of event emitted by a live agent session."""
     SYSTEM = "SYSTEM"
+    USER = "USER"
     ASSISTANT = "ASSISTANT"
     THINKING = "THINKING"
     # Pedaços de texto conforme o modelo produz. Transitórios: não entram no
@@ -142,7 +143,9 @@ class AnalysisSession(BaseModel):
     project_id: str
     status: AnalysisStatus = AnalysisStatus.STARTING
     container_name: Optional[str] = None
+    claude_session_id: Optional[str] = None
     exit_code: Optional[int] = None
     error: Optional[str] = None
     spec_path: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

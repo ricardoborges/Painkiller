@@ -11,6 +11,7 @@ from painkiller.adapters.sandbox.docker_agent_session import parse_agent_line
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
+    AnalysisSession,
     AnalysisStatus,
     Project,
     Task,
@@ -29,9 +30,23 @@ class FakeAgentSession(AgentSessionPort):
         self.stopped = False
         self.release = asyncio.Event()
 
-    async def start(self, session_id, repo_path, prompt, env=None, timeout_seconds=3600) -> str:
+    async def start(
+        self,
+        session_id,
+        repo_path,
+        prompt="",
+        env=None,
+        timeout_seconds=3600,
+        resume=False,
+        claude_session_id=None,
+    ) -> str:
         self.prompt = prompt
+        self.resume = resume
+        self.claude_session_id = claude_session_id
         return "pk-analysis-fake"
+
+    async def is_alive(self, session_id) -> bool:
+        return True
 
     async def send(self, session_id, text) -> None:
         self.sent.append(text)
@@ -320,3 +335,45 @@ def test_prompt_carries_project_context_and_the_backlog_contract(tmp_path):
     assert ".painkiller/backlog.json" in prompt
     assert "UMA pergunta por vez" in prompt
     assert "Automatizar" in prompt
+
+
+async def test_start_resumes_existing_active_session(tmp_path):
+    tracker = AsyncMock()
+    existing_session = AnalysisSession(
+        id="analysis-existing",
+        project_id="proj-1",
+        status=AnalysisStatus.WAITING_ANALYST,
+        claude_session_id="uuid-1234",
+    )
+    tracker.get_active_analysis_session.return_value = existing_session
+    tracker.get_analysis_session.return_value = existing_session
+    tracker.list_analysis_events.return_value = []
+
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
+
+    project = _project(tmp_path)
+    resumed = await engine.start(project, force_new=False)
+
+    assert resumed.id == "analysis-existing"
+    assert resumed.claude_session_id == "uuid-1234"
+
+
+async def test_start_with_force_new_creates_new_session(tmp_path):
+    tracker = AsyncMock()
+    existing_session = AnalysisSession(
+        id="analysis-existing",
+        project_id="proj-1",
+        status=AnalysisStatus.WAITING_ANALYST,
+    )
+    tracker.get_active_analysis_session.return_value = existing_session
+
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
+
+    project = _project(tmp_path)
+    session = await engine.start(project, force_new=True)
+
+    assert session.id != "analysis-existing"
+    assert session.claude_session_id is not None
+

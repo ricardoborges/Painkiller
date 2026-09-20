@@ -19,11 +19,13 @@ class AgentSessionPort(ABC):
         self,
         session_id: str,
         repo_path: str,
-        prompt: str,
+        prompt: str = "",
         env: Optional[dict[str, str]] = None,
-        timeout_seconds: int = 3600,
+        timeout_seconds: int = 86400,
+        resume: bool = False,
+        claude_session_id: Optional[str] = None,
     ) -> str:
-        """Start the session and return the container (or process) name."""
+        """Start or resume the session and return the container (or process) name."""
 
     @abstractmethod
     async def send(self, session_id: str, text: str) -> None:
@@ -40,3 +42,7 @@ class AgentSessionPort(ABC):
     @abstractmethod
     async def stop(self, session_id: str) -> None:
         """Force-stop and remove the session's container."""
+
+    @abstractmethod
+    async def is_alive(self, session_id: str) -> bool:
+        """Check if the session container or process is currently alive and running."""

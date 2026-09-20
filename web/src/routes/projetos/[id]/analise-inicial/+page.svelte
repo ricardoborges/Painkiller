@@ -46,8 +46,13 @@
 
   function remember(id: string | null) {
     try {
-      if (id) sessionStorage.setItem(storageKey, id);
-      else sessionStorage.removeItem(storageKey);
+      if (id) {
+        sessionStorage.setItem(storageKey, id);
+        localStorage.setItem(storageKey, id);
+      } else {
+        sessionStorage.removeItem(storageKey);
+        localStorage.removeItem(storageKey);
+      }
     } catch {
       /* modo privado / storage bloqueado */
     }
@@ -55,13 +60,13 @@
 
   function recall(): string | null {
     try {
-      return sessionStorage.getItem(storageKey);
+      return sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey);
     } catch {
       return null;
     }
   }
 
-  async function boot() {
+  async function boot(forceNew: boolean = false) {
     starting = true;
     startError = null;
     turns = [];
@@ -71,22 +76,37 @@
     streamClosed = false;
     waitingSince = Date.now();
 
-    const previous = recall();
-    if (previous) {
+    if (!forceNew) {
       try {
-        // O stream reemite o histórico, então reatar é suficiente.
-        session = await api.getAnalysis(previous);
-        attach(previous);
-        starting = false;
-        return;
+        const current = await api.getCurrentAnalysis(data.project.id);
+        if (current?.session) {
+          session = current.session;
+          remember(session.session_id);
+          attach(session.session_id);
+          starting = false;
+          return;
+        }
       } catch {
-        // Sessão morta junto com o uvicorn (vivem em memória): recomeça.
-        remember(null);
+        /* se rota não responder, usa fallback local */
+      }
+
+      const previous = recall();
+      if (previous) {
+        try {
+          // O stream reemite o histórico, então reatar é suficiente.
+          session = await api.getAnalysis(previous);
+          attach(previous);
+          starting = false;
+          return;
+        } catch {
+          // Sessão não encontrada: limpa e recomeça.
+          remember(null);
+        }
       }
     }
 
     try {
-      session = await api.startAnalysis(data.project.id);
+      session = await api.startAnalysis(data.project.id, forceNew);
       remember(session.session_id);
       attach(session.session_id);
     } catch (e) {
@@ -112,6 +132,9 @@
         break;
       case 'THINKING_DELTA':
         if (!streaming) reasoning += event.text;
+        break;
+      case 'USER':
+        turns = [...turns, { who: 'analyst', text: event.text }];
         break;
       case 'ASSISTANT':
         // Canônico: substitui o que foi montado por delta, então um pedaço
@@ -213,7 +236,7 @@
     }
     remember(null);
     session = null;
-    boot();
+    boot(true);
   }
 
   $effect(() => {
@@ -382,6 +405,19 @@
 
       {#if finished}
         <button type="button" class="btn btn-line full" onclick={restart}>Nova sessão</button>
+      {:else}
+        <button
+          type="button"
+          class="btn btn-line full"
+          onclick={() => {
+            if (confirm('Deseja descartar a sessão atual e iniciar uma nova análise do zero?')) {
+              restart();
+            }
+          }}
+          disabled={starting}
+        >
+          Recomeçar do zero
+        </button>
       {/if}
     </div>
   </aside>
