@@ -578,6 +578,76 @@
       background: rgba(0, 0, 0, 0.2);
     }
 
+    /* Loading Card & Animations */
+    .interrogation-loading-card {
+      align-self: center;
+      margin: auto;
+      max-width: 540px;
+      width: 100%;
+      padding: 2.5rem 2rem;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.25rem;
+      animation: fadeIn 0.3s ease-out;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 3.5px solid rgba(99, 102, 241, 0.15);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    .mini-spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(99, 102, 241, 0.2);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .loading-pulse-text {
+      font-size: 0.82rem;
+      color: #818cf8;
+      font-family: 'JetBrains Mono', monospace;
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 1; }
+    }
+
+    .chat-bubble.thinking {
+      align-self: flex-start;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px dashed rgba(99, 102, 241, 0.35);
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.85rem 1.2rem;
+    }
+
     .empty-state {
       text-align: center;
       padding: 4rem 2rem;
@@ -861,7 +931,7 @@
           </div>
 
           <div class="card-footer-actions">
-            <button class="btn-start" onclick="startProjectInterrogation('${p.id}')">
+            <button class="btn-start" onclick="startProjectInterrogation('${p.id}', '${(p.name || '').replace(/'/g, "\\'")}')">
               <span>▶</span> Iniciar
             </button>
             <div class="card-secondary-btns">
@@ -976,23 +1046,71 @@
       loadProjects();
     }
 
-    // Trigger Aider / Superpowers Interrogation
-    async function startProjectInterrogation(projectId) {
-      const res = await fetch(`/api/projects/${projectId}/start-interrogation`, {
-        method: 'POST'
-      });
-      const data = await res.json();
-
+    // Trigger Aider / Superpowers Interrogation with immediate screen redirect & loading
+    async function startProjectInterrogation(projectId, projectName = '') {
       activeProject = projectId;
-      activeSessionId = data.session_id;
 
+      // 1. Redirecionar imediatamente para a tela de interrogação
       document.getElementById('viewProjects').classList.remove('active');
       document.getElementById('viewInterrogation').classList.add('active');
 
-      const chat = document.getElementById('interrogationChat');
-      chat.innerHTML = '';
+      if (projectName) {
+        document.getElementById('interrogationProjectTitle').innerText = projectName;
+      }
+      document.getElementById('specPreviewBox').innerText = 'Aguardando refinamento dos requisitos...';
+      document.getElementById('btnCommitBacklog').setAttribute('disabled', 'true');
 
-      appendInterrogationMessage(data.question, 'agent');
+      const chat = document.getElementById('interrogationChat');
+      chat.innerHTML = `
+        <div id="interrogationLoading" class="interrogation-loading-card">
+          <div class="spinner"></div>
+          <div style="display: flex; flex-direction: column; gap: 0.4rem;">
+            <h4 style="font-size: 1.2rem; font-weight: 700; color: #fff;">Iniciando Agente de Arquitetura...</h4>
+            <p style="color: var(--text-muted); font-size: 0.9rem;">
+              Analisando contexto, propósito, solução e documentos anexos através do modelo Kimi K3.
+            </p>
+          </div>
+          <span class="loading-pulse-text">⚡ Raciocinando e formulando os questionamentos de alinhamento...</span>
+        </div>
+      `;
+
+      const input = document.getElementById('interrogationInput');
+      input.disabled = true;
+      input.placeholder = "Aguarde o agente formular os questionamentos...";
+
+      try {
+        const res = await fetch(`/api/projects/${projectId}/start-interrogation`, {
+          method: 'POST'
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ detail: 'Erro no servidor' }));
+          throw new Error(errData.detail || `Erro HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        activeSessionId = data.session_id;
+
+        // Limpar loading e exibir a primeira pergunta
+        chat.innerHTML = '';
+        appendInterrogationMessage(data.question, 'agent');
+
+        input.disabled = false;
+        input.placeholder = "Responda ao questionamento do agente...";
+        input.focus();
+      } catch (err) {
+        chat.innerHTML = `
+          <div class="interrogation-loading-card" style="border-color: rgba(239, 68, 68, 0.4);">
+            <div style="font-size: 2.2rem;">⚠️</div>
+            <h4 style="color: var(--accent-danger); font-size: 1.15rem;">Falha ao Conectar com o Agente</h4>
+            <p style="color: var(--text-muted); font-size: 0.9rem; max-width: 400px; line-height: 1.5;">${err.message}</p>
+            <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem;">
+              <button class="btn-outline" onclick="showProjectsView()">Voltar</button>
+              <button class="btn-primary" onclick="startProjectInterrogation('${projectId}', '${projectName}')">Tentar Novamente</button>
+            </div>
+          </div>
+        `;
+      }
     }
 
     async function sendInterrogationReply() {
@@ -1002,18 +1120,45 @@
 
       appendInterrogationMessage(text, 'user');
       input.value = '';
+      input.disabled = true;
 
-      const res = await fetch('/api/interrogation/reply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: activeSessionId, answer: text })
-      });
-      const data = await res.json();
-      appendInterrogationMessage(data.reply, 'agent');
+      // Thinking bubble
+      const thinkingBubble = document.createElement('div');
+      thinkingBubble.className = 'chat-bubble thinking';
+      thinkingBubble.id = 'agentThinking';
+      thinkingBubble.innerHTML = '<div class="mini-spinner"></div> Agente analisando sua resposta e refinando a especificação...';
+      const chat = document.getElementById('interrogationChat');
+      chat.appendChild(thinkingBubble);
+      chat.scrollTop = chat.scrollHeight;
 
-      if (data.is_complete) {
-        document.getElementById('specPreviewBox').innerText = data.reply.replace('ESPECIFICAÇÃO_CONCLUÍDA:', '').trim();
-        document.getElementById('btnCommitBacklog').removeAttribute('disabled');
+      try {
+        const res = await fetch('/api/interrogation/reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: activeSessionId, answer: text })
+        });
+
+        const tb = document.getElementById('agentThinking');
+        if (tb) tb.remove();
+
+        if (!res.ok) {
+          throw new Error(`Erro HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        appendInterrogationMessage(data.reply, 'agent');
+
+        if (data.is_complete) {
+          document.getElementById('specPreviewBox').innerText = data.reply.replace('ESPECIFICAÇÃO_CONCLUÍDA:', '').trim();
+          document.getElementById('btnCommitBacklog').removeAttribute('disabled');
+        }
+      } catch (err) {
+        const tb = document.getElementById('agentThinking');
+        if (tb) tb.remove();
+        appendInterrogationMessage('Erro na comunicação com o modelo: ' + err.message, 'agent');
+      } finally {
+        input.disabled = false;
+        input.focus();
       }
     }
 
