@@ -2,6 +2,11 @@
 
 import os
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# Ensure .env is loaded with priority
+load_dotenv(override=True)
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
