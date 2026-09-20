@@ -1,0 +1,212 @@
+<script lang="ts">
+  import '../app.css';
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { pending } from '$lib/stores/pending.svelte';
+
+  let { children } = $props();
+
+  const isLogin = $derived(page.url.pathname === '/login');
+
+  $effect(() => {
+    auth.restore();
+  });
+
+  // Gate de navegação (não de segurança — ver auth.svelte.ts).
+  $effect(() => {
+    if (!auth.ready) return;
+    if (!auth.signedIn && !isLogin) goto('/login', { replaceState: true });
+    if (auth.signedIn && isLogin) goto('/projetos', { replaceState: true });
+  });
+
+  $effect(() => {
+    if (auth.signedIn) pending.ensure();
+  });
+
+  function signOut() {
+    auth.signOut();
+    pending.reset();
+    goto('/login', { replaceState: true });
+  }
+
+  const nav = [
+    { href: '/projetos', label: 'Projetos' },
+    { href: '/pendencias', label: 'Pendências' }
+  ];
+</script>
+
+<svelte:head>
+  <title>Painkiller</title>
+</svelte:head>
+
+{#if !auth.ready}
+  <div class="boot" aria-busy="true"></div>
+{:else if isLogin}
+  {@render children()}
+{:else}
+  <header>
+    <div class="shell bar">
+      <a href="/projetos" class="brand" aria-label="Painkiller, início">
+        <span class="mark" aria-hidden="true"></span>
+        <span class="word">Painkiller</span>
+      </a>
+
+      <nav aria-label="Principal">
+        {#each nav as item (item.href)}
+          {@const active = page.url.pathname.startsWith(item.href)}
+          <a href={item.href} class="nav-link" class:active aria-current={active ? 'page' : undefined}>
+            {item.label}
+            {#if item.href === '/pendencias' && pending.count > 0}
+              <span class="count mono">{pending.count}</span>
+            {/if}
+          </a>
+        {/each}
+      </nav>
+
+      <div class="who">
+        <span class="label user">{auth.user?.username}</span>
+        <button type="button" class="btn btn-quiet btn-sm" onclick={signOut}>Sair</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    {@render children()}
+  </main>
+{/if}
+
+<style>
+  .boot {
+    min-height: 100dvh;
+  }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule-ink);
+  }
+
+  .bar {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: var(--s6);
+    height: 3.25rem;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  /* Quadrado de acento: a única cor fixa do cabeçalho */
+  .mark {
+    width: 9px;
+    height: 9px;
+    background: var(--accent);
+  }
+
+  .word {
+    font-size: var(--t-small);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  nav {
+    display: flex;
+    gap: var(--s5);
+    justify-self: start;
+  }
+
+  .nav-link {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    height: 3.25rem;
+    font-size: var(--t-small);
+    color: var(--ink-3);
+    transition: color var(--fast) var(--ease);
+  }
+
+  .nav-link:hover {
+    color: var(--ink);
+  }
+
+  /* Indicador de rota: filete grosso encostado na régua do cabeçalho */
+  .nav-link.active {
+    color: var(--ink);
+  }
+
+  .nav-link.active::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--ink);
+  }
+
+  .count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.125rem;
+    height: 1.125rem;
+    padding-inline: 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .who {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+
+  .user {
+    color: var(--ink-2);
+  }
+
+  main {
+    padding-bottom: var(--s9);
+  }
+
+  @media (max-width: 640px) {
+    .bar {
+      grid-template-columns: auto auto;
+      grid-template-areas: 'brand who' 'nav nav';
+      height: auto;
+      row-gap: 0;
+      padding-block: var(--s3) 0;
+    }
+
+    .brand {
+      grid-area: brand;
+    }
+
+    .who {
+      grid-area: who;
+      justify-self: end;
+    }
+
+    nav {
+      grid-area: nav;
+      gap: var(--s4);
+    }
+
+    .nav-link {
+      height: 2.5rem;
+    }
+
+    .user {
+      display: none;
+    }
+  }
+</style>

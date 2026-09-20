@@ -1,0 +1,163 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+Painkiller is a platform that automates software development by orchestrating coding agents inside Docker containers. An analyst is interviewed by a containerized Claude Code agent running the superpowers `brainstorming` skill, the resulting spec is decomposed into atomic tasks, and each task is dispatched to a sandboxed Aider agent that works on a feature branch.
+
+**Two different agents.** The interview runs Claude Code, kept alive and streamed; the coding runs Aider, one-shot. See **Initial analysis** and **Task dispatch**.
+
+Code comments, LLM prompts, API error messages and the UI are in **Portuguese (pt-BR)**; code identifiers and docstrings are in English. Follow that split.
+
+## Commands
+
+```bash
+pip install -e ".[dev]"           # install package + test deps
+pytest                             # full suite (53 tests, no Docker daemon needed — docker is mocked)
+pytest tests/unit/test_orchestrator.py::test_dispatch_task_success   # single test
+uvicorn painkiller.api.server:app --reload    # API + built UI at http://localhost:8000/
+docker build -f docker/worker.Dockerfile -t painkiller-worker:latest .   # worker image (required before dispatching tasks)
+docker build -f docker/agent.Dockerfile -t painkiller-agent:latest .     # analysis agent image (required before "Iniciar análise")
+```
+
+Frontend (`web/`, SvelteKit — see **Frontend** below):
+
+```bash
+cd web
+npm install
+npm run dev        # :5173, proxies /api to uvicorn on :8000 — run both
+npm run build      # emits the SPA into painkiller/api/static/
+npm run check      # svelte-check; must stay at 0 errors
+```
+
+`uvicorn` alone serves the **last build**, not your working copy — edits under `web/src/` are invisible until `npm run build` or `npm run dev`.
+
+Whole stack in Docker (see **Container topology** below):
+
+```bash
+docker compose --profile build build    # api image + painkiller-worker + painkiller-agent
+docker compose up -d                    # api on :8000; the *-image services never start
+docker compose logs -f api
+docker compose down
+```
+
+`pyproject.toml` sets `asyncio_mode = "auto"` and `pythonpath = ["."]`, so async tests need no event-loop boilerplate and the package is importable without install.
+
+There is no linter or formatter configured.
+
+## Configuration
+
+`.env` is loaded with `override=True` at import time in [server.py](painkiller/api/server.py) — before FastAPI imports — so env changes require a server restart, and `.env` wins over the shell environment.
+
+LLM selection resolves through [litellm_adapter.py](painkiller/adapters/llm/litellm_adapter.py) in this order: `PAINKILLER_LLM_MODEL` / `PAINKILLER_LLM_API_BASE` / `PAINKILLER_LLM_API_KEY`, then provider-specific vars (`NVIDIA_API_KEY`, `OPENAI_API_BASE`, `OPENAI_API_KEY`). When the key starts with `nvapi-` or the base URL contains `nvidia.com`, the adapter bypasses LiteLLM entirely and streams SSE against NVIDIA Build NIM via httpx (`_complete_nvidia`) — that path exists because reasoning models there need streaming and long timeouts. Default model is `moonshotai/kimi-k3`.
+
+Two dependencies are imported but **not** declared in `pyproject.toml`: `python-dotenv` (required by the server) and `httpx` (dev-only extra, but used at runtime by the NVIDIA path). `pypdf` and `python-docx` are optional — [attachment_reader.py](painkiller/core/attachment_reader.py) degrades gracefully without them.
+
+## Architecture
+
+Hexagonal / ports & adapters. The dependency rule is strict: `core/` and `engine/` import only from `core/`; adapters implement the ABCs in [core/ports/](painkiller/core/ports/); wiring happens only in `create_app()`.
+
+- **[core/domain/models.py](painkiller/core/domain/models.py)** — Pydantic entities (`Project`, `Task`, `ClarificationRequest`, `ExecutionResult`) plus the `TaskStatus` lifecycle: `BACKLOG → READY → RUNNING → {AWAITING_ANALYST | IN_REVIEW | FAILED} → COMPLETED`.
+- **[core/ports/](painkiller/core/ports/)** — five ABCs: `IssueTrackerPort`, `SandboxPort`, `AgentSessionPort`, `GitPort`, `LLMPort`. Adding a method here means updating the adapter *and* the `AsyncMock`-based unit tests.
+- **[adapters/](painkiller/adapters/)** — `sqlite_tracker` (async SQLAlchemy; list fields are stored as JSON text columns and converted in `_to_task_domain`/`_to_project_domain`), `git_adapter` (shells out to `git`), `docker_runner` (docker-py, one-shot), `docker_agent_session` (docker-py, long-lived), `litellm_adapter`. The container-to-host path rewrite both docker adapters need lives in `sandbox/paths.py`.
+- **[engine/orchestrator.py](painkiller/engine/orchestrator.py)** — the state machine. Everything below hangs off it.
+- **[engine/analysis.py](painkiller/engine/analysis.py)** — the interactive initial analysis (see **Initial analysis** below). Also an in-process session dict.
+- **[interrogation/wizard.py](painkiller/interrogation/wizard.py)** — the *older* LLM interview + backlog generation, still wired at `/api/interrogation/*` but no longer reachable from the UI. **Sessions live in an in-process dict**, so they are lost on restart and will not survive multiple workers.
+- **[api/](painkiller/api/)** — FastAPI. Adapters are instantiated in `create_app()` and reached from handlers via `request.app.state.<name>`; tests override by passing a temp `db_url` to `create_app()`.
+- **[api/static/](painkiller/api/static/)** — **generated**, never hand-edited. It is the SvelteKit build output, committed so that a clone can run `uvicorn` with no Node toolchain. The source is `web/`.
+
+### Clean-interruption protocol (exit code 42)
+
+The distinguishing mechanism of this codebase. When the agent in the container hits ambiguity, its prompt tells it to run `painkiller ask "<question>" --context "<where>"` instead of guessing. That CLI ([cli/ask.py](painkiller/cli/ask.py)) writes `.painkiller/clarification.json` into the workspace, `git add -A && git commit` the WIP, and exits **42**.
+
+`DockerSandboxRunner` sees exit 42, reads that JSON back off the bind-mounted repo path, and returns it as `ExecutionResult.clarification`. The orchestrator then records the clarification, sets the task to `AWAITING_ANALYST`, and stops. `POST /api/tasks/{id}/clarification` resolves it and re-enters `dispatch_task` from the top — the task re-runs on the same branch with the WIP commit already in place.
+
+So exit codes carry meaning end to end: `42` = paused for the analyst, `0` = agent finished (orchestrator then runs `git.run_tests`, which defaults to bare `pytest` in the *target* repo; failure → `FAILED`, success → commit + `IN_REVIEW`), anything else = `FAILED`. Do not repurpose 42.
+
+### Initial analysis (Claude Code + superpowers, streamed)
+
+"Iniciar análise" runs a **different agent from the one that writes code**. Task dispatch runs Aider one-shot; the analysis runs **Claude Code** kept alive for a back-and-forth interview, driven by the [superpowers](https://github.com/obra/superpowers) `brainstorming` skill. Aider has no skill system, so this is not interchangeable — swapping the analysis back to Aider means losing the skills.
+
+Two consequences that are easy to get wrong:
+
+- **It needs a backend that serves `/v1/messages`.** Claude Code speaks the Anthropic Messages API, so the `NVIDIA_API_KEY` / `PAINKILLER_LLM_*` chain that drives the rest of the platform does not reach it — `integrate.api.nvidia.com/v1/messages` returns 404 (only `/v1/chat/completions` exists there). Three options, and `DockerAgentSession._require_credentials` names all three in pt-BR before starting the container rather than letting it die silently. See **LLM backend for the analysis agent** below.
+- **Input is a file, not a socket.** A bidirectional `docker attach` is not portable (npipe on Windows; multiplexed frame headers without a TTY), so the API *appends* JSONL to `.painkiller/agent-stdin.jsonl` inside the bind-mounted repo, and `painkiller agent-run` ([cli/agent_run.py](painkiller/cli/agent_run.py)) polls that file inside the container and feeds the agent's stdin. It only forwards **complete** lines, propagates the agent's exit code, and treats `{"type": "__painkiller_eof__"}` as "close stdin so the agent wraps up". Output comes back the ordinary way, via `container.logs(stream=True, follow=True)`.
+
+The stream-json envelope from Claude Code is parsed in `parse_agent_line` into an `AgentEvent`; a line that is not JSON becomes an `ERROR` event rather than being dropped, because node/npm warnings share the same log stream. `RESULT` means the agent handed the turn back — that is what enables the composer in the UI, and the only place the accent colour is spent on this screen.
+
+**Token-level streaming.** `--include-partial-messages` makes Claude Code emit `{"type": "stream_event", "event": {...}}` lines wrapping ordinary Anthropic SSE events. `content_block_delta` becomes `ASSISTANT_DELTA` / `THINKING_DELTA`; `signature_delta` and `input_json_delta` have nothing readable and are dropped. Two rules keep this from causing trouble:
+
+- **Deltas never enter the replay buffer** (`TRANSIENT_EVENTS` in `analysis.py`). There are thousands per turn, and the canonical `assistant` message follows with the whole text anyway. A client that reconnects replays the conversation, not the typing.
+- **The canonical `ASSISTANT` event replaces the accumulated buffer** in the UI rather than appending to it, so a delta lost in transit cannot leave truncated text on screen.
+
+Measured against kimi-k3 through the NVIDIA proxy: first thinking delta at ~114s, first text delta at ~119s, canonical message at ~121s. So streaming the *text* buys about two seconds — the real gain is the ~114s of reasoning that would otherwise be a blank clock. The dead time before the first token is model prefill and nothing in this codebase can shorten it.
+
+`AnalysisOrchestrator` fans events out to SSE subscribers and keeps a replay buffer, so a reconnecting `EventSource` sees the whole conversation. `AnalysisRun.done` (not the session status) is what tells a late subscriber the stream is over — a stream can end without ever emitting `EXIT`, and without that flag the SSE generator hangs forever.
+
+`POST /api/projects/{id}/analysis` returns **immediately**; everything after that is `GET /api/analysis/{sid}/stream`. This is the opposite of task dispatch, which still blocks for the whole run.
+
+The handoff to the backlog is a file: the agent writes the spec to `docs/superpowers/specs/` and the decomposed tasks to `.painkiller/backlog.json`, and `POST /api/analysis/{sid}/commit` reads that JSON back off the bind mount. Dependencies are expressed by task *title* there, because the agent cannot know the IDs the tracker assigns on creation.
+
+### LLM backend for the analysis agent
+
+Three ways to feed the analysis agent, in increasing order of moving parts:
+
+1. **Anthropic directly** — set `ANTHROPIC_API_KEY`, leave `ANTHROPIC_BASE_URL` empty. Nothing else to run.
+2. **Self-hosted NIM** — NVIDIA's own NIM server already serves `/v1/messages`, so point `ANTHROPIC_BASE_URL` at it. This is the case [NVIDIA's Claude Code page](https://docs.nvidia.com/nim/large-language-models/latest/ai-assistant-integrations/claude-code.html) documents.
+3. **NVIDIA Build (hosted) through the translating proxy** — the default in `docker-compose.yml`. The `llm-proxy` service runs LiteLLM, which exposes `/v1/messages` and forwards to NVIDIA's OpenAI-compatible endpoint with the project's existing `NVIDIA_API_KEY`.
+
+Three things about option 3 were found by measurement, not by reading docs, and each one silently breaks the agent if changed:
+
+- **`use_chat_completions_url_for_anthropic_messages: true` is mandatory.** LiteLLM's `/v1/messages` bridge sends `openai`-provider models to the *Responses* API (`/v1/responses`), which NVIDIA Build does not have — every call 404s. The flag is what routes it to `/v1/chat/completions` instead (see `_should_route_to_responses_api` in litellm).
+- **`drop_params: true` is not enough.** Claude Code sends `prompt_cache_key`, which is a *valid* OpenAI parameter, so LiteLLM forwards it and NVIDIA rejects the request with 400. Those params are listed explicitly under `additional_drop_params`.
+- **The agent container must be told which network to join.** It is created as a *sibling* over the host socket, so it never joins the compose network on its own and cannot resolve `llm-proxy`. `PAINKILLER_AGENT_NETWORK` is what attaches it; `extra_hosts` additionally makes `host.docker.internal` work for a proxy published on a host port.
+
+The model aliases also have to be remapped. Claude Code keeps asking for `haiku`/`sonnet`/`opus` for background work regardless of `--model`, and a custom backend has no such models, so `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL` all point at the same served model. That caveat is NVIDIA's own and it applies identically here.
+
+A caveat worth keeping in view: Claude Code's system prompt and the superpowers skills are long and tuned for Claude models. They *work* on kimi-k3 — the skill gets invoked and the interview runs — but quality and latency are materially different, and the whole chain is slower.
+
+### Task dispatch
+
+`dispatch_task` refuses to run a task whose `dependencies` are not all `COMPLETED`, creates/checks out `feature/{task_id}`, builds the Portuguese instruction prompt (including the clarification protocol block) in `_build_task_instructions`, then runs `painkiller-worker:latest` with the target repo bind-mounted at `/workspace`. API keys are copied from the server's environment into the container, and NVIDIA/custom-base vars are remapped onto `OPENAI_API_KEY`/`OPENAI_API_BASE` because that is what Aider reads.
+
+Dispatch is synchronous inside the HTTP request (the blocking docker-py wait is offloaded with `run_in_executor`), so `POST /api/tasks/{id}/dispatch` blocks for the full agent run.
+
+## Frontend
+
+SvelteKit 2 + Svelte 5 (runes), TypeScript, plain CSS. No Tailwind, no component library, no Framer Motion — the design system is `web/src/app.css` (tokens) plus scoped `<style>` blocks.
+
+Served as a pure SPA: `web/src/routes/+layout.ts` sets `ssr = false`, `adapter-static` emits a `fallback: 'index.html'`, and `create_app()` registers a catch-all **after** the routers that returns a real file when one exists on disk and `index.html` otherwise. That catch-all explicitly 404s anything under `api/` so an unknown endpoint stays JSON instead of silently becoming the SPA shell.
+
+Design rules that are load-bearing, not decoration:
+
+- **Exactly one colour exists.** The whole UI is ink on paper; the vermilion `--accent` is reserved for a single meaning — an agent is blocked waiting for the analyst (`AWAITING_ANALYST`, i.e. exit 42). Task statuses are otherwise distinguished by weight, marker and diagonal hatching (`FAILED`), never by a status-colour palette. Spending the accent anywhere else breaks the signal.
+- Zero border-radius, hairline `1px` rules instead of cards, `Geist` + `Geist Mono`, no emoji (icons are inline SVG in `Icon.svelte`), skeletons instead of spinners.
+
+**Terminology:** the UI calls this step *"análise inicial"* and routes it at `/projetos/[id]/analise-inicial`, and the backend now agrees (`/api/analysis/*`). The older `/api/interrogation/*` endpoints and their `api.ts` wrappers are still there but unused by the UI. UI copy is pt-BR.
+
+**Long-running requests:** `POST /api/tasks/{id}/dispatch` and `POST /api/tasks/{id}/clarification` hold the HTTP connection open for the entire container run. The UI has no timeout and shows an elapsed clock (`Elapsed.svelte`) because that is the only honest progress signal available. The análise-inicial page is the exception: it streams, so the clock there only covers the gap between turns, and `TOOL_USE` events give real progress while the agent works in silence.
+
+**Analysis sessions are in-process** (a dict on `AnalysisOrchestrator`), so a uvicorn restart invalidates them, orphans the container and makes `/analysis/{id}/message` return 404. The page detects that 404 specifically and says so. It also stashes the session id in `sessionStorage` so a page reload re-attaches to the running session instead of starting a second container — the SSE replay buffer means re-attaching loses no conversation.
+
+`/pendencias` sweeps every project and lists its tasks client-side (N+1) because the API has no global pending-clarifications endpoint. That is the natural place for a backend addition.
+
+## Container topology
+
+`docker-compose.yml` runs the API in a container that creates the agent containers as **siblings** over the mounted host socket, never nested. That one fact drives everything else here.
+
+**The bind-mount source is resolved by the host daemon, not by the API container.** So when `DockerSandboxRunner` passes `repo_path` as the worker's `/workspace` source, a container-local path like `/app/storage/projects/X/repo` means nothing on the other side. `_daemon_path()` rewrites the prefix using the `PAINKILLER_CONTAINER_ROOT` / `PAINKILLER_HOST_ROOT` pair (covered by `tests/unit/test_sandbox_paths.py`). With either variable unset it returns the plain absolute path, so running on the host directly is unaffected — that is the default.
+
+`PAINKILLER_HOST_ROOT` must be the **absolute host path** of `./storage` and lives in `.env`. Get it wrong and the UI still works end to end; only dispatch silently mounts the wrong directory into the agent.
+
+`./storage` must stay a bind mount rather than a named volume, precisely because the sibling containers address it through the host.
+
+Other pieces: `docker/api.Dockerfile` is multi-stage (Node builds `web/`, then a Python runtime with no Node), so the image does not depend on the committed `painkiller/api/static/`. `PAINKILLER_DB_URL` puts SQLite on a named volume. The `worker-image` service exists only so compose builds the image the API instantiates by name; it sits behind a `build` profile so `up` never starts it.
+
+### Packaging note
+
+`[tool.setuptools.packages.find] include = ["painkiller*"]` in `pyproject.toml` is required: without it, flat-layout auto-discovery sweeps `web/node_modules/` into the distribution (147 phantom packages). `.dockerignore` keeps the same tree out of the worker image's build context, which `worker.Dockerfile` populates with `COPY . /tmp/painkiller`.
+
+### Auth
+
+[api/routes/auth.py](painkiller/api/routes/auth.py) is a hardcoded single-user stub (`admin`/`123456`, fixed token) and no route enforces it. Treat it as a placeholder, not a security boundary.

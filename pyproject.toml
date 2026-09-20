@@ -18,6 +18,12 @@ dependencies = [
     "litellm>=1.40.0",
     "click>=8.1.0",
     "websockets>=12.0",
+    # Ambos sao importados em runtime: python-dotenv em api/server.py e httpx
+    # no caminho nativo da NVIDIA em adapters/llm/litellm_adapter.py.
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    # Exigida pelo upload de anexos (UploadFile/File em api/routes/projects.py).
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +32,11 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",
 ]
+
+[tool.setuptools.packages.find]
+# Sem isto o auto-discovery de flat-layout varre web/, web/node_modules/,
+# storage/ e docker/ como se fossem pacotes Python.
+include = ["painkiller*"]
 
 [project.scripts]
 painkiller = "painkiller.cli.main:cli"

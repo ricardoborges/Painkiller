@@ -1,0 +1,25 @@
+# worker.Dockerfile faz `COPY . /tmp/painkiller`, então tudo aqui entra no
+# contexto de build. Sem estas linhas, node_modules sozinho manda ~59 MB.
+web/node_modules/
+web/.svelte-kit/
+web/build/
+
+.git/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Estado local: banco, anexos enviados e repositórios dos projetos
+*.db
+storage/
+.env
+
+docs/
+tests/

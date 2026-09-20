@@ -1,0 +1,41 @@
+# Tradutor de protocolo para o agente da análise inicial.
+#
+# O Claude Code fala a Messages API da Anthropic (POST /v1/messages). O NVIDIA
+# Build hospedado só expõe o protocolo OpenAI (/v1/chat/completions) — medido:
+# /v1/messages responde 404 lá. O proxy do LiteLLM expõe /v1/messages e traduz
+# para o backend OpenAI-compatível, que é o que torna a integração possível.
+#
+# A página da NVIDIA sobre Claude Code descreve o caso do NIM AUTO-HOSPEDADO,
+# que já serve /v1/messages nativamente e dispensa este proxy.
+
+model_list:
+  # Nome único para onde todos os aliases do Claude Code são redirecionados.
+  - model_name: painkiller-agent
+    litellm_params:
+      model: openai/moonshotai/kimi-k3
+      api_base: https://integrate.api.nvidia.com/v1
+      api_key: os.environ/NVIDIA_API_KEY
+      # Modelos de raciocínio na NVIDIA demoram; o padrão do proxy é curto.
+      timeout: 600
+      stream_timeout: 600
+      # drop_params sozinho não basta: estes são parâmetros OpenAI válidos, que
+      # o LiteLLM portanto repassa, mas que o NVIDIA Build recusa com 400.
+      additional_drop_params:
+        - prompt_cache_key
+        - safety_identifier
+        - store
+        - metadata
+
+litellm_settings:
+  # Sem isto o bridge de /v1/messages manda provedores "openai" para a
+  # Responses API (/v1/responses), que o NVIDIA Build não tem — medido: 404.
+  # Ver _should_route_to_responses_api em litellm/llms/anthropic/.
+  use_chat_completions_url_for_anthropic_messages: true
+
+  # O Claude Code manda cache_control, thinking e outros campos que o backend
+  # OpenAI não conhece; sem isto cada requisição viraria erro de parâmetro.
+  drop_params: true
+  set_verbose: false
+
+general_settings:
+  master_key: os.environ/PAINKILLER_PROXY_KEY

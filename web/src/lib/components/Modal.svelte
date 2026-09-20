@@ -1,0 +1,98 @@
+<script lang="ts">
+  import type { Snippet } from 'svelte';
+  import Icon from './Icon.svelte';
+
+  /**
+   * <dialog> nativo: dá foco preso e Escape de graça.
+   * Painel encostado no topo, sem raio e com sombra mínima tingida —
+   * a elevação só existe porque é funcionalmente necessária.
+   */
+  let {
+    open = $bindable(false),
+    title,
+    width = '46rem',
+    body,
+    footer
+  }: {
+    open?: boolean;
+    title: string;
+    width?: string;
+    body: Snippet;
+    footer?: Snippet;
+  } = $props();
+
+  let el = $state<HTMLDialogElement | null>(null);
+
+  $effect(() => {
+    if (!el) return;
+    if (open && !el.open) el.showModal();
+    else if (!open && el.open) el.close();
+  });
+</script>
+
+<dialog bind:this={el} onclose={() => (open = false)} style="--w: {width}">
+  <div class="panel">
+    <header>
+      <h2 class="title">{title}</h2>
+      <button type="button" class="btn-icon" onclick={() => (open = false)} aria-label="Fechar">
+        <Icon name="close" />
+      </button>
+    </header>
+    {@render body()}
+    {#if footer}
+      <footer>{@render footer()}</footer>
+    {/if}
+  </div>
+</dialog>
+
+<style>
+  dialog {
+    width: min(var(--w), calc(100vw - 2rem));
+    max-height: min(86vh, 54rem);
+    margin: 4.5rem auto auto;
+    padding: 0;
+    border: 1px solid var(--rule-2);
+    background: var(--paper);
+    color: var(--ink);
+    box-shadow: 0 24px 48px -24px rgba(20, 20, 22, 0.24);
+  }
+
+  dialog::backdrop {
+    background: rgba(20, 20, 22, 0.32);
+  }
+
+  dialog[open] {
+    animation: rise var(--base) var(--ease);
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    max-height: inherit;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s4);
+    padding: var(--s4) var(--s5);
+    border-bottom: 1px solid var(--rule-ink);
+  }
+
+  footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s2);
+    padding: var(--s4) var(--s5);
+    border-top: 1px solid var(--rule);
+    background: var(--paper-sunk);
+  }
+
+  @media (max-width: 640px) {
+    dialog {
+      margin-top: 1rem;
+      max-height: calc(100vh - 2rem);
+    }
+  }
+</style>

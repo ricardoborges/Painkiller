@@ -9,6 +9,7 @@ import docker
 
 from painkiller.core.domain.models import Task, ExecutionResult, ClarificationRequest
 from painkiller.core.ports.sandbox import SandboxPort
+from painkiller.adapters.sandbox.paths import daemon_path
 
 
 class DockerSandboxRunner(SandboxPort):
@@ -28,6 +29,10 @@ class DockerSandboxRunner(SandboxPort):
         if self._client is None:
             self._client = docker.from_env()
         return self._client
+
+    # Mantido como staticmethod para nao quebrar chamadas existentes; a
+    # implementacao real vive em paths.py, compartilhada com a sessao interativa.
+    _daemon_path = staticmethod(daemon_path)
 
     async def run_task(
         self,
@@ -97,7 +102,7 @@ class DockerSandboxRunner(SandboxPort):
                 self.image_name,
                 command=command,
                 name=container_name,
-                volumes={os.path.abspath(repo_path): {"bind": "/workspace", "mode": "rw"}},
+                volumes={self._daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"}},
                 environment=env_vars,
                 detach=True,
                 working_dir="/workspace",

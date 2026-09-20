@@ -97,3 +97,52 @@ class ExecutionResult(BaseModel):
     exit_code: int
     logs: str
     clarification: Optional[ClarificationRequest] = None
+
+
+class AgentEventType(str, Enum):
+    """Kinds of event emitted by a live agent session."""
+    SYSTEM = "SYSTEM"
+    ASSISTANT = "ASSISTANT"
+    THINKING = "THINKING"
+    # Pedaços de texto conforme o modelo produz. Transitórios: não entram no
+    # buffer de replay, porque o ASSISTANT canônico chega logo depois com o
+    # texto inteiro. Ver AnalysisOrchestrator._pump.
+    ASSISTANT_DELTA = "ASSISTANT_DELTA"
+    THINKING_DELTA = "THINKING_DELTA"
+    TOOL_USE = "TOOL_USE"
+    TOOL_RESULT = "TOOL_RESULT"
+    RESULT = "RESULT"
+    ERROR = "ERROR"
+    EXIT = "EXIT"
+
+
+class AgentEvent(BaseModel):
+    """A single event streamed out of a running agent session."""
+    type: AgentEventType
+    text: str = ""
+    # Payload bruto do stream-json do Claude Code, preservado para o front
+    # mostrar detalhes (nome da ferramenta, custo, modelo) sem que o backend
+    # precise modelar cada variante.
+    raw: dict = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class AnalysisStatus(str, Enum):
+    """Lifecycle of an initial-analysis session."""
+    STARTING = "STARTING"
+    WAITING_AGENT = "WAITING_AGENT"
+    WAITING_ANALYST = "WAITING_ANALYST"
+    FINISHED = "FINISHED"
+    FAILED = "FAILED"
+
+
+class AnalysisSession(BaseModel):
+    """A live brainstorming session between the analyst and a containerized agent."""
+    id: str
+    project_id: str
+    status: AnalysisStatus = AnalysisStatus.STARTING
+    container_name: Optional[str] = None
+    exit_code: Optional[int] = None
+    error: Optional[str] = None
+    spec_path: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -1,3 +1,4 @@
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
 *$py.class
@@ -10,6 +11,44 @@ build/
 *.egg-info/
 .venv/
 env/
-.superpowers/
+
+# ---------- Frontend (web/) ----------
+node_modules/
+.svelte-kit/
+web/build/
+*.tsbuildinfo
+npm-debug.log*
+
+# ---------- Estado local ----------
+# Banco SQLite
 *.db
+*.db-journal
+*.db-wal
+
+# Segredos: chaves de LLM
 .env
+.env.*
+!.env.example
+
+# Repositorios dos projetos e anexos enviados. O conteudo e gerado em runtime
+# e storage/projects/<id>/repo chega a ser um repositorio git aninhado.
+# A pasta em si fica, porque o docker-compose a monta no contentor da API.
+/storage/*
+!/storage/.gitkeep
+
+.superpowers/
+
+# ---------- Sistema / editor ----------
+.DS_Store
+Thumbs.db
+*.swp
+
+# ---------- Build da SPA ----------
+# painkiller/api/static/ e gerado por `cd web && npm run build`, mas esta
+# versionado de proposito: assim um clone roda `uvicorn` sem precisar de Node,
+# e a imagem Docker nao e o unico caminho de execucao.
+# Para parar de versiona-lo, descomente as duas linhas abaixo e rode
+#   git rm -r --cached painkiller/api/static
+# lembrando que o build passa a ser pre-requisito para servir a interface.
+# painkiller/api/static/_app/
+# painkiller/api/static/index.html
