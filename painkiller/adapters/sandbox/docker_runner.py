@@ -63,11 +63,24 @@ class DockerSandboxRunner(SandboxPort):
             "ANTHROPIC_API_KEY",
             "GEMINI_API_KEY",
             "DEEPSEEK_API_KEY",
+            "NVIDIA_API_KEY",
+            "OPENAI_API_BASE",
+            "PAINKILLER_LLM_MODEL",
+            "PAINKILLER_LLM_API_BASE",
+            "PAINKILLER_LLM_API_KEY",
             "PAINKILLER_WORKSPACE",
         ]:
             if key in os.environ:
                 env_vars[key] = os.environ[key]
         env_vars["PAINKILLER_WORKSPACE"] = "/workspace"
+
+        # If NVIDIA / custom base provided, map as OPENAI_API_KEY / OPENAI_API_BASE for Aider
+        if "NVIDIA_API_KEY" in env_vars and "OPENAI_API_KEY" not in env_vars:
+            env_vars["OPENAI_API_KEY"] = env_vars["NVIDIA_API_KEY"]
+        if "PAINKILLER_LLM_API_KEY" in env_vars and "OPENAI_API_KEY" not in env_vars:
+            env_vars["OPENAI_API_KEY"] = env_vars["PAINKILLER_LLM_API_KEY"]
+        if "PAINKILLER_LLM_API_BASE" in env_vars and "OPENAI_API_BASE" not in env_vars:
+            env_vars["OPENAI_API_BASE"] = env_vars["PAINKILLER_LLM_API_BASE"]
 
         command = [
             "aider",
@@ -76,6 +89,8 @@ class DockerSandboxRunner(SandboxPort):
             "--yes",
             "--no-check-update",
         ]
+        if "PAINKILLER_LLM_MODEL" in env_vars:
+            command.extend(["--model", env_vars["PAINKILLER_LLM_MODEL"]])
 
         try:
             container = self.client.containers.run(

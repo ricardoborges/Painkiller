@@ -1,7 +1,8 @@
-"""LiteLLM adapter implementing LLMPort."""
+"""LiteLLM adapter implementing LLMPort with custom endpoints support (like NVIDIA Build / NIM)."""
 
 import json
-from typing import Type, TypeVar
+import os
+from typing import Optional, Type, TypeVar
 import litellm
 from pydantic import BaseModel
 
@@ -11,10 +12,32 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LiteLLMAdapter(LLMPort):
-    """Multi-provider LLM adapter powered by LiteLLM."""
+    """Multi-provider LLM adapter powered by LiteLLM with support for custom endpoints."""
 
-    def __init__(self, default_model: str = "gpt-4o"):
-        self.default_model = default_model
+    def __init__(
+        self,
+        default_model: Optional[str] = None,
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        # Prioritize environment configuration
+        self.default_model = (
+            os.environ.get("PAINKILLER_LLM_MODEL")
+            or default_model
+            or "gpt-4o"
+        )
+        self.api_base = (
+            os.environ.get("PAINKILLER_LLM_API_BASE")
+            or os.environ.get("OPENAI_API_BASE")
+            or os.environ.get("NVIDIA_API_BASE")
+            or api_base
+        )
+        self.api_key = (
+            os.environ.get("PAINKILLER_LLM_API_KEY")
+            or os.environ.get("NVIDIA_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or api_key
+        )
 
     async def complete(
         self,
@@ -29,11 +52,17 @@ class LiteLLMAdapter(LLMPort):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = await litellm.acompletion(
-            model=chosen_model,
-            messages=messages,
-            temperature=temperature,
-        )
+        kwargs: dict = {
+            "model": chosen_model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+
+        response = await litellm.acompletion(**kwargs)
         return response.choices[0].message.content or ""
 
     async def structured_output(
