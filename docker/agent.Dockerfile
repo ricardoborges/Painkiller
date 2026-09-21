@@ -44,4 +44,4 @@ RUN git config --global user.name "Painkiller Agent" \
     && git config --global user.email "agent@painkiller.local" \
     && git config --global --add safe.directory /workspace
 
-CMD ["painkiller", "agent-run", "--agent-bin", "agy", "--stdin-file", "/workspace/.painkiller/agent-stdin.jsonl", "--", "--model", "gemini-3.8-flash", "--effort", "medium", "--dangerously-skip-permissions", "--input-format", "stream-json", "--output-format", "stream-json", "--print=\"\""]
+CMD ["painkiller", "agent-run", "--agent-bin", "agy", "--stdin-file", "/workspace/.painkiller/agent-stdin.jsonl", "--", "--model", "gemini-3.8-flash", "--effort", "medium", "--dangerously-skip-permissions", "--input-format", "stream-json", "--output-format", "stream-json"]

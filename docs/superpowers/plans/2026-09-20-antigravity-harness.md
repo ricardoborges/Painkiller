@@ -4,7 +4,7 @@
 
 **Goal:** Refactor the initial analysis agent harness to run Google Antigravity CLI (`agy`) with the `superpowers` plugin and Google's `gemini-3.8-flash` model, configured via `GEMINI_API_KEY` in `.env`.
 
-**Architecture:** Replace the Claude Code container runtime with a native `agy` container runtime. The interactive bridge (`agent-run`) feeds NDJSON turns formatted for `agy` (`{"event": "user", ...}`), while `DockerAgentSession` invokes `agy` in headless `--print=""` mode with `--input-format stream-json --output-format stream-json --dangerously-skip-permissions --model gemini-3.8-flash --effort medium`. Events emitted by `agy` are parsed into domain `AgentEvent`s in real-time.
+**Architecture:** Replace the Claude Code container runtime with a native `agy` container runtime. The interactive bridge (`agent-run`) feeds NDJSON turns formatted for `agy` (`{"event": "user", ...}`), while `DockerAgentSession` invokes `agy` in headless mode with `--input-format stream-json --output-format stream-json --dangerously-skip-permissions --model gemini-3.8-flash --effort medium`. Events emitted by `agy` are parsed into domain `AgentEvent`s in real-time.
 
 **Tech Stack:** Python 3.11, Docker, Google Antigravity CLI (`agy`), Superpowers plugin, FastAPI, pytest.
 
@@ -101,7 +101,7 @@ Expected: FAIL
 - Update `_require_credentials` to require `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
 - Set default model to `os.environ.get("PAINKILLER_AGENT_MODEL") or "gemini-3.8-flash"`.
 - Set default effort to `os.environ.get("PAINKILLER_AGENT_EFFORT") or "medium"`.
-- Assemble command with `agy`, `--model`, `--effort`, `--dangerously-skip-permissions`, `--input-format stream-json`, `--output-format stream-json`, `--print=""`.
+- Assemble command with `agy`, `--model`, `--effort`, `--dangerously-skip-permissions`, `--input-format stream-json`, `--output-format stream-json`.
 - Mount `/home/node/.gemini` instead of `/home/node/.claude`.
 - Update `send` to emit `{"event": "user", "type": "user", "message": {"role": "user", "content": text}}`.
 - Update `parse_agent_line` to handle `event in ("init", "step_update", "result")` alongside legacy Claude events.

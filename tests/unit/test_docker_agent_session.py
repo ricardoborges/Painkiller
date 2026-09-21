@@ -53,7 +53,7 @@ async def test_start_runs_agy_in_bidirectional_stream_mode(tmp_path, client):
     assert "--dangerously-skip-permissions" in agent_args
     assert "--model" in agent_args and agent_args[agent_args.index("--model") + 1] == "gemini-3.8-flash"
     assert "--effort" in agent_args and agent_args[agent_args.index("--effort") + 1] == "medium"
-    assert any(arg.startswith("--print") for arg in agent_args)
+    assert not any(arg.startswith("--print") for arg in agent_args)
 
 
 async def test_start_mounts_the_repo_and_seeds_the_prompt_into_the_queue(tmp_path, client):

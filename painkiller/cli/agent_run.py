@@ -34,6 +34,16 @@ def agent_run(stdin_file: str, agent_bin: str, idle_timeout: int, agent_args: tu
         with open(stdin_file, "w", encoding="utf-8"):
             pass
 
+    # Assegura que o plugin superpowers esteja populado mesmo se ~/.gemini for montado limpo do host
+    gemini_plugin_dir = os.path.expanduser("~/.gemini/config/plugins/superpowers")
+    if os.path.exists("/opt/superpowers") and not os.path.exists(gemini_plugin_dir):
+        try:
+            import shutil
+            os.makedirs(os.path.dirname(gemini_plugin_dir), exist_ok=True)
+            shutil.copytree("/opt/superpowers", gemini_plugin_dir, dirs_exist_ok=True)
+        except Exception:
+            pass
+
     proc = subprocess.Popen(
         [agent_bin, *agent_args],
         stdin=subprocess.PIPE,

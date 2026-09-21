@@ -102,7 +102,6 @@ class DockerAgentSession(AgentSessionPort):
             "--dangerously-skip-permissions",
             "--input-format", "stream-json",
             "--output-format", "stream-json",
-            '--print=""',
         ]
 
         if resume:

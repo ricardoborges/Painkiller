@@ -34,7 +34,6 @@ Atualmente, essa etapa roda sobre o Claude Code (`@anthropic-ai/claude-code`) ac
      - `--dangerously-skip-permissions`
      - `--input-format stream-json`
      - `--output-format stream-json`
-     - `--print=""`
      - `--conversation <id>` (quando em resume)
    - Formata as mensagens de usuário com `{ "event": "user", "type": "user", "message": { "role": "user", "content": text } }`.
 
