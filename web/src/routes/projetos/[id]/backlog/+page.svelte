@@ -10,10 +10,17 @@
   import Elapsed from '$lib/components/Elapsed.svelte';
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
 
+  import { getProjectSessionStore } from '$lib/stores/session.svelte';
+
   let { data } = $props();
 
+  const sessionStore = $derived(getProjectSessionStore(data.project.id));
+  const activeSession = $derived(sessionStore.activeSession);
+
   let tasks = $state<Task[]>([]);
+  let candidatesForMigration = $state<Task[]>([]);
   let loading = $state(true);
+  let migrating = $state(false);
   let error = $state<string | null>(null);
 
   let dispatching = $state<string | null>(null);
@@ -59,7 +66,16 @@
     loading = true;
     error = null;
     try {
-      tasks = await api.listTasks(data.project.id);
+      if (activeSession?.id) {
+        tasks = await api.listSessionTasks(data.project.id, activeSession.id);
+        const all = await api.listTasks(data.project.id);
+        candidatesForMigration = all.filter(
+          (t) => t.session_id !== activeSession.id && t.status !== 'COMPLETED'
+        );
+      } else {
+        tasks = await api.listTasks(data.project.id);
+        candidatesForMigration = [];
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Falha ao carregar o backlog.';
     } finally {
@@ -67,8 +83,27 @@
     }
   }
 
+  async function migratePendingTasks() {
+    if (!activeSession?.id || !candidatesForMigration.length) return;
+    migrating = true;
+    try {
+      await api.migrateTasksToSession(
+        data.project.id,
+        activeSession.id,
+        candidatesForMigration.map((t) => t.id)
+      );
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Falha ao migrar tarefas.');
+    } finally {
+      migrating = false;
+    }
+  }
+
   $effect(() => {
-    load();
+    if (activeSession?.id || !sessionStore.loading) {
+      load();
+    }
   });
 
   function replace(updated: Task) {
@@ -138,13 +173,36 @@
     {/snippet}
   </Placeholder>
 {:else}
-  <div class="tally">
-    {#each counts as c (c.status)}
-      <div class="count" class:accent={STATUS_META[c.status].accent}>
-        <span class="n mono">{String(c.n).padStart(2, '0')}</span>
-        <span class="label">{c.label}</span>
-      </div>
-    {/each}
+  {#if candidatesForMigration.length > 0}
+    <div class="migration-banner spread">
+      <span class="mono label">
+        Existem {candidatesForMigration.length} tarefa(s) pendente(s) de ciclos anteriores.
+      </span>
+      <button
+        type="button"
+        class="btn btn-line btn-sm"
+        onclick={migratePendingTasks}
+        disabled={migrating}
+      >
+        <Icon name="upload" size={11} />
+        {migrating ? 'Migrando…' : `Migrar para ${activeSession?.title ?? 'esta sessão'}`}
+      </button>
+    </div>
+  {/if}
+
+  <div class="spread backlog-action-bar">
+    <div class="tally">
+      {#each counts as c (c.status)}
+        <div class="count" class:accent={STATUS_META[c.status].accent}>
+          <span class="n mono">{String(c.n).padStart(2, '0')}</span>
+          <span class="label">{c.label}</span>
+        </div>
+      {/each}
+    </div>
+
+    <a class="btn btn-solid btn-sm" href="/projetos/{data.project.id}/sprints">
+      Ir para Sprints (Execução) →
+    </a>
   </div>
 
   <ul class="list divide">
@@ -312,14 +370,27 @@
     color: var(--ink);
   }
 
+  .migration-banner {
+    align-items: center;
+    padding: var(--s3) var(--s4);
+    background: var(--paper-2);
+    border: 1px solid var(--rule-2);
+    margin-top: var(--s5);
+  }
+
+  .backlog-action-bar {
+    align-items: flex-end;
+    gap: var(--s4);
+    border-bottom: 1px solid var(--rule-ink);
+    margin-top: var(--s3);
+  }
+
   /* Placar do backlog: números grandes em mono, separados por filete */
   .tally {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s6);
     padding: var(--s5) 0;
-    border-bottom: 1px solid var(--rule-ink);
-    margin-top: var(--s5);
   }
 
   .count {
