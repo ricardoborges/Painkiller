@@ -1,14 +1,32 @@
 <script lang="ts">
-  import { invalidateAll } from '$app/navigation';
+  import { goto, invalidateAll } from '$app/navigation';
   import { api, baseName } from '$lib/api';
   import type { AnalysisSession, Task } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
   import ProjectDialog from '$lib/components/ProjectDialog.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
+  import { analysisFor } from '$lib/stores/analysis.svelte';
 
   let { data } = $props();
 
   let dialogOpen = $state(false);
+  let restarting = $state(false);
+
+  async function handleRestart() {
+    if (!confirm('Descartar a sessão atual e iniciar uma nova análise do zero?')) {
+      return;
+    }
+    restarting = true;
+    try {
+      const a = analysisFor(data.project.id);
+      await a.restart();
+      await goto(`${base}/analise-inicial`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Falha ao reiniciar análise.');
+    } finally {
+      restarting = false;
+    }
+  }
 
   /* Onde o projeto está no caminho Contexto → Análise → Backlog. Deduzido do
      que existe: tarefas importadas mandam; senão, a sessão de análise ativa;
@@ -140,23 +158,59 @@
       {:else if stage.kind === 'analysis'}
         <p class="state">Análise inicial em andamento.</p>
         <p class="help">{ANALYSIS_DETAIL[stage.session.status] ?? ''}</p>
-        <a class="btn btn-solid go" href="{base}/analise-inicial">
-          Continuar análise <Icon name="arrow-right" size={11} />
-        </a>
+        <div class="andamento-actions">
+          <a class="btn btn-solid go" href="{base}/analise-inicial">
+            Continuar análise <Icon name="arrow-right" size={11} />
+          </a>
+          <button
+            type="button"
+            class="btn btn-quiet btn-sm restart-btn"
+            onclick={handleRestart}
+            disabled={restarting}
+            title="Descartar a análise atual e recomeçar do zero"
+          >
+            <Icon name="play" size={10} />
+            <span>{restarting ? 'Reiniciando…' : 'Reiniciar do zero'}</span>
+          </button>
+        </div>
       {:else if stage.kind === 'analysis-done'}
         <p class="state">Análise concluída.</p>
         <p class="help">O backlog proposto pelo agente ainda não foi importado.</p>
-        <a class="btn btn-solid go" href="{base}/analise-inicial">
-          Importar backlog <Icon name="arrow-right" size={11} />
-        </a>
+        <div class="andamento-actions">
+          <a class="btn btn-solid go" href="{base}/analise-inicial">
+            Importar backlog <Icon name="arrow-right" size={11} />
+          </a>
+          <button
+            type="button"
+            class="btn btn-quiet btn-sm restart-btn"
+            onclick={handleRestart}
+            disabled={restarting}
+            title="Descartar e recomeçar análise do zero"
+          >
+            <Icon name="play" size={10} />
+            <span>{restarting ? 'Reiniciando…' : 'Reiniciar do zero'}</span>
+          </button>
+        </div>
       {:else if stage.kind === 'analysis-failed'}
         <p class="state">A última análise falhou.</p>
         {#if stage.session.error}
           <p class="help clamp-2" title={stage.session.error}>{stage.session.error}</p>
         {/if}
-        <a class="btn btn-solid go" href="{base}/analise-inicial">
-          Retomar análise <Icon name="arrow-right" size={11} />
-        </a>
+        <div class="andamento-actions">
+          <a class="btn btn-solid go" href="{base}/analise-inicial">
+            Retomar análise <Icon name="arrow-right" size={11} />
+          </a>
+          <button
+            type="button"
+            class="btn btn-quiet btn-sm restart-btn"
+            onclick={handleRestart}
+            disabled={restarting}
+            title="Descartar e recomeçar análise do zero"
+          >
+            <Icon name="play" size={10} />
+            <span>{restarting ? 'Reiniciando…' : 'Reiniciar do zero'}</span>
+          </button>
+        </div>
       {:else if tally}
         <p class="state">
           {tally.done === tally.total ? 'Backlog concluído.' : 'Backlog em execução.'}
@@ -313,6 +367,31 @@
     width: 6px;
     height: 6px;
     background: currentColor;
+  }
+
+  .andamento-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    margin-top: var(--s4);
+    flex-wrap: wrap;
+  }
+
+  .andamento-actions .go {
+    margin-top: 0;
+  }
+
+  .restart-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    height: 2rem;
+    font-size: var(--t-micro);
+    color: var(--ink-3);
+  }
+
+  .restart-btn:hover:not(:disabled) {
+    color: var(--ink);
   }
 
   .go {
