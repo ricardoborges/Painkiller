@@ -29,6 +29,7 @@ def mock_sandbox():
 def mock_git():
     git = AsyncMock()
     git.run_tests.return_value = (0, "Tests passed")
+    git.merge_branch.return_value = (0, "Fast-forward")
     return git
 
 
@@ -52,8 +53,9 @@ async def test_dispatch_task_success(mock_tracker, mock_sandbox, mock_git):
     mock_git.create_branch.assert_called_once()
     mock_sandbox.run_task.assert_called_once()
     mock_git.run_tests.assert_called_once()
+    mock_git.merge_branch.assert_called_once_with("/repo", source_branch="feature/t1", target_branch="main")
     mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.RUNNING, assigned_branch="feature/t1")
-    mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.IN_REVIEW, assigned_branch="feature/t1")
+    mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.COMPLETED)
 
 
 @pytest.mark.asyncio
@@ -75,7 +77,7 @@ async def test_dispatch_task_treats_test_exit_code_5_as_success(mock_tracker, mo
 
     await orchestrator.dispatch_task("t1")
 
-    mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.IN_REVIEW, assigned_branch="feature/t1")
+    mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.COMPLETED)
 
 
 @pytest.mark.asyncio

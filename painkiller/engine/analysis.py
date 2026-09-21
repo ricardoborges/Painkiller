@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from typing import AsyncIterator, Optional
@@ -20,14 +21,21 @@ from painkiller.core.domain.models import (
     SessionStatus,
 )
 from painkiller.core.ports.agent_session import AgentSessionPort
+from painkiller.core.ports.git import GitPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
 from painkiller.core.usage import parse_agent_usage
 from painkiller.core.attachment_reader import extract_attachment_text
 
+logger = logging.getLogger(__name__)
+
 #: Onde o agente deposita o backlog decomposto, lido de volta pela API através
 #: do bind mount assim que o analista aprova a especificação.
 BACKLOG_RELATIVE = ".painkiller/backlog.json"
+
+#: Pasta onde a superpowers grava specs e planos; versionada no remoto (Gitea)
+#: ao fim de cada turno do agente e na importação do backlog.
+DOCS_RELATIVE = "docs"
 
 #: Linguagem do bloco cercado que a UI troca por opções clicáveis. O mesmo nome
 #: está em web/src/lib/choices.ts — mudar aqui exige mudar lá.
@@ -92,10 +100,13 @@ class AnalysisOrchestrator:
         agent: AgentSessionPort,
         tracker: IssueTrackerPort,
         usage: Optional[UsageLedgerPort] = None,
+        git: Optional[GitPort] = None,
     ):
         self.agent = agent
         self.tracker = tracker
         self.usage = usage
+        # Opcional: sem ele os documentos ficam só no disco, como antes.
+        self.git = git
         self.runs: dict[str, AnalysisRun] = {}
 
     # ---- ciclo de vida -------------------------------------------------
@@ -161,6 +172,7 @@ class AnalysisOrchestrator:
             except Exception:
                 pass
 
+        await self._ensure_default_branch(project)
         prompt = build_analysis_prompt(
             project,
             session_number=session_number,
@@ -210,6 +222,9 @@ class AnalysisOrchestrator:
 
         alive = await self.agent.is_alive(session_id)
         if not alive:
+            # Com o contêiner vivo o agente pode estar escrevendo: só trocamos de
+            # branch quando ele vai ser religado do zero.
+            await self._ensure_default_branch(project)
             try:
                 session.container_name = await self.agent.start(
                     session_id=session_id,
@@ -265,6 +280,7 @@ class AnalysisOrchestrator:
                     # `_rewind` já foi contabilizado na primeira passagem.
                     if event.type == AgentEventType.RESULT:
                         await self._record_usage(run, event)
+                        await self.sync_docs(run)
             for queue in list(run.subscribers):
                 queue.put_nowait(event)
             try:
@@ -324,6 +340,50 @@ class AnalysisOrchestrator:
             )
         except Exception:
             pass
+
+    async def _ensure_default_branch(self, project: Project) -> None:
+        """Put the repo on the default branch so docs/ lands where the UI links to.
+
+        Um dispatch deixa o repositório na feature/ da tarefa. Se houver edição
+        pendente em arquivo rastreado, a troca é recusada e a análise segue na
+        branch atual — melhor docs numa feature/ do que levar código a meio
+        caminho para a principal.
+        """
+        if self.git is None or not project.repo_path:
+            return
+        try:
+            code, out = await self.git.switch_branch(project.repo_path, project.default_branch)
+            if code != 0:
+                logger.warning(
+                    f"Análise segue fora de {project.default_branch} em {project.repo_path}: {out}"
+                )
+        except Exception as e:
+            logger.warning(f"Não foi possível trocar para {project.default_branch}: {e}")
+
+    async def sync_docs(self, run: AnalysisRun) -> Optional[str]:
+        """Commit docs/ on the current branch and push it to the remote.
+
+        O push roda mesmo sem commit novo: a skill de brainstorming costuma
+        commitar o spec ela mesma, e esse commit também precisa chegar ao Gitea.
+        Falhas só são registradas — versionar não pode derrubar a sessão.
+        """
+        if self.git is None or not run.repo_path:
+            return None
+        sha = None
+        try:
+            sha = await self.git.commit_paths(
+                run.repo_path,
+                [DOCS_RELATIVE],
+                "docs: atualiza documentos da análise inicial",
+            )
+            branch = await self.git.current_branch(run.repo_path)
+            if branch and branch != "HEAD":
+                code, out = await self.git.push(run.repo_path, branch)
+                if code != 0:
+                    logger.warning(f"Push de docs/ falhou em {run.repo_path}: {out}")
+        except Exception as e:
+            logger.warning(f"Não foi possível versionar docs/ em {run.repo_path}: {e}")
+        return sha
 
     @staticmethod
     def _rewind(run: AnalysisRun) -> None:
@@ -534,6 +594,8 @@ class AnalysisOrchestrator:
 
         if created:
             created[0] = await self.tracker.update_task_status(created[0].id, TaskStatus.READY)
+
+        await self.sync_docs(run)
 
         run.session.spec_path = data.get("spec_path")
         run.session.status = AnalysisStatus.FINISHED

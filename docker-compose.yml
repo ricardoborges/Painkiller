@@ -85,6 +85,9 @@ services:
       # nomeado: os contentores irmaos montam estes mesmos caminhos pelo host.
       - ./storage:/app/storage
 
+      # Frontend estático da SPA servido pelo FastAPI
+      - ./painkiller/api/static:/app/painkiller/api/static
+
       - painkiller-db:/data
 
 

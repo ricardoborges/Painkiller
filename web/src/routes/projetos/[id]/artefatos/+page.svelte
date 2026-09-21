@@ -182,6 +182,14 @@
   <aside>
     <div class="panel">
       <h2 class="label">Repositório</h2>
+      <a
+        class="btn btn-line btn-sm download"
+        href="/api/projects/{data.project.id}/archive"
+        download
+        title="Arquivos versionados da branch {data.project.default_branch}, sem .git"
+      >
+        <Icon name="download" size={12} /> Baixar .zip
+      </a>
       {#if repoUrl}
         <ul class="links">
           <li>
@@ -400,6 +408,10 @@
   .panel {
     border-top: 1px solid var(--rule-ink);
     padding-top: var(--s3);
+  }
+
+  .download {
+    margin-top: var(--s3);
   }
 
   .links {

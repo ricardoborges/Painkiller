@@ -24,7 +24,20 @@ class GitCliAdapter(GitPort):
             stderr.decode("utf-8", errors="replace"),
         )
 
+    def _ensure_painkiller_excluded(self, repo_path: str) -> None:
+        exclude_path = os.path.join(repo_path, ".git", "info", "exclude")
+        if os.path.exists(exclude_path):
+            try:
+                with open(exclude_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                if ".painkiller" not in content:
+                    with open(exclude_path, "a", encoding="utf-8") as f:
+                        f.write("\n.painkiller/\n")
+            except Exception:
+                pass
+
     async def create_branch(self, repo_path: str, branch_name: str, base_branch: str = "main") -> None:
+        self._ensure_painkiller_excluded(repo_path)
         # First ensure we are on base branch or fetch latest
         code, _, _ = await self._run_git(repo_path, "checkout", branch_name)
         if code != 0:
@@ -34,6 +47,18 @@ class GitCliAdapter(GitPort):
                 raise RuntimeError(f"Failed to create git branch {branch_name} from {base_branch}: {err}")
 
     async def commit_wip(self, repo_path: str, message: str) -> str:
+        self._ensure_painkiller_excluded(repo_path)
+        # Untrack .painkiller if it was accidentally tracked in index
+        _, out_pk, _ = await self._run_git(repo_path, "ls-files", ".painkiller")
+        if out_pk.strip():
+            await self._run_git(repo_path, "rm", "-r", "--cached", "--ignore-unmatch", ".painkiller")
+
+        # If no tracked or untracked changes, skip committing
+        _, status_out, _ = await self._run_git(repo_path, "status", "--porcelain")
+        if not status_out.strip():
+            _, out_rev, _ = await self._run_git(repo_path, "rev-parse", "HEAD")
+            return out_rev.strip()
+
         await self._run_git(repo_path, "add", "-A")
         code, out, err = await self._run_git(repo_path, "commit", "-m", message)
         # Even if nothing to commit, return current HEAD
@@ -77,6 +102,8 @@ class GitCliAdapter(GitPort):
                 await self._run_git(repo_path, "init")
                 await self._run_git(repo_path, "checkout", "-b", default_branch)
 
+        self._ensure_painkiller_excluded(repo_path)
+
         # Configure local committer identity so commits never fail
         await self._run_git(repo_path, "config", "user.name", "Painkiller Bot")
         await self._run_git(repo_path, "config", "user.email", "bot@painkiller.local")
@@ -90,7 +117,7 @@ class GitCliAdapter(GitPort):
             gitignore_path = os.path.join(repo_path, ".gitignore")
             if not os.path.exists(gitignore_path):
                 with open(gitignore_path, "w", encoding="utf-8") as f:
-                    f.write("__pycache__/\n*.pyc\nnode_modules/\n.env\n.DS_Store\n")
+                    f.write("__pycache__/\n*.pyc\nnode_modules/\n.env\n.DS_Store\n.painkiller/\n")
 
             has_c = await self.has_changes(repo_path)
             if has_c:
@@ -119,15 +146,65 @@ class GitCliAdapter(GitPort):
         code, out, err = await self._run_git(repo_path, *args)
         return code, (out + "\n" + err).strip()
 
+    async def commit_paths(self, repo_path: str, paths: list[str], message: str) -> Optional[str]:
+        existing = [p for p in paths if os.path.exists(os.path.join(repo_path, p))]
+        if not existing:
+            return None
+        await self._run_git(repo_path, "add", "-A", "--", *existing)
+        # Exit 0 em `diff --cached --quiet` = nada preparado nesses caminhos.
+        code, _, _ = await self._run_git(repo_path, "diff", "--cached", "--quiet", "--", *existing)
+        if code == 0:
+            return None
+        # O pathspec no commit garante que só estes caminhos entram, mesmo que
+        # haja outras mudanças preparadas no índice.
+        code, _, err = await self._run_git(repo_path, "commit", "-m", message, "--", *existing)
+        if code != 0:
+            raise RuntimeError(f"Failed to commit {existing}: {err}")
+        _, out_rev, _ = await self._run_git(repo_path, "rev-parse", "HEAD")
+        return out_rev.strip()
+
+    async def switch_branch(self, repo_path: str, branch_name: str) -> tuple[int, str]:
+        self._ensure_painkiller_excluded(repo_path)
+        if await self.current_branch(repo_path) == branch_name:
+            return 0, ""
+        # Só arquivos rastreados: não rastreados (como .painkiller/) atravessam o
+        # checkout sem dano, mas uma edição pendente de tarefa iria junto para a
+        # branch de destino.
+        _, dirty, _ = await self._run_git(repo_path, "status", "--porcelain", "--untracked-files=no")
+        if dirty.strip():
+            return 1, f"Alterações não commitadas impedem a troca para {branch_name}:\n{dirty.strip()}"
+        code, out, err = await self._run_git(repo_path, "checkout", branch_name)
+        return code, (out + "\n" + err).strip()
+
+    async def current_branch(self, repo_path: str) -> str:
+        _, out, _ = await self._run_git(repo_path, "rev-parse", "--abbrev-ref", "HEAD")
+        return out.strip()
+
     async def merge_branch(
         self,
         repo_path: str,
         source_branch: str,
         target_branch: str = "main",
     ) -> tuple[int, str]:
+        self._ensure_painkiller_excluded(repo_path)
+        # Untrack .painkiller if it was accidentally tracked in index
+        _, out_pk, _ = await self._run_git(repo_path, "ls-files", ".painkiller")
+        if out_pk.strip():
+            await self._run_git(repo_path, "rm", "-r", "--cached", "--ignore-unmatch", ".painkiller")
+
+        lock_file = os.path.join(repo_path, ".git", "index.lock")
         code, _, err = await self._run_git(repo_path, "checkout", target_branch)
         if code != 0:
-            return code, f"Failed to checkout {target_branch}: {err}".strip()
+            if "index.lock" in err:
+                await asyncio.sleep(0.5)
+                if os.path.exists(lock_file):
+                    try:
+                        os.remove(lock_file)
+                    except OSError:
+                        pass
+                code, _, err = await self._run_git(repo_path, "checkout", target_branch)
+            if code != 0:
+                return code, f"Failed to checkout {target_branch}: {err}".strip()
         code_merge, out, err_m = await self._run_git(
             repo_path,
             "merge",
@@ -138,3 +215,19 @@ class GitCliAdapter(GitPort):
         )
         return code_merge, (out + "\n" + err_m).strip()
 
+    async def archive(self, repo_path: str, ref: str = "HEAD") -> bytes:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "archive",
+            "--format=zip",
+            ref,
+            cwd=repo_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"git archive {ref} failed: {stderr.decode('utf-8', errors='replace').strip()}"
+            )
+        return stdout

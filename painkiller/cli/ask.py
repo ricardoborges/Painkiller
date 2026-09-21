@@ -29,6 +29,15 @@ def ask(question: str, context: str):
 
     # Attempt git WIP commit if git repo exists
     try:
+        exclude_file = os.path.join(workspace, ".git", "info", "exclude")
+        if os.path.exists(exclude_file):
+            try:
+                with open(exclude_file, "r", encoding="utf-8") as ef:
+                    if ".painkiller" not in ef.read():
+                        with open(exclude_file, "a", encoding="utf-8") as aef:
+                            aef.write("\n.painkiller/\n")
+            except Exception:
+                pass
         subprocess.run(["git", "add", "-A"], cwd=workspace, capture_output=True, check=False)
         subprocess.run(
             ["git", "commit", "-m", f"wip: paused for clarification ({question[:40]})"],

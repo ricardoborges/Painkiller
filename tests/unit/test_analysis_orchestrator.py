@@ -385,3 +385,68 @@ async def test_start_with_force_new_creates_new_session(tmp_path):
     assert session.id != "analysis-existing"
     assert session.claude_session_id is not None
 
+
+
+# ---- versionamento de docs/ ------------------------------------------------
+
+
+async def test_each_finished_turn_commits_and_pushes_docs(tmp_path):
+    git = AsyncMock()
+    git.commit_paths.return_value = "abc123"
+    git.current_branch.return_value = "main"
+    git.push.return_value = (0, "")
+    git.switch_branch.return_value = (0, "")
+
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    engine = AnalysisOrchestrator(agent=agent, tracker=AsyncMock(), git=git)
+    await engine.start(_project(tmp_path))
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    await asyncio.sleep(0)
+
+    git.commit_paths.assert_awaited_once()
+    assert git.commit_paths.await_args.args[1] == ["docs"]
+    git.push.assert_awaited_once_with(str(tmp_path), "main")
+
+
+async def test_docs_sync_failure_does_not_break_the_session(tmp_path):
+    git = AsyncMock()
+    git.commit_paths.side_effect = RuntimeError("sem git")
+    git.switch_branch.return_value = (0, "")
+
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    engine = AnalysisOrchestrator(agent=agent, tracker=AsyncMock(), git=git)
+    session = await engine.start(_project(tmp_path))
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    await asyncio.sleep(0)
+
+    assert session.status == AnalysisStatus.WAITING_ANALYST
+    git.push.assert_not_awaited()
+
+
+async def test_new_analysis_switches_to_the_default_branch_first(tmp_path):
+    git = AsyncMock()
+    git.switch_branch.return_value = (0, "")
+    git.current_branch.return_value = "main"
+    git.push.return_value = (0, "")
+
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    engine = AnalysisOrchestrator(agent=agent, tracker=AsyncMock(), git=git)
+    await engine.start(_project(tmp_path), force_new=True)
+
+    git.switch_branch.assert_awaited_once_with(str(tmp_path), "main")
+
+
+async def test_refused_branch_switch_does_not_block_the_analysis(tmp_path):
+    git = AsyncMock()
+    git.switch_branch.return_value = (1, "alteracoes pendentes")
+    git.current_branch.return_value = "feature/t1"
+    git.push.return_value = (0, "")
+
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    engine = AnalysisOrchestrator(agent=agent, tracker=AsyncMock(), git=git)
+    session = await engine.start(_project(tmp_path), force_new=True)
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    await asyncio.sleep(0)
+
+    assert session.container_name == "pk-analysis-fake"
+    git.push.assert_awaited_once_with(str(tmp_path), "feature/t1")

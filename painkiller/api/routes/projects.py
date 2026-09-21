@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File, Form
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from painkiller.core.attachment_reader import extract_attachment_text
@@ -39,6 +40,10 @@ class CreateTaskRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+def _get_storage_dir() -> str:
+    return os.environ.get("PAINKILLER_STORAGE_DIR") or os.path.join(os.getcwd(), "storage")
+
+
 @router.get("")
 async def list_projects(request: Request):
     tracker = request.app.state.tracker
@@ -53,7 +58,7 @@ async def create_project(req: CreateProjectRequest, request: Request):
 
     # Default repo path inside storage if not provided
     proj_id_temp = f"proj-{uuid.uuid4().hex[:8]}"
-    base_repo_path = req.repo_path or os.path.join(os.getcwd(), "storage", "projects", proj_id_temp, "repo")
+    base_repo_path = req.repo_path or os.path.join(_get_storage_dir(), "projects", proj_id_temp, "repo")
     os.makedirs(base_repo_path, exist_ok=True)
 
     default_branch = req.default_branch or "main"
@@ -121,7 +126,7 @@ async def upload_attachment(project_id: str, file: UploadFile = File(...), reque
     if not project:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
 
-    storage_dir = os.path.join(os.getcwd(), "storage", "projects", project_id, "attachments")
+    storage_dir = os.path.join(_get_storage_dir(), "projects", project_id, "attachments")
     os.makedirs(storage_dir, exist_ok=True)
 
     filename = f"{uuid.uuid4().hex[:6]}_{file.filename}"
@@ -292,3 +297,32 @@ async def get_project_doc_content(project_id: str, path: str, request: Request):
         "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
     }
 
+
+@router.get("/{project_id}/archive")
+async def download_project_archive(project_id: str, request: Request, ref: Optional[str] = None):
+    """Download the repository as a zip (tracked files at ``ref``, default branch by default)."""
+    tracker = request.app.state.tracker
+    project = await tracker.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+
+    repo_dir = Path(project.repo_path).resolve()
+    if not (repo_dir / ".git").exists():
+        raise HTTPException(status_code=404, detail="Repositório local não encontrado")
+
+    target = ref or project.default_branch
+    if target.startswith("-"):
+        raise HTTPException(status_code=400, detail="Referência inválida")
+
+    try:
+        data = await request.app.state.git.archive(str(repo_dir), target)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=f"Não foi possível gerar o zip de '{target}': {e}")
+
+    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in project.name).strip("-") or project.id
+    filename = f"{slug}-{target.replace('/', '-')}.zip"
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

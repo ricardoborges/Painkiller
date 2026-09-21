@@ -21,7 +21,7 @@
   const statusLabel: Record<SessionStatus, string> = {
     PLANNING: 'Análise',
     BACKLOG: 'Backlog',
-    IN_SPRINT: 'Sprint',
+    IN_SPRINT: 'Execução',
     COMPLETED: 'Concluída'
   };
 

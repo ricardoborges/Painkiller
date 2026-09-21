@@ -70,7 +70,7 @@ def create_app(
         tracker=tracker, sandbox=sandbox, git=git, vcs=vcs, usage=usage
     )
     wizard = InterrogationWizard(llm=llm, tracker=tracker)
-    analysis = AnalysisOrchestrator(agent=agent, tracker=tracker, usage=usage)
+    analysis = AnalysisOrchestrator(agent=agent, tracker=tracker, usage=usage, git=git)
 
     # Attach to application state
     app.state.tracker = tracker

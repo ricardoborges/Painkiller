@@ -1,7 +1,13 @@
 """Task routes."""
 
+import json
+from typing import Optional
+
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from painkiller.core.domain.models import AgentEvent, AgentEventType
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -27,6 +33,84 @@ async def dispatch_task(task_id: str, request: Request):
         return updated_task
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# Chaves onde o stream-json costuma pôr o alvo de uma ferramenta (comando,
+# arquivo). O formato do `agy` não é contrato estável: sem acerto, fica só o nome.
+_TOOL_DETAIL_KEYS = (
+    "command", "CommandLine", "cmd", "file_path", "path", "AbsolutePath",
+    "TargetFile", "pattern", "query", "url", "description",
+)
+
+
+def _tool_detail(raw: dict) -> Optional[str]:
+    step = raw.get("step_update") or {}
+    candidates = [step.get(k) for k in ("tool_input", "input", "args", "arguments", "parameters")]
+    candidates.append((step.get("tool_info") or {}).get("args"))
+    # Legado Claude Code: bloco tool_use dentro de message.content.
+    for block in (raw.get("message") or {}).get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            candidates.append(block.get("input"))
+    for args in candidates:
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except ValueError:
+                continue
+        if not isinstance(args, dict):
+            continue
+        for key in _TOOL_DETAIL_KEYS:
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:200]
+    return None
+
+
+def _frame(kind: str, payload: dict) -> str:
+    return f"event: {kind}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _event_payload(event: AgentEvent) -> dict:
+    payload = {
+        "type": event.type.value,
+        "text": event.text,
+        "timestamp": event.timestamp.isoformat(),
+    }
+    if event.type == AgentEventType.TOOL_USE:
+        payload["detail"] = _tool_detail(event.raw)
+    return payload
+
+
+@router.get("/{task_id}/stream")
+async def stream_task(task_id: str, request: Request):
+    """Server-sent events with what the task's agent is doing right now.
+
+    The first frame, STATE, says whether this process is running the task at
+    all: after a restart the tracker can still say RUNNING with nobody behind it.
+    """
+    activity = request.app.state.orchestrator.activity
+    run = activity.get(task_id)
+
+    async def publisher():
+        yield _frame("STATE", {
+            "active": run is not None and not run.done,
+            "started_at": run.started_at.isoformat() if run else None,
+            "last_event_at": run.last_event_at.isoformat() if run and run.last_event_at else None,
+        })
+        if run is not None:
+            async for event in activity.subscribe(task_id):
+                yield _frame(event.type.value, _event_payload(event))
+        yield _frame("CLOSE", {})
+
+    return StreamingResponse(
+        publisher(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{task_id}/clarification")

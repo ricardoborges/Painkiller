@@ -32,6 +32,9 @@
   /* Etapa concluída no stepper da sessão (Análise → Backlog → Sprints →
      Artefatos) — só ali; status de tarefa continuam sem cor. */
   --done: #1f8a4c;
+
+  /* Preenchimento da barra de progresso da sessão no backlog — só ali. */
+  --progress: #2563eb;
   --done-sunk: #eaf5ee;
 
   /* Tipografia */

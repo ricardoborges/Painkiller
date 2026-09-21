@@ -10,6 +10,7 @@ import type {
   ProviderBalance,
   SessionStatus,
   Task,
+  TaskStreamState,
   UsageEntry,
   UsageSettings,
   UsageSummary,
@@ -322,6 +323,61 @@ export function openAnalysisStream(
   source.addEventListener('CLOSE', () => {
     source.close();
     onClose();
+  });
+
+  return () => source.close();
+}
+
+/**
+ * Assina a atividade ao vivo de uma tarefa em execução.
+ *
+ * O primeiro frame (STATE) diz se o servidor está de fato rodando a tarefa:
+ * depois de um restart, o banco pode dizer RUNNING sem ninguém por trás.
+ * O backend reemite o buffer recente a cada assinatura.
+ */
+export function openTaskStream(
+  taskId: string,
+  handlers: {
+    onState: (state: TaskStreamState) => void;
+    onEvent: (event: AgentEvent) => void;
+    onClose: () => void;
+  }
+): () => void {
+  const source = new EventSource(`/api/tasks/${taskId}/stream`);
+
+  source.addEventListener('STATE', (e) => {
+    try {
+      handlers.onState(JSON.parse((e as MessageEvent).data) as TaskStreamState);
+    } catch {
+      /* frame malformado */
+    }
+  });
+
+  const forward = (e: MessageEvent) => {
+    try {
+      handlers.onEvent(JSON.parse(e.data) as AgentEvent);
+    } catch {
+      /* frame malformado: ignorar */
+    }
+  };
+  const types: AgentEvent['type'][] = [
+    'SYSTEM',
+    'ASSISTANT',
+    'ASSISTANT_DELTA',
+    'THINKING',
+    'THINKING_DELTA',
+    'TOOL_USE',
+    'TOOL_RESULT',
+    'RESULT',
+    'ERROR'
+  ];
+  for (const t of types) source.addEventListener(t, forward);
+
+  // O stream termina junto com a execução; sem isto o EventSource reconectaria
+  // e reemitiria o buffer em loop.
+  source.addEventListener('CLOSE', () => {
+    source.close();
+    handlers.onClose();
   });
 
   return () => source.close();

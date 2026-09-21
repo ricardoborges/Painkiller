@@ -170,6 +170,15 @@ export interface AgentEvent {
   type: AgentEventType;
   text: string;
   timestamp: string;
+  /** Só no stream de tarefas: alvo da ferramenta (comando, arquivo), quando o backend o reconhece. */
+  detail?: string | null;
+}
+
+/** Primeiro frame do stream de uma tarefa: se este servidor está mesmo executando-a. */
+export interface TaskStreamState {
+  active: boolean;
+  started_at: string | null;
+  last_event_at: string | null;
 }
 
 /* ---- custos ---- */

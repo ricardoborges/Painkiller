@@ -14,7 +14,7 @@ Code comments, LLM prompts, API error messages and the UI are in **Portuguese (p
 
 ```bash
 pip install -e ".[dev]"           # install package + test deps
-pytest                             # full suite (84 tests, no Docker daemon needed — docker is mocked)
+pytest                             # full suite (107 tests, no Docker daemon needed — docker is mocked)
 pytest tests/unit/test_orchestrator.py::test_dispatch_task_success   # single test
 uvicorn painkiller.api.server:app --reload    # API + built UI at http://localhost:8000/
 docker build -f docker/worker.Dockerfile -t painkiller-worker:latest .   # worker image (required before dispatching tasks)
@@ -102,11 +102,17 @@ Sessions and non-transient events are persisted through the tracker, so `get_or_
 
 The handoff to the backlog is a file: the agent writes the spec to `docs/superpowers/specs/` and the decomposed tasks to `.painkiller/backlog.json`, and `POST /api/analysis/{sid}/commit` reads that JSON back off the bind mount.
 
+`docs/` is versioned in Gitea by `AnalysisOrchestrator.sync_docs`: on every persisted `RESULT` (so not on a `_rewind` replay) and again on backlog import, it commits only `docs/` (`GitPort.commit_paths`) on the **currently checked-out** branch and pushes that branch. The push runs even with no new commit, because the brainstorming skill often commits the spec itself. Failures are logged, never raised. Without `git=` in the constructor it does nothing.
+
+So that this lands on the default branch (where the Artefatos links point), `_ensure_default_branch` runs `GitPort.switch_branch` to `project.default_branch` before a new container starts, and before `resume` restarts a dead one — never while a container is alive. It refuses when *tracked* files have uncommitted changes (a failed task's leftovers would otherwise ride along into main); untracked files like `.painkiller/` don't block it. On refusal the analysis just proceeds on the current branch.
+
 ### Task dispatch (Antigravity CLI + superpowers + Gemini 3.8 Flash, one-shot)
 
 `dispatch_task` refuses to run a task whose `dependencies` are not all `COMPLETED`, creates/checks out `feature/{task_id}`, builds the Portuguese instruction prompt (including the clarification protocol block and superpowers skill guidelines) in `_build_task_instructions`, then runs `painkiller-worker:latest` with the target repo bind-mounted at `/workspace`. The container executes `agy --model gemini-3.8-flash --effort medium --dangerously-skip-permissions --output-format stream-json --print <instructions>`. Direct authentication uses `GEMINI_API_KEY`.
 
 Dispatch is synchronous inside the HTTP request (the blocking docker-py wait is offloaded with `run_in_executor`), so `POST /api/tasks/{id}/dispatch` blocks for the full agent run.
+
+While it blocks, progress goes out on a side channel: `DockerSandboxRunner` follows `container.logs(stream=True, follow=True)` (that same read is the final `ExecutionResult.logs`), parses each line with `parse_agent_line` and hands it to the `on_event` callback of `SandboxPort.run_task`. The orchestrator points that callback at its `TaskActivityHub` ([engine/task_activity.py](painkiller/engine/task_activity.py)), adds its own `SYSTEM` notes (container start, exit code, test run), and `GET /api/tasks/{id}/stream` serves it as SSE. The hub is **in-memory only**: its first frame, `STATE`, says `active: false` when this process is not running the task — after a restart the tracker can still say `RUNNING` with nothing behind it, and the UI says so instead of spinning. The container timeout is now a `threading.Timer` that kills the container, since following the log blocks until exit.
 
 ### Usage and cost tracking
 
@@ -137,7 +143,7 @@ Design rules that are load-bearing, not decoration:
 
 **Terminology:** the UI calls this step *"análise inicial"* and routes it at `/projetos/[id]/analise-inicial`, and the backend now agrees (`/api/analysis/*`). The project tabs are numbered because the first three are a path, not a menu: `1 Contexto → 2 Análise inicial → 3 Backlog`, with `Artefatos` and `Custos` set apart as reference views. That tab (`/projetos/[id]/artefatos`) is the single home for everything the agent wrote — superpowers specs and plans, `.painkiller/backlog.json`, and the per-file Gitea links — which used to be scattered across a sidebar panel inside the analysis and a link in the project subtitle. The older `/api/interrogation/*` endpoints and their `api.ts` wrappers are still there but unused by the UI. UI copy is pt-BR.
 
-**Long-running requests:** `POST /api/tasks/{id}/dispatch` and `POST /api/tasks/{id}/clarification` hold the HTTP connection open for the entire container run. The UI has no timeout and shows an elapsed clock (`Elapsed.svelte`) because that is the only honest progress signal available. The análise-inicial page is the exception: it streams, so the clock there only covers the gap between turns, and `TOOL_USE` events are deliberately **not** shown in the transcript (the audience is not developers) — they only trigger a refresh of the artifacts, while a generic "Trabalhando." indicator covers the silence.
+**Long-running requests:** `POST /api/tasks/{id}/dispatch` and `POST /api/tasks/{id}/clarification` hold the HTTP connection open for the entire container run. The UI has no timeout; for dispatch, `TaskActivity.svelte` subscribes to `/api/tasks/{id}/stream` and shows the tool calls and text the agent produces, plus "última atividade há N s" — deltas count as activity, and after two minutes of silence it warns that the agent may be stuck (weight and hatching, not the accent). The análise-inicial page is the exception: it streams, so the clock there only covers the gap between turns, and `TOOL_USE` events are deliberately **not** shown in the transcript (the audience is not developers) — they only trigger a refresh of the artifacts, while a generic "Trabalhando." indicator covers the silence.
 
 **The analysis session lives in a module, not in the route component** ([stores/analysis.svelte.ts](web/src/lib/stores/analysis.svelte.ts), keyed by project id). The page is a thin view over it: leaving for the backlog tab and coming back no longer closes the `EventSource` nor rebuilds the transcript, and `ensureBooted()` makes the second visit a no-op instead of a second container. Only `signOut` disposes it. The store still stashes the session id in `sessionStorage`/`localStorage` so a hard reload re-attaches, and still reports a 404 from `/analysis/{id}/message` as a dead session.
 

@@ -20,7 +20,8 @@
     | 'file-text'
     | 'copy'
     | 'info'
-    | 'sidebar';
+    | 'sidebar'
+    | 'download';
 
   let { name, size = 14 }: { name: Name; size?: number } = $props();
 </script>
@@ -74,5 +75,7 @@
   {:else if name === 'sidebar'}
     <rect x="2" y="2.5" width="12" height="11" />
     <path d="M6 2.5v11" />
+  {:else if name === 'download'}
+    <path d="M8 2.5V11M4.5 7.5 8 11l3.5-3.5M2.5 13.5h11" />
   {/if}
 </svg>

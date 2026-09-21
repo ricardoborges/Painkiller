@@ -13,23 +13,21 @@
     sessionStore.loadSessions();
   });
 
-  /* O ciclo ágil iterativo da sessão: Análise → Backlog → Sprints → Artefatos.
+  /* O ciclo ágil iterativo da sessão: Análise → Backlog → Artefatos.
      Contexto e Custos são visões de referência do projeto. */
   const steps = $derived([
     { href: `${base}/analise-inicial`, label: 'Análise', exact: false },
     { href: `${base}/backlog`, label: 'Backlog', exact: false },
-    { href: `${base}/sprints`, label: 'Sprints', exact: false },
     { href: `${base}/artefatos`, label: 'Artefatos', exact: false }
   ]);
 
   /* Quantas etapas a sessão ativa já cumpriu, pelo status dela:
-     PLANNING → nenhuma; BACKLOG → Análise; IN_SPRINT → +Backlog; COMPLETED → todas. */
+     PLANNING → nenhuma; BACKLOG ou IN_SPRINT → Análise concluída; COMPLETED → todas. */
   const doneCount = $derived.by(() => {
     switch (sessionStore.activeSession?.status) {
       case 'BACKLOG':
-        return 1;
       case 'IN_SPRINT':
-        return 2;
+        return 1;
       case 'COMPLETED':
         return steps.length;
       default:

@@ -7,10 +7,11 @@
   import StatusTag from '$lib/components/StatusTag.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
-  import Elapsed from '$lib/components/Elapsed.svelte';
+  import TaskActivity from '$lib/components/TaskActivity.svelte';
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
-
+  import Modal from '$lib/components/Modal.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
+  import { onDestroy } from 'svelte';
 
   let { data } = $props();
 
@@ -23,21 +24,56 @@
   let migrating = $state(false);
   let error = $state<string | null>(null);
 
+  // Execução individual
   let dispatching = $state<string | null>(null);
-  let dispatchStart = $state(0);
   let dispatchError = $state<{ id: string; message: string } | null>(null);
+  let merging = $state<string | null>(null);
+
+  // Fila sequencial (Executar Todas)
+  let isQueueRunning = $state(false);
+  let queueMessage = $state<string | null>(null);
+
+  // Modal de Diff
+  let diffOpen = $state(false);
+  let diffLoading = $state(false);
+  let diffData = $state<{ task_id: string; branch: string; base_branch: string; diff: string; gitea_url: string | null } | null>(null);
 
   const justCreated = $derived(Number(page.url.searchParams.get('novas') ?? 0));
-
   const byId = $derived(new Map(tasks.map((t) => [t.id, t])));
 
-  /** Ordena por urgência de leitura, não por data. */
-  const ordered = $derived(
-    [...tasks].sort((a, b) => {
-      const d = STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status);
-      return d !== 0 ? d : a.created_at.localeCompare(b.created_at);
-    })
-  );
+  /**
+   * Ordena as tarefas em fila sequencial válida de execução.
+   * Realiza ordenação topológica garantindo que pré-requisitos/dependências
+   * sempre apareçam e sejam executados antes de suas dependentes.
+   */
+  const ordered = $derived.by(() => {
+    const result: Task[] = [];
+    const visited = new Set<string>();
+    const taskMap = new Map(tasks.map((t) => [t.id, t]));
+
+    function visit(task: Task, stack = new Set<string>()) {
+      if (visited.has(task.id) || stack.has(task.id)) return;
+      stack.add(task.id);
+      for (const depId of task.dependencies) {
+        const depTask = taskMap.get(depId);
+        if (depTask && !visited.has(depId)) {
+          visit(depTask, stack);
+        }
+      }
+      visited.add(task.id);
+      result.push(task);
+    }
+
+    // Ponto de partida: ordem cronológica de planejamento
+    const base = [...tasks].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    for (const t of base) {
+      visit(t);
+    }
+    return result;
+  });
+
+  const completedCount = $derived(tasks.filter((t) => t.status === 'COMPLETED').length);
+  const progressPercent = $derived(tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0);
 
   const counts = $derived.by(() => {
     const map = new Map<string, number>();
@@ -49,16 +85,16 @@
     }));
   });
 
-  /** Dependências que ainda não concluíram — o orquestrador recusa o dispatch. */
-  function blockers(task: Task) {
+  /** Dependências que ainda não concluíram — orquestrador exige que estejam COMPLETED. */
+  function blockers(task: Task): Task[] {
     return task.dependencies
       .map((id) => byId.get(id))
       .filter((d): d is Task => !!d && d.status !== 'COMPLETED');
   }
 
-  function canDispatch(task: Task) {
-    if (dispatching) return false;
-    if (task.status === 'RUNNING' || task.status === 'COMPLETED') return false;
+  function canDispatch(task: Task): boolean {
+    if (dispatching || isQueueRunning) return false;
+    if (task.status === 'RUNNING' || task.status === 'COMPLETED' || task.status === 'IN_REVIEW') return false;
     return blockers(task).length === 0;
   }
 
@@ -106,43 +142,175 @@
     }
   });
 
+  $effect(() => {
+    // Auto-merge é regra: qualquer tarefa em IN_REVIEW é incorporada imediatamente
+    const pendingReview = tasks.filter((t) => t.status === 'IN_REVIEW' && merging !== t.id);
+    for (const t of pendingReview) {
+      merge(t);
+    }
+  });
+
   function replace(updated: Task) {
     tasks = tasks.map((t) => (t.id === updated.id ? updated : t));
     pending.refresh();
   }
 
-  async function dispatch(task: Task) {
+  async function dispatch(task: Task): Promise<Task | null> {
     dispatching = task.id;
-    dispatchStart = Date.now();
     dispatchError = null;
+
+    // Se sessão ainda estava em BACKLOG, avança status para IN_SPRINT
+    if (activeSession && activeSession.status === 'BACKLOG') {
+      api.updateSession(data.project.id, activeSession.id, { status: 'IN_SPRINT' as any }).catch(() => {});
+    }
+
     try {
-      replace(await api.dispatchTask(task.id));
+      const updated = await api.dispatchTask(task.id);
+      replace(updated);
+
+      // Auto-merge é regra: passou nos testes (IN_REVIEW) → incorpora na branch
+      // principal e conclui a tarefa
+      if (updated.status === 'IN_REVIEW') {
+        const merged = await merge(updated);
+        return merged;
+      }
+
+      return updated;
     } catch (e) {
-      dispatchError = {
-        id: task.id,
-        message: e instanceof Error ? e.message : 'Falha ao despachar.'
-      };
-      load();
+      const msg = e instanceof Error ? e.message : 'Falha ao despachar no contêiner.';
+      dispatchError = { id: task.id, message: msg };
+      await load();
+      return null;
     } finally {
       dispatching = null;
     }
   }
 
-  let merging = $state<string | null>(null);
-
-  async function merge(task: Task) {
+  async function merge(task: Task): Promise<Task | null> {
     merging = task.id;
     try {
-      replace(await api.mergeTask(task.id));
+      const updated = await api.mergeTask(task.id);
+      replace(updated);
+      return updated;
     } catch (e) {
-      dispatchError = {
-        id: task.id,
-        message: e instanceof Error ? e.message : 'Falha ao aprovar e incorporar (merge).'
-      };
+      const msg = e instanceof Error ? e.message : 'Falha ao aprovar e incorporar (merge).';
+      dispatchError = { id: task.id, message: msg };
+      return null;
     } finally {
       merging = null;
     }
   }
+
+  /**
+   * Executador Sequencial da Fila ("Executar Todas").
+   * Roda estritamente 1 tarefa por vez na ordem de execução.
+   */
+  async function toggleRunAll() {
+    if (isQueueRunning) {
+      isQueueRunning = false;
+      queueMessage = 'Fila de execução pausada.';
+      return;
+    }
+
+    isQueueRunning = true;
+    queueMessage = 'Iniciando execução da fila…';
+
+    try {
+      while (isQueueRunning) {
+        // Encontra a próxima tarefa não concluída na ordem de execução
+        const uncompleted = ordered.filter((t) => t.status !== 'COMPLETED');
+        if (uncompleted.length === 0) {
+          queueMessage = 'Todas as tarefas do backlog foram concluídas com sucesso!';
+          isQueueRunning = false;
+          break;
+        }
+
+        const candidate = uncompleted[0];
+
+        // Caso a tarefa já esteja em revisão (ex: rodou e aguarda merge)
+        if (candidate.status === 'IN_REVIEW') {
+          queueMessage = `Auto-merge: incorporando branch da tarefa "${candidate.title}"…`;
+          const merged = await merge(candidate);
+          if (!merged) {
+            queueMessage = `Falha ao incorporar tarefa "${candidate.title}". Fila pausada.`;
+            isQueueRunning = false;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 600));
+          continue;
+        }
+
+        // Caso a tarefa esteja esperando esclarecimento humano
+        if (candidate.status === 'AWAITING_ANALYST') {
+          queueMessage = `O agente precisa de esclarecimento na tarefa "${candidate.title}". Responda para continuar a fila.`;
+          isQueueRunning = false;
+          break;
+        }
+
+        // Verifica bloqueios de dependência
+        const stuck = blockers(candidate);
+        if (stuck.length > 0) {
+          queueMessage = `Fila travada: a tarefa "${candidate.title}" depende de tarefas ainda não concluídas (${stuck.map((s) => s.title).join(', ')}).`;
+          isQueueRunning = false;
+          break;
+        }
+
+        // Despacha a tarefa no contêiner
+        queueMessage = `Executando no contêiner: "${candidate.title}"…`;
+        const updated = await dispatch(candidate);
+
+        if (!isQueueRunning) break; // Usuário pausou durante a execução
+
+        if (!updated) {
+          queueMessage = `Falha na execução da tarefa "${candidate.title}". Fila pausada.`;
+          isQueueRunning = false;
+          break;
+        }
+
+        // Processa o resultado
+        if (updated.status === 'IN_REVIEW') {
+          // dispatch() já tentou o merge; se voltou IN_REVIEW, ele falhou
+          queueMessage = `Erro no auto-merge de "${updated.title}". Fila pausada.`;
+          isQueueRunning = false;
+          break;
+        } else if (updated.status === 'AWAITING_ANALYST') {
+          queueMessage = `Agente com dúvida em "${updated.title}". Responda para prosseguir.`;
+          isQueueRunning = false;
+          break;
+        } else if (updated.status === 'FAILED') {
+          queueMessage = `Execução falhou na tarefa "${updated.title}". Verifique o erro e tente novamente.`;
+          isQueueRunning = false;
+          break;
+        }
+
+        // Pausa breve entre execuções
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    } finally {
+      if (ordered.length > 0 && ordered.every((t) => t.status === 'COMPLETED')) {
+        queueMessage = 'Todas as tarefas foram concluídas com sucesso!';
+        isQueueRunning = false;
+      }
+    }
+  }
+
+  async function openDiff(taskId: string) {
+    diffLoading = true;
+    diffOpen = true;
+    diffData = null;
+    try {
+      diffData = await api.getTaskDiff(taskId);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Falha ao obter diff.');
+      diffOpen = false;
+    } finally {
+      diffLoading = false;
+    }
+  }
+
+  onDestroy(() => {
+    isQueueRunning = false;
+  });
 </script>
 
 {#if justCreated > 0}
@@ -153,8 +321,8 @@
   </p>
 {/if}
 
-{#if loading}
-  <div class="pad"><Skeleton variant="table" rows={4} /></div>
+{#if loading && !tasks.length}
+  <div class="pad"><Skeleton variant="table" rows={5} /></div>
 {:else if error}
   <Placeholder kind="error" title="Não foi possível carregar o backlog" detail={error}>
     {#snippet action()}
@@ -190,27 +358,87 @@
     </div>
   {/if}
 
-  <div class="spread backlog-action-bar">
-    <div class="tally">
-      {#each counts as c (c.status)}
-        <div class="count" class:accent={STATUS_META[c.status].accent}>
-          <span class="n mono">{String(c.n).padStart(2, '0')}</span>
-          <span class="label">{c.label}</span>
-        </div>
-      {/each}
+  <!-- Barra de Progresso da Sessão Ativa -->
+  <div class="progress-bar-card">
+    <div class="spread progress-meta">
+      <div class="meta-left">
+        <span class="session-badge mono bold">
+          {activeSession ? `#${activeSession.number} ${activeSession.title}` : 'Sessão Ativa'}
+        </span>
+        <span class="sep" aria-hidden="true">·</span>
+        <span class="label mono">
+          Progresso: {completedCount} de {tasks.length} concluídas
+        </span>
+      </div>
+      <span class="mono bold">{progressPercent}%</span>
     </div>
-
-    <a class="btn btn-solid btn-sm" href="/projetos/{data.project.id}/sprints">
-      Ir para Sprints (Execução) →
-    </a>
+    <div class="progress-track">
+      <div class="progress-fill" style:width="{progressPercent}%"></div>
+    </div>
   </div>
 
-  <ul class="list divide">
+  <!-- Painel de Controle de Execução e Status -->
+  <div class="control-panel">
+    <div class="spread control-top">
+      <div class="tally">
+        {#each counts as c (c.status)}
+          <div class="count" class:accent={STATUS_META[c.status].accent}>
+            <span class="n mono">{String(c.n).padStart(2, '0')}</span>
+            <span class="label">{c.label}</span>
+          </div>
+        {/each}
+      </div>
+
+      <div class="runner-controls">
+        <button
+          type="button"
+          class="btn {isQueueRunning ? 'btn-line active-pulse' : 'btn-solid'} btn-sm"
+          onclick={toggleRunAll}
+          disabled={tasks.length === 0 || (completedCount === tasks.length && !isQueueRunning)}
+          title={isQueueRunning ? 'Pausar execução da fila' : 'Executar todas as tarefas em ordem sequencial (uma por vez)'}
+        >
+          {#if isQueueRunning}
+            <Icon name="close" size={11} /> Pausar Fila
+          {:else}
+            <Icon name="play" size={11} /> Executar Todas
+          {/if}
+        </button>
+      </div>
+    </div>
+
+    {#if queueMessage}
+      <div class="queue-status-banner" class:running={isQueueRunning}>
+        {#if isQueueRunning}
+          <span class="spinner-inline" aria-hidden="true"></span>
+        {:else}
+          <Icon name="info" size={12} />
+        {/if}
+        <span class="mono">{queueMessage}</span>
+      </div>
+    {/if}
+  </div>
+
+  <!-- Lista de Tarefas em Ordem de Execução Sequencial -->
+  <ol class="list divide">
     {#each ordered as task, i (task.id)}
       {@const stuck = blockers(task)}
-      {@const running = dispatching === task.id}
-      <li class="task rise" style="--i: {Math.min(i, 8)}">
-        <span class="idx mono" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
+      {@const isRunning = dispatching === task.id || task.status === 'RUNNING'}
+      {@const isAwaiting = task.status === 'AWAITING_ANALYST'}
+      {@const isCompleted = task.status === 'COMPLETED'}
+      <li class="task rise" class:running={isRunning} class:completed={isCompleted} style="--i: {Math.min(i, 8)}">
+        <!-- Número de Ordem de Execução Sequencial -->
+        <div class="step-col">
+          <span class="step-num mono" class:done={isCompleted} title="Ordem de execução sequencial">
+            {#if isCompleted}
+              <Icon name="check" size={12} />
+            {:else}
+              #{String(i + 1).padStart(2, '0')}
+            {/if}
+          </span>
+          {#if i < ordered.length - 1}
+            <span class="step-line" class:done={isCompleted} aria-hidden="true"></span>
+          {/if}
+        </div>
 
         <div class="body">
           <div class="head">
@@ -272,29 +500,37 @@
             </details>
           {/if}
 
-          {#if stuck.length}
+          {#if stuck.length > 0}
             <p class="blocked-note">
               Travada por
-              {#each stuck as d, di (d.id)}<span class="mono">{d.title}</span>{#if di < stuck.length - 1}, {/if}{/each}
-              — o orquestrador recusa o dispatch enquanto a dependência não concluir.
+              {#each stuck as d, di (d.id)}
+                <span class="mono bold">{d.title}</span>{#if di < stuck.length - 1}, {/if}
+              {/each}
+              — o orquestrador exige a conclusão da dependência antes de despachar.
             </p>
           {/if}
 
-          {#if task.status === 'AWAITING_ANALYST' && !running}
+          {#if isAwaiting && !isRunning}
             <div class="clar">
               <ClarificationPanel {task} onresolved={replace} />
             </div>
           {/if}
 
-          {#if running}
-            <div class="running">
-              <span class="pulse" aria-hidden="true"></span>
-              <span>
-                Contêiner em execução. A requisição fica aberta até o agente sair — saída
-                <span class="mono">0</span> roda os testes,
-                <span class="mono">42</span> devolve uma pergunta.
-              </span>
-              <Elapsed from={dispatchStart} />
+          {#if isRunning}
+            <!-- Quem disparou recebe o resultado pela própria requisição; quem só
+                 abriu a página recarrega quando o stream encerra. -->
+            <TaskActivity
+              taskId={task.id}
+              onclosed={() => {
+                if (dispatching !== task.id) load();
+              }}
+            />
+          {/if}
+
+          {#if merging === task.id || task.status === 'IN_REVIEW'}
+            <div class="merging-banner">
+              <span class="spinner-inline" aria-hidden="true"></span>
+              <span>Incorporando alterações na branch principal ({data.project.default_branch || 'main'})…</span>
             </div>
           {/if}
 
@@ -303,57 +539,78 @@
               <Icon name="alert" size={12} />
               {dispatchError.message}
             </p>
+          {:else if task.status === 'FAILED' && (task.error || task.last_comment)}
+            <p class="error-line" role="alert">
+              <Icon name="alert" size={12} />
+              {task.error || task.last_comment}
+            </p>
+          {:else if isCompleted && task.last_comment}
+            <p class="completed-note mono faint">
+              {task.last_comment}
+            </p>
           {/if}
         </div>
 
         <div class="side">
-          {#if task.status === 'IN_REVIEW'}
-            {#if data.project.repo_url && task.assigned_branch}
-              <a
-                href="{data.project.repo_url}/compare/{data.project.default_branch}...{task.assigned_branch}"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="btn btn-line btn-sm"
-                title="Comparar e ver diff no Gitea"
-              >
-                <Icon name="external" size={11} /> Ver Diff
-              </a>
-            {/if}
-            <button
-              type="button"
-              class="btn btn-solid btn-sm"
-              onclick={() => merge(task)}
-              disabled={merging === task.id}
-              title="Aprovar e incorporar branch na principal"
-            >
-              {#if merging === task.id}
-                Incorporando…
-              {:else}
-                <Icon name="check" size={11} /> Aprovar & Merge
-              {/if}
-            </button>
+          {#if isCompleted}
+            <span class="completed-tag label mono">
+              <Icon name="check" size={11} /> Concluída
+            </span>
+          {:else if task.status === 'IN_REVIEW' || merging === task.id}
+            <span class="completed-tag label mono">
+              <span class="spinner-inline" aria-hidden="true"></span> Incorporando…
+            </span>
           {:else}
             <button
               type="button"
               class="btn btn-line btn-sm"
               onclick={() => dispatch(task)}
               disabled={!canDispatch(task)}
-              title={stuck.length ? 'Dependências pendentes' : 'Executar no contêiner'}
+              title={stuck.length ? 'Aguardando dependências' : isRunning ? 'Executando' : 'Executar individualmente'}
             >
-              {#if running}
+              {#if isRunning}
                 Executando…
               {:else if task.status === 'FAILED'}
                 <Icon name="play" size={11} /> Repetir
               {:else}
-                <Icon name="play" size={11} /> Despachar
+                <Icon name="play" size={11} /> Executar
               {/if}
             </button>
           {/if}
         </div>
       </li>
     {/each}
-  </ul>
+  </ol>
 {/if}
+
+<!-- Modal de Diff -->
+<Modal bind:open={diffOpen} title="Diff da Tarefa">
+  {#snippet body()}
+    {#if diffLoading}
+      <Skeleton variant="lines" rows={8} />
+    {:else if diffData}
+      <div class="diff-container">
+        <div class="diff-meta spread mono faint">
+          <span>Branch: {diffData.branch} → {diffData.base_branch}</span>
+          {#if diffData.gitea_url}
+            <a href={diffData.gitea_url} target="_blank" rel="noopener noreferrer" class="link-ext">
+              Abrir no Repositório <Icon name="external" size={10} />
+            </a>
+          {/if}
+        </div>
+        <pre class="diff-code mono">{diffData.diff || 'Sem alterações identificadas.'}</pre>
+      </div>
+    {/if}
+  {/snippet}
+  {#snippet footer()}
+    <div class="spread modal-foot">
+      <div></div>
+      <button type="button" class="btn btn-line btn-sm" onclick={() => (diffOpen = false)}>
+        Fechar
+      </button>
+    </div>
+  {/snippet}
+</Modal>
 
 <style>
   .pad {
@@ -378,19 +635,59 @@
     margin-top: var(--s5);
   }
 
-  .backlog-action-bar {
-    align-items: flex-end;
-    gap: var(--s4);
-    border-bottom: 1px solid var(--rule-ink);
-    margin-top: var(--s3);
+  /* Barra de Progresso */
+  .progress-bar-card {
+    margin-top: var(--s5);
+    padding: var(--s4);
+    background: var(--paper-2);
+    border: 1px solid var(--rule-2);
   }
 
-  /* Placar do backlog: números grandes em mono, separados por filete */
+  .progress-meta {
+    font-size: var(--t-small);
+    margin-bottom: var(--s2);
+  }
+
+  .meta-left {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .session-badge {
+    color: var(--ink);
+  }
+
+  .progress-track {
+    height: 6px;
+    background: var(--rule-2);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--progress);
+    transition: width 0.3s ease-out;
+  }
+
+  /* Painel de Controle de Execução */
+  .control-panel {
+    margin-top: var(--s4);
+    border-bottom: 1px solid var(--rule-ink);
+    padding-bottom: var(--s4);
+  }
+
+  .control-top {
+    align-items: flex-end;
+    gap: var(--s4);
+    flex-wrap: wrap;
+  }
+
   .tally {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s6);
-    padding: var(--s5) 0;
+    padding: var(--s3) 0;
   }
 
   .count {
@@ -411,8 +708,60 @@
     color: var(--accent);
   }
 
+  .runner-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    padding-bottom: var(--s2);
+    flex-wrap: wrap;
+  }
+
+  .active-pulse {
+    border-color: var(--accent);
+    color: var(--accent);
+    animation: pulse-border 1.5s infinite ease-in-out;
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .queue-status-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    margin-top: var(--s3);
+    padding: var(--s3) var(--s4);
+    background: var(--paper-sunk);
+    border-left: 3px solid var(--rule-2);
+    font-size: var(--t-small);
+    color: var(--ink-2);
+  }
+
+  .queue-status-banner.running {
+    border-left-color: var(--accent);
+    color: var(--ink);
+  }
+
+  .spinner-inline {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--rule-2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Lista de Tarefas e Conectores Sequenciais */
   .list {
     border-bottom: 1px solid var(--rule);
+    padding: 0;
+    list-style: none;
   }
 
   .task {
@@ -420,12 +769,54 @@
     grid-template-columns: 2.75rem 1fr auto;
     gap: var(--s4);
     padding: var(--s5) 0;
+    position: relative;
+    transition: background-color 0.2s ease;
   }
 
-  .idx {
-    font-size: var(--t-small);
-    color: var(--ink-4);
-    padding-top: 0.2rem;
+  .task.running {
+    background: var(--paper-sunk);
+    margin-inline: -1rem;
+    padding-inline: 1rem;
+  }
+
+  .step-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    padding-top: 0.15rem;
+  }
+
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--t-micro);
+    width: 1.85rem;
+    height: 1.85rem;
+    border: 1px solid var(--rule-2);
+    background: var(--paper);
+    color: var(--ink-3);
+    border-radius: 2px;
+    font-weight: 500;
+  }
+
+  .step-num.done {
+    background: var(--paper-2);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .step-line {
+    width: 1px;
+    flex: 1;
+    background: var(--rule-2);
+    margin-top: 0.35rem;
+    min-height: 2rem;
+  }
+
+  .step-line.done {
+    background: var(--rule-ink);
   }
 
   .body {
@@ -551,12 +942,61 @@
     max-width: 44rem;
   }
 
-  .pulse {
-    width: 6px;
-    height: 6px;
-    flex: none;
-    background: var(--ink);
-    animation: blink 1.3s var(--ease) infinite;
+  .merging-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    margin-top: var(--s4);
+    padding: var(--s3) var(--s4);
+    background: var(--paper-2);
+    border-left: 2px solid var(--accent);
+    font-size: var(--t-small);
+    color: var(--ink);
+    max-width: 44rem;
+  }
+
+  .review-banner {
+    margin-top: var(--s4);
+    padding: var(--s3) var(--s4);
+    background: var(--paper-2);
+    border: 1px solid var(--rule-2);
+    border-left: 3px solid var(--ink);
+    max-width: 44rem;
+  }
+
+  .review-info {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+  }
+
+  .check-icon {
+    display: inline-flex;
+    margin-top: 0.15rem;
+    color: var(--ink);
+  }
+
+  .review-text {
+    font-size: var(--t-small);
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+
+  .review-text strong {
+    color: var(--ink);
+  }
+
+  .review-text code {
+    font-family: var(--font-mono);
+    font-size: var(--t-micro);
+    background: var(--paper-sunk);
+    padding: 0.1rem 0.3rem;
+  }
+
+  .completed-note {
+    margin-top: var(--s2);
+    font-size: var(--t-micro);
+    color: var(--ink-3);
   }
 
   .error-line {
@@ -577,6 +1017,22 @@
     align-items: flex-end;
   }
 
+  .btn-group {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .completed-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--ink-3);
+    font-size: var(--t-micro);
+    padding: var(--s1) var(--s2);
+    border: 1px solid var(--rule);
+  }
+
   .branch-link {
     display: inline-flex;
     align-items: center;
@@ -590,13 +1046,48 @@
     color: var(--ink);
   }
 
+  /* Modal de Diff */
+  .diff-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+  }
+
+  .diff-meta {
+    font-size: var(--t-small);
+  }
+
+  .link-ext {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--ink);
+    text-decoration: underline;
+  }
+
+  .diff-code {
+    max-height: 28rem;
+    overflow: auto;
+    font-size: var(--t-micro);
+    background: var(--paper-sunk);
+    padding: var(--s4);
+    border: 1px solid var(--rule);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .modal-foot {
+    width: 100%;
+  }
+
   @media (max-width: 760px) {
     .task {
-      grid-template-columns: 1.75rem 1fr;
+      grid-template-columns: 2rem 1fr;
     }
 
     .side {
       grid-column: 2;
+      align-items: flex-start;
     }
 
     .detail-grid {

@@ -2,14 +2,19 @@
 
 import asyncio
 import json
+import logging
 import os
+import threading
 import uuid
 from typing import Optional, Any
 import docker
 
 from painkiller.core.domain.models import Task, ExecutionResult, ClarificationRequest
-from painkiller.core.ports.sandbox import SandboxPort
+from painkiller.core.ports.sandbox import AgentEventCallback, SandboxPort
+from painkiller.adapters.sandbox.docker_agent_session import parse_agent_line
 from painkiller.adapters.sandbox.paths import daemon_path
+
+logger = logging.getLogger(__name__)
 
 
 class DockerSandboxRunner(SandboxPort):
@@ -40,6 +45,7 @@ class DockerSandboxRunner(SandboxPort):
         repo_path: str,
         task_instructions: str,
         timeout_seconds: int = 600,
+        on_event: Optional[AgentEventCallback] = None,
     ) -> ExecutionResult:
         """Run the task in a detached Docker container, waiting for completion or clarification."""
         loop = asyncio.get_running_loop()
@@ -50,6 +56,7 @@ class DockerSandboxRunner(SandboxPort):
             repo_path,
             task_instructions,
             timeout_seconds,
+            on_event,
         )
 
     def _run_task_sync(
@@ -58,6 +65,7 @@ class DockerSandboxRunner(SandboxPort):
         repo_path: str,
         task_instructions: str,
         timeout_seconds: int,
+        on_event: Optional[AgentEventCallback] = None,
     ) -> ExecutionResult:
         container_name = f"pk-task-{task.id}-{uuid.uuid4().hex[:6]}"
 
@@ -108,10 +116,17 @@ class DockerSandboxRunner(SandboxPort):
             )
             self._running_containers[task.id] = container
 
-            res = container.wait(timeout=timeout_seconds)
+            # Seguir o log bloqueia até o contêiner sair; o timer garante que
+            # um agente pendurado não segure a thread para sempre.
+            timer = threading.Timer(timeout_seconds, self._kill_on_timeout, (container, task.id))
+            timer.daemon = True
+            timer.start()
+            try:
+                logs = self._follow_logs(container, on_event)
+                res = container.wait()
+            finally:
+                timer.cancel()
             exit_code = res.get("StatusCode", 1)
-            raw_logs = container.logs(stdout=True, stderr=True)
-            logs = raw_logs.decode("utf-8", errors="replace") if isinstance(raw_logs, bytes) else str(raw_logs)
 
             clarification = None
             clar_file = os.path.join(repo_path, ".painkiller", "clarification.json")
@@ -132,6 +147,51 @@ class DockerSandboxRunner(SandboxPort):
             )
         finally:
             self._cleanup_container(task.id)
+
+    @staticmethod
+    def _kill_on_timeout(container: Any, task_id: str) -> None:
+        logger.warning(f"Task {task_id} exceeded its timeout; killing container")
+        try:
+            container.kill()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _follow_logs(container: Any, on_event: Optional[AgentEventCallback]) -> str:
+        """Stream the container's output until it exits, returning all of it.
+
+        Each complete line is parsed and handed to ``on_event``; a callback
+        failure never interrupts the run.
+        """
+        chunks: list[bytes] = []
+        pending = b""
+
+        def emit(raw: bytes) -> None:
+            if on_event is None:
+                return
+            line = raw.decode("utf-8", errors="replace").strip()
+            event = parse_agent_line(line)
+            if event is None:
+                return
+            try:
+                on_event(event)
+            except Exception as e:
+                logger.debug(f"on_event callback failed: {e}")
+
+        stream = container.logs(stdout=True, stderr=True, stream=True, follow=True)
+        if isinstance(stream, (bytes, str)):
+            stream = [stream]
+        for chunk in stream:
+            if isinstance(chunk, str):
+                chunk = chunk.encode("utf-8")
+            chunks.append(chunk)
+            pending += chunk
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                emit(line)
+        if pending.strip():
+            emit(pending)
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
     def _extract_clarification(self, repo_path: str, task_id: str) -> Optional[ClarificationRequest]:
         clar_file = os.path.join(repo_path, ".painkiller", "clarification.json")

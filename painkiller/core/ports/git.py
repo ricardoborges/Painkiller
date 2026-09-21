@@ -48,6 +48,26 @@ class GitPort(ABC):
         pass
 
     @abstractmethod
+    async def commit_paths(self, repo_path: str, paths: list[str], message: str) -> Optional[str]:
+        """Commit only the given paths on the current branch; return the new SHA, or None if nothing changed."""
+        pass
+
+    @abstractmethod
+    async def switch_branch(self, repo_path: str, branch_name: str) -> tuple[int, str]:
+        """Check out an existing branch, refusing if tracked files have uncommitted changes."""
+        pass
+
+    @abstractmethod
+    async def current_branch(self, repo_path: str) -> str:
+        """Return the name of the branch currently checked out."""
+        pass
+
+    @abstractmethod
     async def merge_branch(self, repo_path: str, source_branch: str, target_branch: str = "main") -> tuple[int, str]:
         """Checkout target branch and merge source branch into it."""
+        pass
+
+    @abstractmethod
+    async def archive(self, repo_path: str, ref: str = "HEAD") -> bytes:
+        """Return a zip of the tree at ``ref`` (tracked files only, no .git)."""
         pass
