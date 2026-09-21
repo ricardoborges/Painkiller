@@ -78,11 +78,28 @@
       /* clipboard error */
     }
   }
+
+  function downloadPdf() {
+    if (!docContent?.content) return;
+    window.print();
+  }
 </script>
 
 <Modal bind:open title={doc?.filename ?? 'Documento'} width="54rem">
   {#snippet body()}
     <div class="doc-viewer">
+      <!-- Cabeçalho visível exclusivamente na impressão / PDF -->
+      <div class="print-header">
+        <h1 class="print-title">{doc?.filename ?? 'Documento'}</h1>
+        <div class="print-meta mono">
+          <span>{doc?.path}</span>
+          <span>·</span>
+          <span>Painkiller Agile Iteration</span>
+          <span>·</span>
+          <span>{new Date().toLocaleDateString('pt-BR')}</span>
+        </div>
+      </div>
+
       <!-- Toolbar com metadados e ações -->
       <div class="toolbar">
         <div class="doc-meta">
@@ -135,6 +152,16 @@
             {:else}
               <Icon name="clip" size={11} /> Copiar
             {/if}
+          </button>
+
+          <button
+            type="button"
+            class="btn btn-solid btn-sm"
+            onclick={downloadPdf}
+            disabled={!docContent?.content}
+            title="Exportar documento como PDF"
+          >
+            <Icon name="upload" size={11} /> Baixar como PDF
           </button>
         </div>
       </div>
@@ -362,5 +389,96 @@
     border: none;
     border-top: 1px solid var(--rule-ink);
     margin: var(--s6) 0;
+  }
+
+  .print-header {
+    display: none;
+  }
+
+  .print-title {
+    font-size: var(--t-display, 1.5rem);
+    font-weight: 700;
+    margin: 0 0 var(--s2) 0;
+    color: #000;
+  }
+
+  .print-meta {
+    font-size: var(--t-micro, 0.75rem);
+    color: #555;
+    display: flex;
+    gap: var(--s2);
+    align-items: center;
+  }
+
+  @media print {
+    :global(body > *:not(dialog[open])) {
+      display: none !important;
+    }
+
+    :global(dialog[open]) {
+      position: static !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      max-height: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+      box-shadow: none !important;
+      background: #fff !important;
+    }
+
+    :global(dialog header),
+    :global(dialog footer) {
+      display: none !important;
+    }
+
+    .toolbar {
+      display: none !important;
+    }
+
+    .print-header {
+      display: block !important;
+      margin-bottom: 2rem !important;
+      padding-bottom: 1rem !important;
+      border-bottom: 2px solid #000 !important;
+    }
+
+    .doc-viewer {
+      height: auto !important;
+      overflow: visible !important;
+    }
+
+    .content-scroll {
+      overflow: visible !important;
+      padding: 0 !important;
+    }
+
+    .markdown-body {
+      max-width: 100% !important;
+      font-size: 11pt !important;
+      line-height: 1.5 !important;
+      color: #000 !important;
+    }
+
+    .markdown-body :global(pre),
+    .markdown-body :global(blockquote),
+    .markdown-body :global(table),
+    .markdown-body :global(tr) {
+      page-break-inside: avoid !important;
+    }
+
+    .markdown-body :global(h1),
+    .markdown-body :global(h2),
+    .markdown-body :global(h3) {
+      page-break-after: avoid !important;
+      color: #000 !important;
+    }
+
+    .markdown-body :global(pre) {
+      border: 1px solid #ccc !important;
+      background: #f8f8f8 !important;
+      white-space: pre-wrap !important;
+      word-break: break-word !important;
+    }
   }
 </style>

@@ -5,18 +5,22 @@
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
   import DocViewer from '$lib/components/DocViewer.svelte';
+  import { getProjectSessionStore } from '$lib/stores/session.svelte';
 
   let { data } = $props();
+
+  const sessionStore = $derived(getProjectSessionStore(data.project.id));
+  const activeSession = $derived(sessionStore.activeSession);
 
   let docs = $state<ProjectDoc[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let scope = $state<'session' | 'all'>('session');
 
   let selected = $state<ProjectDoc | null>(null);
   let viewerOpen = $state(false);
 
-  /* Tudo o que o agente produziu num lugar só. Antes isto vivia escondido
-     numa coluna da tela de análise — e o link do Gitea, num subtítulo. */
+  /* Tudo o que o agente produziu num lugar só. */
   const GROUPS = [
     { key: 'spec', title: 'Especificações', hint: 'O que o brainstorming decidiu construir.' },
     { key: 'plan', title: 'Planos de implementação', hint: 'Como o trabalho foi dividido.' },
@@ -34,7 +38,11 @@
     loading = true;
     error = null;
     try {
-      docs = await api.listProjectDocs(data.project.id);
+      if (scope === 'session' && activeSession) {
+        docs = await api.listSessionArtifacts(data.project.id, activeSession.id);
+      } else {
+        docs = await api.listProjectDocs(data.project.id);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Falha ao listar os artefatos.';
     } finally {
@@ -43,6 +51,10 @@
   }
 
   $effect(() => {
+    // Re-executa quando o projeto, sessão ativa ou escopo mudam
+    const _pId = data.project.id;
+    const _sId = activeSession?.id;
+    const _sc = scope;
     load();
   });
 
@@ -61,14 +73,40 @@
 
 <div class="grid">
   <div class="main">
-    <div class="spread head">
-      <p class="help">
-        Arquivos gravados pelo agente no repositório do projeto. O que está aqui é
-        o que existe em disco — não uma cópia.
-      </p>
-      <button type="button" class="btn btn-line btn-sm" onclick={load} disabled={loading}>
-        <Icon name="upload" size={12} /> Recarregar
-      </button>
+    <div class="head">
+      <div class="spread">
+        <div>
+          <p class="help">
+            Documentos e especificações gerados pelo ciclo iterativo de engenharia.
+            Arquivos reais gravados diretamente no repositório.
+          </p>
+        </div>
+        <div class="head-actions">
+          {#if activeSession}
+            <div class="seg-control" role="group" aria-label="Filtrar artefatos">
+              <button
+                type="button"
+                class="seg-btn"
+                class:active={scope === 'session'}
+                onclick={() => (scope = 'session')}
+              >
+                Sessão {activeSession.number}
+              </button>
+              <button
+                type="button"
+                class="seg-btn"
+                class:active={scope === 'all'}
+                onclick={() => (scope = 'all')}
+              >
+                Todos
+              </button>
+            </div>
+          {/if}
+          <button type="button" class="btn btn-line btn-sm" onclick={load} disabled={loading}>
+            <Icon name="upload" size={12} /> Recarregar
+          </button>
+        </div>
+      </div>
     </div>
 
     {#if loading && !docs.length}
@@ -82,13 +120,20 @@
     {:else if !docs.length}
       <Placeholder
         kind="empty"
-        title="Nenhum artefato ainda"
-        detail="A análise inicial grava a especificação em docs/superpowers/specs/ e o backlog em .painkiller/backlog.json. Enquanto ela não rodar, não há o que ver."
+        title={scope === 'session' && activeSession ? `Nenhum artefato vinculado à Sessão ${activeSession.number}` : 'Nenhum artefato ainda'}
+        detail="Ao executar a análise da sessão, o agente grava a especificação em docs/superpowers/specs/ e o backlog em .painkiller/backlog.json."
       >
         {#snippet action()}
-          <a class="btn btn-solid" href="/projetos/{data.project.id}/analise-inicial">
-            <Icon name="play" size={11} /> Ir para a análise
-          </a>
+          <div class="empty-actions">
+            {#if scope === 'session'}
+              <button type="button" class="btn btn-line" onclick={() => (scope = 'all')}>
+                Ver todos do projeto
+              </button>
+            {/if}
+            <a class="btn btn-solid" href="/projetos/{data.project.id}/analise">
+              <Icon name="play" size={11} /> Ir para a Análise
+            </a>
+          </div>
         {/snippet}
       </Placeholder>
     {:else}
@@ -104,7 +149,12 @@
             {#each group.items as d (d.path)}
               <li class="doc">
                 <button type="button" class="open" onclick={() => open(d)}>
-                  <span class="name mono truncate" title={d.path}>{d.filename}</span>
+                  <div class="name-row">
+                    <span class="name mono truncate" title={d.path}>{d.filename}</span>
+                    {#if d.is_session_spec}
+                      <span class="session-tag mono" title="Especificação desta sessão">Sessão {activeSession?.number}</span>
+                    {/if}
+                  </div>
                   <span class="path mono faint truncate">{d.path}</span>
                 </button>
                 <span class="mono faint size">{(d.size_bytes / 1024).toFixed(1)} KB</span>
@@ -202,6 +252,69 @@
 
   .head {
     margin-bottom: var(--s6);
+  }
+
+  .head-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+
+  .seg-control {
+    display: inline-flex;
+    border: 1px solid var(--rule-ink);
+    border-radius: 0;
+    overflow: hidden;
+  }
+
+  .seg-btn {
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--rule-ink);
+    padding: var(--s1) var(--s3);
+    font-size: var(--t-micro);
+    font-family: var(--font-mono, monospace);
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+
+  .seg-btn:last-child {
+    border-right: none;
+  }
+
+  .seg-btn:hover {
+    color: var(--ink);
+    background: var(--paper-2);
+  }
+
+  .seg-btn.active {
+    background: var(--ink);
+    color: var(--paper);
+    font-weight: 600;
+  }
+
+  .empty-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    margin-top: var(--s3);
+  }
+
+  .name-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .session-tag {
+    font-size: var(--t-micro);
+    padding: 0.1rem 0.35rem;
+    border: 1px solid var(--rule-ink);
+    color: var(--ink);
+    background: var(--paper-2);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
   }
 
   .head .help {
