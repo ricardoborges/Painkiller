@@ -102,7 +102,7 @@ Expected: FAIL
 - Set default model to `os.environ.get("PAINKILLER_AGENT_MODEL") or "gemini-3.8-flash"`.
 - Set default effort to `os.environ.get("PAINKILLER_AGENT_EFFORT") or "medium"`.
 - Assemble command with `agy`, `--model`, `--effort`, `--dangerously-skip-permissions`, `--input-format stream-json`, `--output-format stream-json`.
-- Mount `/home/node/.gemini` instead of `/home/node/.claude`.
+- Mount `/root/.gemini` instead of `/home/node/.claude`.
 - Update `send` to emit `{"event": "user", "type": "user", "message": {"role": "user", "content": text}}`.
 - Update `parse_agent_line` to handle `event in ("init", "step_update", "result")` alongside legacy Claude events.
 
@@ -130,7 +130,7 @@ git commit -m "feat(agent): refatorar DockerAgentSession para Antigravity CLI e 
 
 - [ ] **Step 1: Edit `docker/agent.Dockerfile`**
 
-Install `agy` using the official curl installer with `-d /usr/local/bin`, clone `superpowers`, ensure `plugin.json` exists, copy into `/home/node/.gemini/config/plugins/superpowers`, and register via `agy plugin install /opt/superpowers`.
+Install `agy` using the official curl installer with `-d /usr/local/bin`, clone `superpowers`, ensure `plugin.json` exists, copy into `/root/.gemini/config/plugins/superpowers`, and register via `agy plugin install /opt/superpowers`.
 
 - [ ] **Step 2: Validate dockerfile syntax and commands**
 

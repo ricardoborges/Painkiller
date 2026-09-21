@@ -124,7 +124,7 @@ class DockerAgentSession(AgentSessionPort):
         loop = asyncio.get_running_loop()
         volumes = {
             daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
-            daemon_path(gemini_home): {"bind": "/home/node/.gemini", "mode": "rw"},
+            daemon_path(gemini_home): {"bind": "/root/.gemini", "mode": "rw"},
         }
         container = await loop.run_in_executor(
             None,

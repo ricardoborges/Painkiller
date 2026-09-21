@@ -64,7 +64,7 @@ async def test_start_mounts_the_repo_and_seeds_the_prompt_into_the_queue(tmp_pat
     volumes = client.containers.run.call_args.kwargs["volumes"]
     bindings = [v["bind"] for v in volumes.values()]
     assert "/workspace" in bindings
-    assert "/home/node/.gemini" in bindings
+    assert "/root/.gemini" in bindings
 
     # O prompt inicial viaja pela mesma fila das respostas do analista, formatado com event e type.
     first = _queue_lines(tmp_path)[0]

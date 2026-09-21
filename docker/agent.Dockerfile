@@ -30,14 +30,12 @@ COPY . /tmp/painkiller
 RUN pip install --no-cache-dir --break-system-packages /tmp/painkiller && rm -rf /tmp/painkiller
 
 # Prepara diretórios e copia o plugin para o diretório padrão de plugins do Antigravity
-RUN mkdir -p /workspace /home/node/.gemini/config/plugins \
-    && cp -r /opt/superpowers /home/node/.gemini/config/plugins/superpowers \
-    && chown -R node:node /workspace /home/node
+RUN mkdir -p /workspace /root/.gemini/config/plugins \
+    && cp -r /opt/superpowers /root/.gemini/config/plugins/superpowers
 
-USER node
 WORKDIR /workspace
 
-# Registra o plugin para o usuário node
+# Registra o plugin para o Antigravity CLI
 RUN agy plugin install /opt/superpowers || true
 
 RUN git config --global user.name "Painkiller Agent" \

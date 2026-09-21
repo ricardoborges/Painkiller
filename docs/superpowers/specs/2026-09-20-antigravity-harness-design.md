@@ -16,7 +16,7 @@ Atualmente, essa etapa roda sobre o Claude Code (`@anthropic-ai/claude-code`) ac
 
 1. **Daemon do Contêiner (`agent.Dockerfile`)**:
    - Instalação do binário nativo do Antigravity CLI (`agy`) a partir do instalador oficial (`https://antigravity.google/cli/install.sh`).
-   - Clone do repositório `superpowers` em `/opt/superpowers` e registro do plugin no `agy` (`agy plugin install /opt/superpowers` e espelhamento em `/home/node/.gemini/config/plugins/superpowers`).
+   - Clone do repositório `superpowers` em `/opt/superpowers` e registro do plugin no `agy` (`agy plugin install /opt/superpowers` e espelhamento em `/root/.gemini/config/plugins/superpowers`).
    - Permissões de usuário sem privilégios (`node` uid 1000) e configuração segura do git.
 
 2. **Ponte de Entrada (`painkiller agent-run`)**:
@@ -27,7 +27,7 @@ Atualmente, essa etapa roda sobre o Claude Code (`@anthropic-ai/claude-code`) ac
 3. **Adaptador Docker (`DockerAgentSession`)**:
    - Valida precocemente a existência de `GEMINI_API_KEY` (ou `GOOGLE_API_KEY`) no ambiente com mensagem clara em pt-BR.
    - Repassa `GEMINI_API_KEY` e variáveis do modelo para o contêiner.
-   - Monta o volume de persistência do Antigravity em `/home/node/.gemini`.
+   - Monta o volume de persistência do Antigravity em `/root/.gemini`.
    - Executa `agy` com as flags headless e de streaming:
      - `--model gemini-3.8-flash`
      - `--effort medium`
