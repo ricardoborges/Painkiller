@@ -132,3 +132,45 @@ async def test_analysis_session_persistence(tracker: SQLiteIssueTracker):
     active_after = await tracker.get_active_analysis_session(proj.id)
     assert active_after is None
 
+
+async def test_init_db_migrates_missing_columns(tmp_path):
+    import sqlite3
+
+    db_file = tmp_path / "legacy.db"
+    db_url = f"sqlite+aiosqlite:///{db_file}"
+
+    # Cria tabela projects legada sem a coluna repo_url
+    conn = sqlite3.connect(str(db_file))
+    conn.execute(
+        """
+        CREATE TABLE projects (
+            id VARCHAR PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            repo_path VARCHAR NOT NULL,
+            description TEXT,
+            purpose TEXT,
+            solution_description TEXT,
+            attachments TEXT,
+            default_branch VARCHAR,
+            created_at DATETIME
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO projects (id, name, repo_path, default_branch, created_at) VALUES ('p1', 'Legacy', '/tmp/leg', 'main', '2026-09-20 00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    tracker = SQLiteIssueTracker(db_url=db_url)
+    await tracker.init_db()
+
+    # A consulta a projects deve funcionar normalmente com repo_url migrado
+    projects = await tracker.list_projects()
+    assert len(projects) == 1
+    assert projects[0].id == "p1"
+    assert projects[0].repo_url is None
+
+    await tracker.close()
+
+

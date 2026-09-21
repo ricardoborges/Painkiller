@@ -113,6 +113,22 @@ class SQLiteIssueTracker(IssueTrackerPort):
     async def init_db(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(self._migrate_columns)
+
+    @staticmethod
+    def _migrate_columns(connection) -> None:
+        """Add any missing columns to existing SQLite tables to handle schema evolution."""
+        from sqlalchemy import inspect
+        inspector = inspect(connection)
+        for table_name, table in Base.metadata.tables.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing_cols = {col["name"] for col in inspector.get_columns(table_name)}
+            for col in table.columns:
+                if col.name not in existing_cols:
+                    col_type = col.type.compile(connection.dialect)
+                    sql = f"ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type}"
+                    connection.exec_driver_sql(sql)
 
     async def close(self) -> None:
         await self.engine.dispose()
