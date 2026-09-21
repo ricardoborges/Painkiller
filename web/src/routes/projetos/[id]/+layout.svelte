@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import Icon from '$lib/components/Icon.svelte';
-  import SessionSelector from '$lib/components/SessionSelector.svelte';
+  import SessionSidebar from '$lib/components/SessionSidebar.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
 
   let { data, children } = $props();
@@ -38,33 +38,8 @@
 
 <svelte:head><title>{data.project.name} — Painkiller</title></svelte:head>
 
-<header class="head" class:compact>
-  <div class="top">
-    <a href="/projetos" class="back label">
-      <Icon name="arrow-left" size={11} /> Projetos
-    </a>
-
-    {#if data.project.repo_url}
-      <a
-        href={data.project.repo_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="repo label"
-      >
-        Repositório <Icon name="external" size={10} />
-      </a>
-    {/if}
-  </div>
-
-  <h1 class="display">{data.project.name}</h1>
-
-  <div class="ident mono faint">
-    <span>{data.project.id}</span>
-    <span class="sep" aria-hidden="true">·</span>
-    <span>branch base {data.project.default_branch}</span>
-  </div>
-
-  <SessionSelector
+<div class="project-layout">
+  <SessionSidebar
     sessions={sessionStore.sessions}
     activeSessionId={sessionStore.activeSessionId}
     loading={sessionStore.loading}
@@ -73,29 +48,79 @@
     oncreate={() => sessionStore.createNextSession()}
   />
 
-  <nav aria-label="Seções do projeto">
-    {#each steps as tab, i (tab.href)}
-      {@const active = isActive(tab.href, tab.exact)}
-      <a href={tab.href} class="tab" class:active aria-current={active ? 'page' : undefined}>
-        <span class="n mono" aria-hidden="true">{i + 1}</span>
-        {tab.label}
-      </a>
-    {/each}
+  <div class="project-main">
+    <header class="head" class:compact>
+      <div class="top">
+        <a href="/projetos" class="back label">
+          <Icon name="arrow-left" size={11} /> Projetos
+        </a>
 
-    <span class="gap" aria-hidden="true"></span>
+        {#if data.project.repo_url}
+          <a
+            href={data.project.repo_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="repo label"
+          >
+            Repositório <Icon name="external" size={10} />
+          </a>
+        {/if}
+      </div>
 
-    {#each aside as tab (tab.href)}
-      {@const active = isActive(tab.href, tab.exact)}
-      <a href={tab.href} class="tab quiet" class:active aria-current={active ? 'page' : undefined}>
-        {tab.label}
-      </a>
-    {/each}
-  </nav>
-</header>
+      <h1 class="display">{data.project.name}</h1>
 
-{@render children()}
+      <div class="ident mono faint">
+        <span>{data.project.id}</span>
+        <span class="sep" aria-hidden="true">·</span>
+        <span>branch base {data.project.default_branch}</span>
+      </div>
+
+      <nav aria-label="Seções do projeto">
+        {#each steps as tab, i (tab.href)}
+          {@const active = isActive(tab.href, tab.exact)}
+          <a href={tab.href} class="tab" class:active aria-current={active ? 'page' : undefined}>
+            <span class="n mono" aria-hidden="true">{i + 1}</span>
+            {tab.label}
+          </a>
+        {/each}
+
+        <span class="gap" aria-hidden="true"></span>
+
+        {#each aside as tab (tab.href)}
+          {@const active = isActive(tab.href, tab.exact)}
+          <a href={tab.href} class="tab quiet" class:active aria-current={active ? 'page' : undefined}>
+            {tab.label}
+          </a>
+        {/each}
+      </nav>
+    </header>
+
+    <div class="project-body">
+      {@render children()}
+    </div>
+  </div>
+</div>
 
 <style>
+  .project-layout {
+    display: flex;
+    align-items: stretch;
+    min-height: calc(100vh - 3.25rem);
+    margin-left: calc(var(--gutter) * -1);
+  }
+
+  .project-main {
+    flex: 1;
+    min-width: 0;
+    padding-left: var(--gutter);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .project-body {
+    flex: 1;
+  }
+
   .head {
     padding-top: var(--s6);
   }
@@ -218,6 +243,17 @@
 
   .quiet {
     color: var(--ink-4);
+  }
+
+  @media (max-width: 768px) {
+    .project-layout {
+      margin-left: 0;
+      flex-direction: column;
+    }
+
+    .project-main {
+      padding-left: 0;
+    }
   }
 
   @media (max-width: 640px) {

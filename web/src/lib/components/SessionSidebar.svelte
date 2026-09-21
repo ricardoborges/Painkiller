@@ -131,6 +131,9 @@
 
 <style>
   .session-sidebar {
+    position: sticky;
+    top: 3.25rem;
+    height: calc(100vh - 3.25rem);
     width: 15rem;
     flex-shrink: 0;
     display: flex;
@@ -139,10 +142,25 @@
     border-right: 1px solid var(--rule-ink);
     transition: width var(--fast) var(--ease);
     user-select: none;
+    z-index: 10;
   }
 
   .session-sidebar.collapsed {
     width: 3rem;
+  }
+
+  @media (max-width: 768px) {
+    .session-sidebar {
+      position: static;
+      height: auto;
+      width: 100% !important;
+      border-right: none;
+      border-bottom: 1px solid var(--rule-ink);
+    }
+
+    .session-sidebar.collapsed {
+      width: 100% !important;
+    }
   }
 
   .sidebar-head {
