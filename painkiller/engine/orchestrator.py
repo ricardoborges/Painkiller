@@ -15,7 +15,7 @@ from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.sandbox import SandboxPort
 from painkiller.core.ports.git import GitPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
-from painkiller.core.usage import parse_aider_usage
+from painkiller.core.usage import parse_task_usage
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,12 @@ class PainkillerOrchestrator:
         await self.git.create_branch(project.repo_path, branch_name, project.default_branch)
         task.assigned_branch = branch_name
 
-        # Mark as running
-        await self.tracker.update_task_status(task.id, TaskStatus.RUNNING)
+        # Mark as running and persist assigned branch
+        await self.tracker.update_task_status(
+            task.id,
+            TaskStatus.RUNNING,
+            assigned_branch=branch_name,
+        )
 
         # Build prompt instructions
         instructions = self._build_task_instructions(task, project)
@@ -77,7 +81,11 @@ class PainkillerOrchestrator:
                 result.clarification.question,
                 result.clarification.context_summary,
             )
-            await self.tracker.update_task_status(task.id, TaskStatus.AWAITING_ANALYST)
+            await self.tracker.update_task_status(
+                task.id,
+                TaskStatus.AWAITING_ANALYST,
+                assigned_branch=branch_name,
+            )
             await self.tracker.add_comment(
                 task.id,
                 author="system",
@@ -86,42 +94,60 @@ class PainkillerOrchestrator:
         elif result.exit_code == 0:
             # Run test verification
             test_code, test_out = await self.git.run_tests(project.repo_path)
-            if test_code == 0:
+            if test_code in (0, 5):
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
                 try:
                     await self.git.push(project.repo_path, branch_name)
                 except Exception as push_err:
                     logger.debug(f"Git push skipped or failed: {push_err}")
 
-                await self.tracker.update_task_status(task.id, TaskStatus.IN_REVIEW)
+                await self.tracker.update_task_status(
+                    task.id,
+                    TaskStatus.IN_REVIEW,
+                    assigned_branch=branch_name,
+                )
+                comment = "✅ Task completed and verified. Ready for review."
+                if test_code == 5 or "Sem testes" in test_out:
+                    comment += " (No tests collected in repository)"
                 await self.tracker.add_comment(
                     task.id,
                     author="system",
-                    comment="✅ Task completed and tests passed. Ready for review.",
+                    comment=comment,
                 )
             else:
-                await self.tracker.update_task_status(task.id, TaskStatus.FAILED)
+                await self.tracker.update_task_status(
+                    task.id,
+                    TaskStatus.FAILED,
+                    assigned_branch=branch_name,
+                    error=test_out,
+                )
                 await self.tracker.add_comment(
                     task.id,
                     author="system",
                     comment=f"❌ Tests failed after agent execution:\n{test_out}",
                 )
         else:
-            await self.tracker.update_task_status(task.id, TaskStatus.FAILED)
+            error_msg = f"❌ Agent execution failed with exit code {result.exit_code}:\n{result.logs}"
+            await self.tracker.update_task_status(
+                task.id,
+                TaskStatus.FAILED,
+                assigned_branch=branch_name,
+                error=error_msg,
+            )
             await self.tracker.add_comment(
                 task.id,
                 author="system",
-                comment=f"❌ Agent execution failed with exit code {result.exit_code}:\n{result.logs}",
+                comment=error_msg,
             )
 
         updated_task = await self.tracker.get_task(task.id)
         return updated_task or task
 
     async def _record_usage(self, task: Task, result: ExecutionResult) -> None:
-        """Book what Aider says it spent, whatever the exit code — a failed run still costs."""
+        """Book what the agent says it spent, whatever the exit code — a failed run still costs."""
         if self.usage is None:
             return
-        parsed = parse_aider_usage(result.logs)
+        parsed = parse_task_usage(result.logs)
         if parsed is None:
             return
         input_tokens, output_tokens, cost, model = parsed
@@ -129,9 +155,7 @@ class PainkillerOrchestrator:
             await self.usage.record_usage(
                 UsageRecord(
                     source=UsageSource.TASK,
-                    # O runner passa --model a partir desta variável; o log do
-                    # Aider nem sempre repete o nome.
-                    model=model or os.environ.get("PAINKILLER_LLM_MODEL", ""),
+                    model=model or os.environ.get("PAINKILLER_AGENT_MODEL", os.environ.get("PAINKILLER_LLM_MODEL", "gemini-3.8-flash")),
                     project_id=task.project_id,
                     task_id=task.id,
                     input_tokens=input_tokens,
@@ -168,11 +192,15 @@ class PainkillerOrchestrator:
                 instructions.append(f"- {c}")
 
         instructions.append(
+            "\n## Diretrizes de Execução:\n"
+            "1. Utilize as skills e boas práticas do plugin Superpowers disponíveis (como test-driven-development e executing-plans).\n"
+            "2. Implemente o código solicitado com qualidade e crie ou execute testes quando aplicável.\n"
+            "3. Faça commit de suas alterações no repositório git local com uma mensagem descritiva (ex: feat: ... ou fix: ...).\n"
             "\n## Protocolo de Dúvidas:\n"
-            "Se você encontrar qualquer ambiguidade ou precisar de esclarecimento do analista, "
+            "Se você encontrar qualquer ambiguidade crítica ou precisar de esclarecimento do analista, "
             "NÃO adivinhe. Execute o comando no shell:\n"
             "painkiller ask \"<sua dúvida>\" --context \"<arquivo e linha>\"\n"
-            "Isso salvará suas alterações e pausará o contêiner de forma limpa."
+            "Isso salvará suas alterações e pausará a execução de forma limpa."
         )
 
         return "\n".join(instructions)

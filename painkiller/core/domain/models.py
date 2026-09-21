@@ -52,6 +52,8 @@ class Task(BaseModel):
     status: TaskStatus = TaskStatus.BACKLOG
     assigned_branch: Optional[str] = None
     session_id: Optional[str] = None
+    last_comment: Optional[str] = None
+    error: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -193,7 +195,7 @@ class UsageRecord(BaseModel):
     # cobra cache mais barato, mas nunca esconde gasto.
     input_tokens: int = 0
     output_tokens: int = 0
-    # Custo que a própria ferramenta reportou (Claude Code, Aider). Vazio
+    # Custo que a própria ferramenta reportou (Claude Code, agy). Vazio
     # quando só temos tokens e o preço sai da tabela.
     reported_cost_usd: Optional[float] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

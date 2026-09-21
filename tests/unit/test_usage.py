@@ -21,7 +21,7 @@ from painkiller.core.domain.models import (
 )
 from painkiller.core.usage import (
     parse_agent_usage,
-    parse_aider_usage,
+    parse_task_usage,
     record_cost,
     summarize,
 )
@@ -64,21 +64,19 @@ def test_parse_result_without_usage_is_ignored():
     assert parse_agent_usage({"event": "result", "result": {"response": "oi"}}) is None
 
 
-def test_parse_aider_logs_sums_every_call():
+def test_parse_task_usage_from_agy_stream_json():
     logs = "\n".join(
         [
-            "Aider v0.86.0",
-            "Main model: gemini/gemini-3.8-flash with diff edit format",
-            "Tokens: 12k sent, 1.2k received. Cost: $0.04 message, $0.04 session.",
-            "Applied edit to app.py",
-            "Tokens: 2,500 sent, 1.1k cache hit, 150 received. Cost: $0.01 message, $0.05 session.",
+            '{"event": "init", "init": {"model": "gemini-3.8-flash"}}',
+            '{"event": "step_update", "step_update": {"step_type": "agent_response", "response": "implementando"}}',
+            '{"event": "result", "result": {"response": "pronto", "model": "gemini-3.8-flash", "total_cost_usd": 0.05, "usage_metadata": {"promptTokenCount": 14500, "candidatesTokenCount": 1350}}}',
         ]
     )
-    assert parse_aider_usage(logs) == (14_500, 1_350, pytest.approx(0.05), "gemini/gemini-3.8-flash")
+    assert parse_task_usage(logs) == (14_500, 1_350, pytest.approx(0.05), "gemini-3.8-flash")
 
 
-def test_parse_aider_logs_without_token_lines():
-    assert parse_aider_usage("Container execution error: boom") is None
+def test_parse_task_usage_without_token_lines():
+    assert parse_task_usage("Container execution error: boom") is None
 
 
 def test_record_cost_prefers_analyst_price_then_reported_then_catalog():
@@ -163,13 +161,13 @@ async def test_ledger_roundtrip(tmp_path):
         await ledger.close()
 
 
-async def test_dispatch_records_aider_usage_even_when_the_run_fails():
+async def test_dispatch_records_task_usage_even_when_the_run_fails():
     tracker, sandbox, git, usage = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
     tracker.get_task.return_value = Task(id="t1", project_id="p1", title="T", description="D")
     tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo")
     sandbox.run_task.return_value = ExecutionResult(
         exit_code=1,
-        logs="Model: openai/kimi\nTokens: 3k sent, 200 received. Cost: $0.02 message, $0.02 session.",
+        logs='{"event": "result", "result": {"model": "gemini-3.8-flash", "total_cost_usd": 0.02, "usage_metadata": {"promptTokenCount": 3000, "candidatesTokenCount": 200}}}',
     )
 
     orchestrator = PainkillerOrchestrator(tracker=tracker, sandbox=sandbox, git=git, usage=usage)
@@ -177,7 +175,7 @@ async def test_dispatch_records_aider_usage_even_when_the_run_fails():
 
     record = usage.record_usage.call_args.args[0]
     assert (record.source, record.task_id, record.project_id) == (UsageSource.TASK, "t1", "p1")
-    assert (record.input_tokens, record.output_tokens, record.model) == (3000, 200, "openai/kimi")
+    assert (record.input_tokens, record.output_tokens, record.model) == (3000, 200, "gemini-3.8-flash")
     assert record.reported_cost_usd == pytest.approx(0.02)
 
 

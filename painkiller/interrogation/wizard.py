@@ -106,7 +106,7 @@ class InterrogationWizard:
 
         prompt = (
             f"Com base na especificação técnica validada:\n\n{session.current_spec or session.history[-1]['content']}\n\n"
-            "Decomponha este projeto em uma lista ordenada de tarefas atômicas independentes, prontas para execução por um agente de codificação (Aider). "
+            "Decomponha este projeto em uma lista ordenada de tarefas atômicas independentes, prontas para execução por um agente de codificação (Antigravity CLI com Superpowers). "
             "Cada tarefa deve ter critérios de aceitação testáveis e arquivos alvo definidos."
         )
 

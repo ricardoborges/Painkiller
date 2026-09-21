@@ -15,7 +15,7 @@
 
   const SOURCE_LABEL: Record<UsageSource, string> = {
     ANALYSIS: 'Análise inicial',
-    TASK: 'Tarefas (Aider)',
+    TASK: 'Tarefas (Antigravity agy)',
     LLM: 'Chamadas diretas'
   };
 
@@ -389,7 +389,7 @@
       </table>
       </div>
       <p class="help foot">
-        Preço cadastrado por você vence; sem ele vale o custo que o Aider ou o agente reportou,
+        Preço cadastrado por você vence; sem ele vale o custo que o agente reportou,
         e por último o catálogo do LiteLLM. * inclui registros sem preço, fora do custo.
       </p>
     {/if}

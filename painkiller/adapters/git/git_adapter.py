@@ -61,7 +61,11 @@ class GitCliAdapter(GitPort):
         )
         stdout, stderr = await proc.communicate()
         output = stdout.decode("utf-8", errors="replace") + "\n" + stderr.decode("utf-8", errors="replace")
-        return (proc.returncode if proc.returncode is not None else 1, output)
+        code = proc.returncode if proc.returncode is not None else 1
+        # Pytest exit code 5: No tests were collected (e.g. web/HTML/JS repos)
+        if code == 5 and ("collected 0 items" in output or "no tests ran" in output or not test_command):
+            return (0, output + "\n(Sem testes coletados no repositório — aprovado por padrão)")
+        return (code, output)
 
     async def init_repo(self, repo_path: str, default_branch: str = "main", initial_commit: bool = True) -> None:
         os.makedirs(repo_path, exist_ok=True)

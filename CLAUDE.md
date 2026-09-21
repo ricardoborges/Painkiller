@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Painkiller is a platform that automates software development by orchestrating coding agents inside Docker containers. An analyst is interviewed by a containerized Claude Code agent running the superpowers `brainstorming` skill, the resulting spec is decomposed into atomic tasks, and each task is dispatched to a sandboxed Aider agent that works on a feature branch.
+Painkiller is a platform that automates software development by orchestrating coding agents inside Docker containers. An analyst is interviewed by a containerized Antigravity CLI (`agy`) agent running the superpowers `brainstorming` skill, the resulting spec is decomposed into atomic tasks, and each task is dispatched to a sandboxed Antigravity CLI (`agy`) agent running superpowers skills on a feature branch.
 
-**Two different agents.** The interview runs Claude Code, kept alive and streamed; the coding runs Aider, one-shot. See **Initial analysis** and **Task dispatch**.
+**Unified Agent Ecosystem.** Both initial analysis and task execution run native **Antigravity CLI (`agy`)** powered by Google's **Gemini 3.8 Flash** with the **Superpowers** plugin. The analysis runs interactive streaming; the task execution runs headless one-shot with stream-json logging. See **Initial analysis** and **Task dispatch**.
 
 Code comments, LLM prompts, API error messages and the UI are in **Portuguese (pt-BR)**; code identifiers and docstrings are in English. Follow that split.
 
@@ -77,7 +77,7 @@ So exit codes carry meaning end to end: `42` = paused for the analyst, `0` = age
 
 ### Initial analysis (Antigravity CLI + superpowers + Gemini 3.8 Flash, streamed)
 
-"Iniciar análise" runs a **different agent from the one that writes code**. Task dispatch runs Aider one-shot; the analysis runs **Antigravity CLI (`agy`)** kept alive for a back-and-forth interview, driven by the [superpowers](https://github.com/obra/superpowers) `brainstorming` skill running on Google's **Gemini 3.8 Flash** (`--model gemini-3.8-flash --effort medium`).
+"Iniciar análise" runs the initial elicitation agent. Task dispatch runs `agy` in one-shot headless mode; the analysis runs **Antigravity CLI (`agy`)** kept alive for a back-and-forth interview, driven by the [superpowers](https://github.com/obra/superpowers) `brainstorming` skill running on Google's **Gemini 3.8 Flash** (`--model gemini-3.8-flash --effort medium`).
 
 Key architectural characteristics:
 
@@ -102,9 +102,9 @@ Sessions and non-transient events are persisted through the tracker, so `get_or_
 
 The handoff to the backlog is a file: the agent writes the spec to `docs/superpowers/specs/` and the decomposed tasks to `.painkiller/backlog.json`, and `POST /api/analysis/{sid}/commit` reads that JSON back off the bind mount.
 
-### Task dispatch
+### Task dispatch (Antigravity CLI + superpowers + Gemini 3.8 Flash, one-shot)
 
-`dispatch_task` refuses to run a task whose `dependencies` are not all `COMPLETED`, creates/checks out `feature/{task_id}`, builds the Portuguese instruction prompt (including the clarification protocol block) in `_build_task_instructions`, then runs `painkiller-worker:latest` with the target repo bind-mounted at `/workspace`. API keys are copied from the server's environment into the container, and NVIDIA/custom-base vars are remapped onto `OPENAI_API_KEY`/`OPENAI_API_BASE` because that is what Aider reads.
+`dispatch_task` refuses to run a task whose `dependencies` are not all `COMPLETED`, creates/checks out `feature/{task_id}`, builds the Portuguese instruction prompt (including the clarification protocol block and superpowers skill guidelines) in `_build_task_instructions`, then runs `painkiller-worker:latest` with the target repo bind-mounted at `/workspace`. The container executes `agy --model gemini-3.8-flash --effort medium --dangerously-skip-permissions --output-format stream-json --print <instructions>`. Direct authentication uses `GEMINI_API_KEY`.
 
 Dispatch is synchronous inside the HTTP request (the blocking docker-py wait is offloaded with `run_in_executor`), so `POST /api/tasks/{id}/dispatch` blocks for the full agent run.
 
@@ -113,7 +113,7 @@ Dispatch is synchronous inside the HTTP request (the blocking docker-py wait is 
 Every token spent lands in the `usage_records` table through `UsageLedgerPort`, which `SQLiteIssueTracker` also implements (same database). There are three sources, all optional dependencies (`usage=None` disables recording, which is why older tests need no change):
 
 - **Initial analysis** — `AnalysisOrchestrator._pump` books a record on each `RESULT`, parsed by `parse_agent_usage` in [core/usage.py](painkiller/core/usage.py), which tolerates both the Antigravity and the Claude Code envelopes. It books in the same branch that persists the event, so the `_rewind` skip also keeps a replayed log from being charged twice. The model comes from the `init` event, falling back to `PAINKILLER_AGENT_MODEL`.
-- **Task dispatch** — `parse_aider_usage` sums the `Tokens: … sent, … received. Cost: $… message` lines in the worker's logs. It records on every exit code: a failed run still costs money.
+- **Task dispatch** — `parse_task_usage` reads the `stream-json` or `json` events emitted by `agy` in the worker's logs (specifically `usage_metadata` on the final `result` event). It records on every exit code: a failed run still costs money.
 - **Direct LLM calls** — `LiteLLMAdapter`; the NVIDIA path requests `stream_options.include_usage` to get counts. `LLMPort.complete`/`structured_output` take an optional `project_id` so the spend is attributed; a call without one is recorded but shows up on no page.
 
 Cost is computed **at read time**, never stored, so changing a price reprices history. The order in `record_cost` is: the analyst's price in `UsageSettings.prices` (matched also without the `provider/` prefix), then the cost the tool reported, then LiteLLM's bundled catalog (`adapters/llm/pricing.py`), then "sem preço" (counted in `unpriced_calls`, excluded from totals). The catalog does not know `gemini-3.8-flash`, so in practice the analyst has to enter that price.
@@ -122,7 +122,7 @@ Cost is computed **at read time**, never stored, so changing a price reprices hi
 
 "Crédito disponível" is the project's `budget_usd − spent`: Gemini, OpenAI, Anthropic and NVIDIA have no balance API. DeepSeek and OpenRouter do, and `adapters/llm/balance.py` queries them live at `GET /api/usage/balances`. `app.state.price_lookup` and `app.state.balance_lookup` exist so tests can swap the catalog and the network out.
 
-The token counts come from the agents' own output formats, which are not a stable contract: if a new `agy` or Aider version changes them, recording stops silently (nothing breaks, the page just stops growing). The tests in `test_usage.py` pin the formats that are expected.
+The token counts come from the agents' own output formats, which are not a stable contract: if a new `agy` version changes them, recording stops silently (nothing breaks, the page just stops growing). The tests in `test_usage.py` pin the formats that are expected.
 
 ## Frontend
 

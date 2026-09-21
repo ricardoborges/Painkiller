@@ -70,6 +70,8 @@ export interface Task {
   status: TaskStatus;
   assigned_branch: string | null;
   session_id?: string | null;
+  last_comment?: string | null;
+  error?: string | null;
   created_at: string;
   updated_at: string;
 }

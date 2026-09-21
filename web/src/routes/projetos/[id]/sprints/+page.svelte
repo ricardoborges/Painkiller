@@ -143,7 +143,7 @@
           {activeSession ? activeSession.title : 'Sessão'} · Painel de Sprints
         </h2>
         <p class="help">
-          Execução ativa de tarefas delegadas para agentes conteinerizados Aider nesta iteração.
+          Execução ativa de tarefas delegadas para agentes conteinerizados Antigravity CLI (agy) com Superpowers nesta iteração.
         </p>
       </div>
 
@@ -257,6 +257,10 @@
             {#if dispatchError && dispatchError.id === task.id}
               <div class="error-banner mono">
                 Erro de execução: {dispatchError.message}
+              </div>
+            {:else if task.status === 'FAILED' && (task.error || task.last_comment)}
+              <div class="error-banner mono">
+                {task.error || task.last_comment}
               </div>
             {/if}
 

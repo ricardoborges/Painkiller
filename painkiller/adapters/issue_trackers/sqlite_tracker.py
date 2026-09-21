@@ -68,8 +68,20 @@ class TaskRecord(Base):
     status = Column(SQLEnum(TaskStatus), default=TaskStatus.BACKLOG)
     assigned_branch = Column(String, nullable=True)
     session_id = Column(String, nullable=True, index=True)
+    last_comment = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class TaskCommentRecord(Base):
+    __tablename__ = "task_comments"
+
+    id = Column(String, primary_key=True)
+    task_id = Column(String, nullable=False, index=True)
+    author = Column(String, nullable=False)
+    comment = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class IterationSessionRecord(Base):
@@ -348,13 +360,28 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             records = res.scalars().all()
             return [self._to_task_domain(r) for r in records]
 
-    async def update_task_status(self, task_id: str, status: TaskStatus) -> Task:
+    async def update_task_status(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        assigned_branch: Optional[str] = None,
+        error: Optional[str] = None,
+        last_comment: Optional[str] = None,
+    ) -> Task:
         now = datetime.now(timezone.utc)
+        values: dict[str, Any] = {"status": status, "updated_at": now}
+        if assigned_branch is not None:
+            values["assigned_branch"] = assigned_branch
+        if error is not None:
+            values["error"] = error
+        if last_comment is not None:
+            values["last_comment"] = last_comment
+
         async with self.session_factory() as session:
             await session.execute(
                 update(TaskRecord)
                 .where(TaskRecord.id == task_id)
-                .values(status=status, updated_at=now)
+                .values(**values)
             )
             await session.commit()
             res = await session.execute(select(TaskRecord).where(TaskRecord.id == task_id))
@@ -362,8 +389,22 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             return self._to_task_domain(record)
 
     async def add_comment(self, task_id: str, author: str, comment: str) -> None:
-        # Currently recorded via logging or optional audit table
-        pass
+        now = datetime.now(timezone.utc)
+        record = TaskCommentRecord(
+            id=f"comm-{uuid.uuid4().hex[:8]}",
+            task_id=task_id,
+            author=author,
+            comment=comment,
+            created_at=now,
+        )
+        async with self.session_factory() as session:
+            session.add(record)
+            await session.execute(
+                update(TaskRecord)
+                .where(TaskRecord.id == task_id)
+                .values(last_comment=comment, updated_at=now)
+            )
+            await session.commit()
 
     async def create_clarification(
         self,
@@ -456,6 +497,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             status=record.status,
             assigned_branch=record.assigned_branch,
             session_id=record.session_id,
+            last_comment=record.last_comment,
+            error=record.error,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

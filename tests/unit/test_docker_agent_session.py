@@ -47,7 +47,7 @@ async def test_start_runs_agy_in_bidirectional_stream_mode(tmp_path, client):
     command = client.containers.run.call_args.kwargs["command"]
     assert command[:4] == ["painkiller", "agent-run", "--agent-bin", "agy"]
     agent_args = command[command.index("--") + 1:]
-    # Sem os dois stream-json não existe conversa: seria one-shot como o Aider.
+    # Sem os dois stream-json não existe conversa: seria como o modo print.
     assert "--input-format" in agent_args and agent_args[agent_args.index("--input-format") + 1] == "stream-json"
     assert "--output-format" in agent_args and agent_args[agent_args.index("--output-format") + 1] == "stream-json"
     assert "--dangerously-skip-permissions" in agent_args

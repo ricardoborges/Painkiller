@@ -87,7 +87,7 @@
       <span class="label">O sistema</span>
       <dl>
         <div><dt>Arquitetura</dt><dd class="mono">Ports &amp; Adapters</dd></div>
-        <div><dt>Agente</dt><dd class="mono">Aider, contêiner efêmero</dd></div>
+        <div><dt>Agente</dt><dd class="mono">Antigravity CLI (agy), contêiner efêmero</dd></div>
         <div><dt>Isolamento</dt><dd class="mono">1 branch por tarefa</dd></div>
         <div><dt>Interrupção</dt><dd class="mono">exit 42</dd></div>
       </dl>

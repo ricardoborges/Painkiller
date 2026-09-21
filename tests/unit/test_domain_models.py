@@ -51,7 +51,7 @@ def test_clarification_request_defaults():
 def test_execution_result_model():
     result = ExecutionResult(
         exit_code=42,
-        logs="Aider paused for clarification",
+        logs="Agent paused for clarification",
         clarification=ClarificationRequest(
             id="c-1",
             task_id="t-1",

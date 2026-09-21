@@ -13,7 +13,7 @@ from painkiller.adapters.sandbox.paths import daemon_path
 
 
 class DockerSandboxRunner(SandboxPort):
-    """Executes tasks in ephemeral Docker containers running Aider and the test suite."""
+    """Executes tasks in ephemeral Docker containers running Antigravity CLI (agy) and the test suite."""
 
     def __init__(
         self,
@@ -64,38 +64,36 @@ class DockerSandboxRunner(SandboxPort):
         # Collect API keys from current environment
         env_vars = {}
         for key in [
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
             "GEMINI_API_KEY",
-            "DEEPSEEK_API_KEY",
-            "NVIDIA_API_KEY",
-            "OPENAI_API_BASE",
+            "GOOGLE_API_KEY",
+            "PAINKILLER_AGENT_MODEL",
+            "PAINKILLER_AGENT_EFFORT",
             "PAINKILLER_LLM_MODEL",
-            "PAINKILLER_LLM_API_BASE",
-            "PAINKILLER_LLM_API_KEY",
             "PAINKILLER_WORKSPACE",
         ]:
             if key in os.environ:
                 env_vars[key] = os.environ[key]
         env_vars["PAINKILLER_WORKSPACE"] = "/workspace"
 
-        # If NVIDIA / custom base provided, map as OPENAI_API_KEY / OPENAI_API_BASE for Aider
-        if "NVIDIA_API_KEY" in env_vars and "OPENAI_API_KEY" not in env_vars:
-            env_vars["OPENAI_API_KEY"] = env_vars["NVIDIA_API_KEY"]
-        if "PAINKILLER_LLM_API_KEY" in env_vars and "OPENAI_API_KEY" not in env_vars:
-            env_vars["OPENAI_API_KEY"] = env_vars["PAINKILLER_LLM_API_KEY"]
-        if "PAINKILLER_LLM_API_BASE" in env_vars and "OPENAI_API_BASE" not in env_vars:
-            env_vars["OPENAI_API_BASE"] = env_vars["PAINKILLER_LLM_API_BASE"]
+        model = (
+            env_vars.get("PAINKILLER_AGENT_MODEL")
+            or env_vars.get("PAINKILLER_LLM_MODEL")
+            or "gemini-3.8-flash"
+        )
+        effort = env_vars.get("PAINKILLER_AGENT_EFFORT") or "medium"
 
         command = [
-            "aider",
-            "--message",
+            "agy",
+            "--model",
+            model,
+            "--effort",
+            effort,
+            "--dangerously-skip-permissions",
+            "--output-format",
+            "stream-json",
+            "--print",
             task_instructions,
-            "--yes",
-            "--no-check-update",
         ]
-        if "PAINKILLER_LLM_MODEL" in env_vars:
-            command.extend(["--model", env_vars["PAINKILLER_LLM_MODEL"]])
 
         try:
             container = self.client.containers.run(
@@ -116,8 +114,11 @@ class DockerSandboxRunner(SandboxPort):
             logs = raw_logs.decode("utf-8", errors="replace") if isinstance(raw_logs, bytes) else str(raw_logs)
 
             clarification = None
-            if exit_code == 42:
+            clar_file = os.path.join(repo_path, ".painkiller", "clarification.json")
+            if exit_code == 42 or os.path.exists(clar_file):
                 clarification = self._extract_clarification(repo_path, task.id)
+                if clarification:
+                    exit_code = 42
 
             return ExecutionResult(
                 exit_code=exit_code,

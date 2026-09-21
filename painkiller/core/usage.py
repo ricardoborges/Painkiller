@@ -1,5 +1,6 @@
 """Token accounting: pull usage out of agent output and turn it into money."""
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
@@ -80,48 +81,28 @@ def parse_agent_usage(raw: dict) -> Optional[tuple[int, int, Optional[float], st
     return input_tokens, output_tokens, cost, model
 
 
-_AIDER_TOKENS = re.compile(r"Tokens:\s*([\d.,]+[kKmM]?)\s*sent.*?([\d.,]+[kKmM]?)\s*received", re.I)
-_AIDER_COST = re.compile(r"Cost:\s*\$([\d.,]+)\s*message", re.I)
-_AIDER_MODEL = re.compile(r"^(?:Main model|Model):\s*(\S+)", re.I | re.M)
+def parse_task_usage(logs: str) -> Optional[tuple[int, int, Optional[float], str]]:
+    """Extract (input_tokens, output_tokens, cost, model) from agy logs.
 
-
-def _count(text: str) -> int:
-    text = text.replace(",", "").strip()
-    scale = 1
-    if text[-1:].lower() == "k":
-        scale, text = 1_000, text[:-1]
-    elif text[-1:].lower() == "m":
-        scale, text = 1_000_000, text[:-1]
-    try:
-        return int(float(text) * scale)
-    except ValueError:
-        return 0
-
-
-def parse_aider_usage(logs: str) -> Optional[tuple[int, int, Optional[float], str]]:
-    """Sum the `Tokens: … sent, … received. Cost: $… message` lines Aider prints.
-
-    Cada linha é uma chamada ao modelo; somamos todas. O custo por mensagem vem
-    da tabela do LiteLLM embutida no Aider, então fica None se nenhuma linha
-    trouxer `Cost:`.
+    Tolerates stream-json and json formats emitted by Antigravity CLI (`agy`).
+    Scans in reverse to find the final result/usage event.
     """
-    input_tokens = output_tokens = 0
-    cost: Optional[float] = None
-    found = False
-    for line in (logs or "").splitlines():
-        match = _AIDER_TOKENS.search(line)
-        if not match:
-            continue
-        found = True
-        input_tokens += _count(match.group(1))
-        output_tokens += _count(match.group(2))
-        cost_match = _AIDER_COST.search(line)
-        if cost_match:
-            cost = (cost or 0.0) + float(cost_match.group(1).replace(",", ""))
-    if not found:
+    if not logs:
         return None
-    model_match = _AIDER_MODEL.search(logs)
-    return input_tokens, output_tokens, cost, model_match.group(1) if model_match else ""
+
+    for line in reversed(logs.splitlines()):
+        line = line.strip()
+        if not line or not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            data = json.loads(line)
+            parsed = parse_agent_usage(data)
+            if parsed is not None:
+                return parsed
+        except Exception:
+            continue
+
+    return None
 
 
 def _model_keys(model: str) -> list[str]:

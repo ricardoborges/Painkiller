@@ -91,8 +91,15 @@ class IssueTrackerPort(ABC):
         pass
 
     @abstractmethod
-    async def update_task_status(self, task_id: str, status: TaskStatus) -> Task:
-        """Update the lifecycle status of a task."""
+    async def update_task_status(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        assigned_branch: Optional[str] = None,
+        error: Optional[str] = None,
+        last_comment: Optional[str] = None,
+    ) -> Task:
+        """Update the lifecycle status and execution metadata of a task."""
         pass
 
     @abstractmethod
