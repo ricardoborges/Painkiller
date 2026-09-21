@@ -1,7 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import type {
-    ProviderBalance,
     UsageEntry,
     UsageSettings,
     UsageSource,
@@ -25,9 +24,6 @@
   let loading = $state(true);
   let error = $state('');
 
-  let balances = $state<ProviderBalance[] | null>(null);
-  let balancesError = $state('');
-
   // Formulário de configuração: cópia editável, só vira UsageSettings no salvar.
   type PriceRow = { model: string; input: string; output: string };
   let budget = $state('');
@@ -42,7 +38,6 @@
 
   $effect(() => {
     load();
-    loadBalances();
   });
 
   async function load() {
@@ -61,16 +56,6 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
-    }
-  }
-
-  async function loadBalances() {
-    balancesError = '';
-    try {
-      balances = await api.getProviderBalances();
-    } catch (e) {
-      balancesError = e instanceof Error ? e.message : String(e);
-      balances = [];
     }
   }
 
@@ -216,10 +201,7 @@
   <button
     type="button"
     class="btn btn-line btn-sm"
-    onclick={() => {
-      load();
-      loadBalances();
-    }}
+    onclick={load}
     disabled={loading}
   >
     {loading ? 'Atualizando…' : 'Atualizar'}
@@ -307,42 +289,6 @@
       </span>
     </p>
   {/if}
-
-  <!-- ---- saldo dos provedores ---- -->
-  <section class="block">
-    <h2 class="label section-title">Saldo nos provedores</h2>
-    <p class="help intro">
-      A conta do provedor é a mesma para todos os projetos: este saldo não é só deste.
-    </p>
-    {#if balances == null}
-      <Skeleton variant="lines" rows={2} />
-    {:else if balancesError}
-      <p class="help">{balancesError}</p>
-    {:else if balances.length === 0}
-      <p class="help">Nenhuma chave de provedor configurada no <span class="mono">.env</span>.</p>
-    {:else}
-      <table class="table">
-        <thead>
-          <tr><th>Provedor</th><th class="num">Saldo</th><th>Observação</th></tr>
-        </thead>
-        <tbody>
-          {#each balances as b (b.provider)}
-            <tr>
-              <td>{b.name}</td>
-              <td class="num mono">
-                {#if b.balance != null}{money(b.balance, b.currency ?? 'USD')}{:else}—{/if}
-              </td>
-              <td class="faint">
-                {#if b.error}{b.error}
-                {:else if !b.supported}Sem API de saldo — use o orçamento do projeto
-                {:else}Consultado agora{/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </section>
 
   <!-- ---- gasto diário ---- -->
   <section class="block">

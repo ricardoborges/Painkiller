@@ -9,6 +9,7 @@
   import Elapsed from '$lib/components/Elapsed.svelte';
   import DocViewer from '$lib/components/DocViewer.svelte';
   import Choices from '$lib/components/Choices.svelte';
+  import Modal from '$lib/components/Modal.svelte';
   import { parseMessage, hidePartialBlock } from '$lib/choices';
 
   let { data } = $props();
@@ -21,6 +22,9 @@
   let scroller = $state<HTMLElement | null>(null);
   let host = $state<HTMLElement | null>(null);
   let menuOpen = $state(false);
+  let artifactsOpen = $state(false);
+  let sessionModalOpen = $state(false);
+  let copiedField = $state<string | null>(null);
 
   /** O leitor está colado no fim? Só então o auto-scroll pode agir. */
   let pinned = $state(true);
@@ -47,14 +51,31 @@
     a.ensureBooted();
   });
 
-  /* Menu sem biblioteca: fecha no clique fora e no Esc, como se espera. */
+  async function copyToClipboard(text: string, field: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copiedField = field;
+      setTimeout(() => {
+        if (copiedField === field) copiedField = null;
+      }, 2000);
+    } catch {
+      // ignore
+    }
+  }
+
+  /* Menus sem biblioteca: fecham no clique fora e no Esc, como se espera. */
   $effect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !artifactsOpen) return;
     const away = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement)?.closest('.menu')) menuOpen = false;
+      const target = e.target as HTMLElement;
+      if (menuOpen && !target?.closest('.menu')) menuOpen = false;
+      if (artifactsOpen && !target?.closest('.artifacts-menu')) artifactsOpen = false;
     };
     const esc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') menuOpen = false;
+      if (e.key === 'Escape') {
+        menuOpen = false;
+        artifactsOpen = false;
+      }
     };
     window.addEventListener('click', away, true);
     window.addEventListener('keydown', esc);
@@ -151,32 +172,90 @@
     </div>
 
     <div class="acts">
-      <button
-        type="button"
-        class="btn btn-line btn-sm"
-        onclick={() => a.closeSession()}
-        disabled={a.closing || a.finished || !a.session}
-      >
-        {a.closing ? 'Encerrando…' : 'Encerrar'}
-      </button>
+      <!-- Artefatos Dropdown -->
+      <div class="artifacts-menu">
+        <button
+          type="button"
+          class="btn btn-line btn-sm artifacts-btn"
+          class:open={artifactsOpen}
+          aria-haspopup="menu"
+          aria-expanded={artifactsOpen}
+          onclick={() => (artifactsOpen = !artifactsOpen)}
+          title="Ver documentos e especificações gerados"
+        >
+          <Icon name="file-text" size={13} />
+          <span>Artefatos</span>
+          {#if a.docs.length > 0}
+            <span class="badge mono">{a.docs.length}</span>
+          {/if}
+          <span class="chevron" aria-hidden="true">{artifactsOpen ? '▴' : '▾'}</span>
+        </button>
 
-      <button
-        type="button"
-        class="btn btn-solid btn-sm"
-        onclick={importBacklog}
-        disabled={a.committing || !a.session}
-      >
-        {a.committing ? 'Importando…' : 'Importar backlog'}
-        {#if !a.committing}<Icon name="arrow-right" size={12} />{/if}
-      </button>
+        {#if artifactsOpen}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="sheet artifacts-sheet" role="menu">
+            <div class="sheet-head">
+              <span class="label">Artefatos do Projeto</span>
+              <a href="/projetos/{data.project.id}/artefatos" class="label view-all" onclick={() => (artifactsOpen = false)}>
+                Ver todos ↗
+              </a>
+            </div>
 
+            {#if a.loadingDocs && !a.docs.length}
+              <p class="sheet-status faint mono">
+                <span class="pulse" aria-hidden="true"></span> Buscando…
+              </p>
+            {:else if !a.docs.length}
+              <p class="sheet-empty faint">
+                Nenhum artefato gravado ainda.<br />
+                O agente gera arquivos em <span class="mono">docs/superpowers/</span> durante a conversa.
+              </p>
+            {:else}
+              <ul class="sheet-list">
+                {#each a.docs as d (d.path)}
+                  <li>
+                    <button
+                      type="button"
+                      class="sheet-doc-btn"
+                      onclick={() => {
+                        artifactsOpen = false;
+                        openDoc(d);
+                      }}
+                    >
+                      <span class="cat mono {d.category}">{d.category}</span>
+                      <span class="sheet-doc-title mono truncate" title={d.filename}>{d.filename}</span>
+                      <span class="doc-arrow" aria-hidden="true">→</span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      {#if data.project.repo_url}
+        <a
+          href={data.project.repo_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn btn-line btn-sm repo-link"
+          title="Abrir repositório externo"
+        >
+          <span>Repositório</span>
+          <Icon name="external" size={11} />
+        </a>
+      {/if}
+
+      <!-- Menu Mais Ações (...) -->
       <div class="menu">
         <button
           type="button"
-          class="btn btn-quiet btn-sm more"
+          class="btn btn-line btn-sm more"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onclick={() => (menuOpen = !menuOpen)}
+          title="Mais opções e detalhes"
         >
           <span aria-hidden="true">···</span>
           <span class="sr">Mais ações</span>
@@ -184,15 +263,49 @@
         {#if menuOpen}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="sheet" role="menu">
-            <button type="button" role="menuitem" onclick={confirmRestart} disabled={a.starting}>
-              {a.finished ? 'Nova sessão' : 'Recomeçar do zero'}
+            <button
+              type="button"
+              role="menuitem"
+              onclick={() => {
+                menuOpen = false;
+                sessionModalOpen = true;
+              }}
+            >
+              <Icon name="info" size={12} />
+              <span>Detalhes da sessão</span>
             </button>
-            <a role="menuitem" href="/projetos/{data.project.id}/artefatos" onclick={() => (menuOpen = false)}>
-              Ver artefatos
-            </a>
+            <button type="button" role="menuitem" onclick={confirmRestart} disabled={a.starting}>
+              <Icon name="play" size={12} />
+              <span>{a.finished ? 'Nova sessão' : 'Recomeçar do zero'}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="danger-action"
+              onclick={() => {
+                menuOpen = false;
+                a.closeSession();
+              }}
+              disabled={a.closing || a.finished || !a.session}
+            >
+              <Icon name="close" size={12} />
+              <span>{a.closing ? 'Encerrando…' : 'Encerrar sessão'}</span>
+            </button>
           </div>
         {/if}
       </div>
+
+      <!-- CTA Principal em Destaque -->
+      <button
+        type="button"
+        class="btn btn-solid btn-sm cta-btn"
+        onclick={importBacklog}
+        disabled={a.committing || !a.session}
+        title="Importar tarefas geradas diretamente para o backlog"
+      >
+        <span>{a.committing ? 'Importando…' : 'Importar backlog'}</span>
+        {#if !a.committing}<Icon name="arrow-right" size={12} />{/if}
+      </button>
     </div>
   </div>
 
@@ -322,51 +435,6 @@
         </div>
       {/if}
     </section>
-
-    <aside class="rail">
-      <div class="panel">
-        <h2 class="label">Sessão</h2>
-        <dl class="meta">
-          <div>
-            <dt class="label">Contêiner</dt>
-            <dd class="mono truncate">{a.session?.container_name ?? '—'}</dd>
-          </div>
-          <div>
-            <dt class="label">Workspace</dt>
-            <dd class="mono truncate" title={data.project.repo_path}>{data.project.repo_path}</dd>
-          </div>
-        </dl>
-      </div>
-
-      <div class="panel grow">
-        <div class="panel-head">
-          <h2 class="label">Artefatos</h2>
-          <a class="label more-link" href="/projetos/{data.project.id}/artefatos">Ver todos ↗</a>
-        </div>
-
-        {#if a.loadingDocs && !a.docs.length}
-          <p class="docs-status faint mono">
-            <span class="pulse" aria-hidden="true"></span> Buscando…
-          </p>
-        {:else if !a.docs.length}
-          <p class="help">
-            Nada gravado ainda. Conforme a elicitação avança, o agente escreve a
-            especificação e o plano em <span class="mono">docs/superpowers/</span>.
-          </p>
-        {:else}
-          <ul class="docs">
-            {#each a.docs.slice(0, 6) as d (d.path)}
-              <li>
-                <button type="button" class="doc" onclick={() => openDoc(d)}>
-                  <span class="cat mono {d.category}">{d.category}</span>
-                  <span class="mono truncate" title={d.filename}>{d.filename}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </div>
-    </aside>
   </div>
 </div>
 
@@ -377,6 +445,64 @@
   repoUrl={data.project.repo_url}
   defaultBranch={data.project.default_branch}
 />
+
+<Modal
+  bind:open={sessionModalOpen}
+  title="Detalhes da Sessão"
+  width="38rem"
+>
+  {#snippet body()}
+    <div class="session-details">
+      <div class="detail-row">
+        <span class="detail-label label">Contêiner Docker</span>
+        <div class="detail-box">
+          <code class="mono detail-val">{a.session?.container_name ?? '—'}</code>
+          {#if a.session?.container_name}
+            <button
+              type="button"
+              class="btn btn-quiet btn-sm copy-btn"
+              onclick={() => a.session?.container_name && copyToClipboard(a.session.container_name, 'container')}
+              title="Copiar nome do contêiner"
+            >
+              <Icon name={copiedField === 'container' ? 'check' : 'copy'} size={12} />
+              <span>{copiedField === 'container' ? 'Copiado!' : 'Copiar'}</span>
+            </button>
+          {/if}
+        </div>
+      </div>
+
+      <div class="detail-row">
+        <span class="detail-label label">Workspace Local</span>
+        <div class="detail-box">
+          <code class="mono detail-val truncate" title={data.project.repo_path}>{data.project.repo_path}</code>
+          {#if data.project.repo_path}
+            <button
+              type="button"
+              class="btn btn-quiet btn-sm copy-btn"
+              onclick={() => copyToClipboard(data.project.repo_path, 'workspace')}
+              title="Copiar caminho do workspace"
+            >
+              <Icon name={copiedField === 'workspace' ? 'check' : 'copy'} size={12} />
+              <span>{copiedField === 'workspace' ? 'Copiado!' : 'Copiar'}</span>
+            </button>
+          {/if}
+        </div>
+      </div>
+
+      <div class="detail-row">
+        <span class="detail-label label">Status Operacional</span>
+        <div class="detail-box plain">
+          <span class="mono detail-val">{a.session?.status ?? (a.starting ? 'SUBINDO' : 'DISPONÍVEL')}</span>
+        </div>
+      </div>
+    </div>
+  {/snippet}
+  {#snippet footer()}
+    <button type="button" class="btn btn-solid btn-sm" onclick={() => (sessionModalOpen = false)}>
+      Fechar
+    </button>
+  {/snippet}
+</Modal>
 
 <style>
   /* O `main` do layout raiz reserva um rodapé de var(--s9) para páginas que
@@ -431,6 +557,126 @@
     display: inline-flex;
     align-items: center;
     gap: var(--s2);
+    flex-wrap: wrap;
+  }
+
+  /* Dropdown de Artefatos no Topo */
+  .artifacts-menu {
+    position: relative;
+  }
+
+  .artifacts-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .artifacts-btn.open {
+    background: var(--paper-sunk);
+    border-color: var(--ink);
+  }
+
+  .artifacts-btn .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.35rem;
+    height: 1.15rem;
+    font-size: var(--t-micro);
+    background: var(--paper-sunk);
+    border: 1px solid var(--rule-2);
+    color: var(--ink);
+  }
+
+  .artifacts-btn .chevron {
+    font-size: 0.65rem;
+    color: var(--ink-3);
+  }
+
+  .artifacts-sheet {
+    width: 22rem;
+    max-width: calc(100vw - 2rem);
+  }
+
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--s2) var(--s3);
+    border-bottom: 1px solid var(--rule-ink);
+    background: var(--paper-sunk);
+  }
+
+  .view-all {
+    color: var(--ink-3);
+    font-size: var(--t-micro);
+    transition: color var(--fast) var(--ease);
+  }
+
+  .view-all:hover {
+    color: var(--ink);
+  }
+
+  .sheet-status,
+  .sheet-empty {
+    padding: var(--s3) var(--s4);
+    font-size: var(--t-small);
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  .sheet-list {
+    max-height: 18rem;
+    overflow-y: auto;
+  }
+
+  .sheet-doc-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s2) var(--s3);
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    font-size: var(--t-micro);
+    color: var(--ink);
+    transition: background var(--fast) var(--ease);
+  }
+
+  .sheet-doc-btn:hover {
+    background: var(--paper-sunk);
+  }
+
+  .sheet-doc-title {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .doc-arrow {
+    color: var(--ink-4);
+    transition: transform var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+
+  .sheet-doc-btn:hover .doc-arrow {
+    color: var(--ink);
+    transform: translateX(2px);
+  }
+
+  .repo-link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+  }
+
+  .cta-btn {
+    letter-spacing: 0.02em;
+  }
+
+  .danger-action {
+    color: var(--accent) !important;
   }
 
   .menu {
@@ -446,14 +692,18 @@
     right: 0;
     top: calc(100% + var(--s2));
     z-index: 30;
-    min-width: 13rem;
+    min-width: 14rem;
     background: var(--paper);
     border: 1px solid var(--rule-ink);
     display: flex;
     flex-direction: column;
+    box-shadow: 0 16px 36px -12px rgba(20, 20, 22, 0.2);
   }
 
   .sheet > :global(*) {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
     padding: var(--s2) var(--s3);
     text-align: left;
     font-size: var(--t-small);
@@ -479,12 +729,53 @@
     clip-path: inset(50%);
   }
 
+  /* Modal de Detalhes da Sessão */
+  .session-details {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    padding-block: var(--s3);
+  }
+
+  .detail-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+  }
+
+  .detail-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    background: var(--paper-sunk);
+    border: 1px solid var(--rule);
+    padding: var(--s2) var(--s3);
+  }
+
+  .detail-box.plain {
+    background: transparent;
+    border-color: var(--rule);
+  }
+
+  .detail-val {
+    font-size: var(--t-small);
+    color: var(--ink);
+    user-select: all;
+  }
+
+  .copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    flex-shrink: 0;
+  }
+
   /* ---------- Painéis ---------- */
 
   .panes {
-    display: grid;
-    grid-template-columns: 1fr 17rem;
-    gap: var(--s6);
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
   }
@@ -492,6 +783,7 @@
   .chat {
     display: flex;
     flex-direction: column;
+    flex: 1;
     min-height: 0;
     position: relative;
   }
@@ -519,86 +811,6 @@
     cursor: pointer;
   }
 
-  .rail {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s5);
-    min-height: 0;
-    border-left: 1px solid var(--rule);
-    padding-left: var(--s5);
-  }
-
-  .panel {
-    border-top: 1px solid var(--rule-ink);
-    padding-top: var(--s3);
-    min-height: 0;
-  }
-
-  .panel.grow {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-  }
-
-  .panel-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--s3);
-  }
-
-  .more-link {
-    color: var(--ink-3);
-    transition: color var(--fast) var(--ease);
-  }
-
-  .more-link:hover {
-    color: var(--ink);
-  }
-
-  .meta {
-    margin-top: var(--s3);
-  }
-
-  .meta div + div {
-    margin-top: var(--s3);
-  }
-
-  .meta dd {
-    font-size: var(--t-micro);
-    color: var(--ink-2);
-  }
-
-  .docs {
-    margin-top: var(--s3);
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s2);
-  }
-
-  .doc {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    min-width: 0;
-    padding: var(--s2);
-    text-align: left;
-    background: transparent;
-    border: 1px solid var(--rule);
-    cursor: pointer;
-    font-size: var(--t-micro);
-    color: var(--ink);
-    transition: border-color var(--fast) var(--ease);
-  }
-
-  .doc:hover {
-    border-color: var(--ink);
-  }
-
   .cat {
     flex-shrink: 0;
     font-size: var(--t-micro);
@@ -617,14 +829,6 @@
   .cat.plan {
     border-color: var(--ink-2);
     color: var(--ink);
-  }
-
-  .docs-status {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    margin-top: var(--s3);
-    font-size: var(--t-micro);
   }
 
   /* ---------- Transcrição ---------- */
@@ -651,7 +855,7 @@
 
   .content {
     min-width: 0;
-    max-width: var(--measure);
+    max-width: 100%;
   }
 
   /* A fala do analista fica recuada sobre papel rebaixado — parece
@@ -896,21 +1100,10 @@
   }
 
   @media (max-width: 900px) {
-    /* Sem altura fixa no celular: a tela é curta demais para dois painéis. */
+    /* Sem altura fixa no celular: a rolagem corre naturalmente. */
     .workbench {
       height: auto !important;
       margin-bottom: 0;
-    }
-
-    .panes {
-      grid-template-columns: 1fr;
-      gap: var(--s6);
-    }
-
-    .rail {
-      border-left: 0;
-      padding-left: 0;
-      order: -1;
     }
 
     .scroller {

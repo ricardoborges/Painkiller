@@ -16,7 +16,10 @@
     | 'close'
     | 'send'
     | 'upload'
-    | 'external';
+    | 'external'
+    | 'file-text'
+    | 'copy'
+    | 'info';
 
   let { name, size = 14 }: { name: Name; size?: number } = $props();
 </script>
@@ -58,5 +61,14 @@
     <path d="M8 11V2.5M4.5 6 8 2.5 11.5 6M2.5 13.5h11" />
   {:else if name === 'external'}
     <path d="M7 3.5H3.5v9h9V9M9.5 3.5h3v3M7.5 8.5l5-5" />
+  {:else if name === 'file-text'}
+    <path d="M3 1.5h6.5l4 4V14.5H3z" />
+    <path d="M9.5 1.5v4h4M5.5 8.5h5M5.5 11.5h5" />
+  {:else if name === 'copy'}
+    <rect x="5.5" y="5.5" width="8" height="8" />
+    <path d="M3.5 10.5h-1.5V2.5h8v1.5" />
+  {:else if name === 'info'}
+    <circle cx="8" cy="8" r="6" />
+    <path d="M8 7.5v4M8 5.25v.5" />
   {/if}
 </svg>

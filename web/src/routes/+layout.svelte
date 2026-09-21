@@ -38,6 +38,7 @@
     { href: '/projetos', label: 'Projetos' },
     { href: '/pendencias', label: 'Pendências' }
   ];
+  const isFluid = $derived(page.url.pathname.includes('/analise-inicial'));
 </script>
 
 <svelte:head>
@@ -50,7 +51,7 @@
   {@render children()}
 {:else}
   <header>
-    <div class="shell bar">
+    <div class="shell bar" class:fluid={isFluid}>
       <a href="/projetos" class="brand" aria-label="Painkiller, início">
         <span class="mark" aria-hidden="true"></span>
         <span class="word">Painkiller</span>
@@ -75,7 +76,7 @@
     </div>
   </header>
 
-  <main class="shell">
+  <main class="shell" class:fluid={isFluid}>
     {@render children()}
   </main>
 {/if}
