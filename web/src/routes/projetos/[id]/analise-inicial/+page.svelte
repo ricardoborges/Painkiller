@@ -2,11 +2,12 @@
   import { onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { ApiError, api, openAnalysisStream } from '$lib/api';
-  import type { AgentEvent, AnalysisSession } from '$lib/types';
+  import type { AgentEvent, AnalysisSession, ProjectDoc } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
   import Elapsed from '$lib/components/Elapsed.svelte';
+  import DocViewer from '$lib/components/DocViewer.svelte';
 
   let { data } = $props();
 
@@ -39,6 +40,28 @@
   let composer = $state<HTMLTextAreaElement | null>(null);
   let waitingSince = $state(Date.now());
   let disposeStream: (() => void) | null = null;
+
+  /** Documentos do superpowers descobertos no repositório. */
+  let docs = $state<ProjectDoc[]>([]);
+  let loadingDocs = $state(false);
+  let selectedDoc = $state<ProjectDoc | null>(null);
+  let isDocViewerOpen = $state(false);
+
+  async function refreshDocs() {
+    loadingDocs = true;
+    try {
+      docs = await api.listProjectDocs(data.project.id);
+    } catch {
+      /* falha silenciosa em background */
+    } finally {
+      loadingDocs = false;
+    }
+  }
+
+  function openDoc(d: ProjectDoc) {
+    selectedDoc = d;
+    isDocViewerOpen = true;
+  }
 
   /** O agente devolveu o turno: é a única hora em que o analista pode digitar. */
   const myTurn = $derived(session?.status === 'WAITING_ANALYST' && !streamClosed);
@@ -75,6 +98,7 @@
     reasoning = '';
     streamClosed = false;
     waitingSince = Date.now();
+    refreshDocs();
 
     if (!forceNew) {
       try {
@@ -149,12 +173,14 @@
         // O agente lendo e escrevendo arquivos é o sinal de progresso honesto
         // enquanto ele não fala — superpowers grava spec e plano em disco.
         turns = [...turns, { who: 'tool', text: event.text }];
+        refreshDocs();
         break;
       case 'RESULT':
         streaming = '';
         reasoning = '';
         if (session) session = { ...session, status: 'WAITING_ANALYST' };
         queueMicrotask(() => composer?.focus());
+        refreshDocs();
         break;
       case 'EXIT':
         if (session) {
@@ -420,8 +446,66 @@
         </button>
       {/if}
     </div>
+
+    <!-- Painel de Documentos Superpowers -->
+    <div class="panel docs-panel">
+      <div class="panel-head">
+        <div class="head-title">
+          <h2 class="label">Docs Superpowers</h2>
+          {#if docs.length}
+            <span class="mono doc-count">{docs.length}</span>
+          {/if}
+        </div>
+        <button
+          type="button"
+          class="refresh-btn"
+          onclick={refreshDocs}
+          title="Recarregar documentos"
+          disabled={loadingDocs}
+        >
+          <Icon name="upload" size={12} />
+        </button>
+      </div>
+
+      {#if loadingDocs && !docs.length}
+        <div class="docs-status faint mono">
+          <span class="pulse" aria-hidden="true"></span> Buscando documentos…
+        </div>
+      {:else if !docs.length}
+        <div class="docs-empty">
+          <p class="help">
+            Nenhum documento gerado ainda. Conforme a elicitação avança, o agente gravará especificações e planos em <span class="mono">docs/superpowers/</span>.
+          </p>
+        </div>
+      {:else}
+        <ul class="docs-list">
+          {#each docs as d (d.path)}
+            <li>
+              <button type="button" class="doc-item" onclick={() => openDoc(d)}>
+                <div class="doc-item-header">
+                  <span class="tag-cat mono {d.category}">{d.category}</span>
+                  <span class="doc-title mono truncate" title={d.filename}>{d.filename}</span>
+                </div>
+                <div class="doc-item-foot mono faint">
+                  <span>{(d.size_bytes / 1024).toFixed(1)} KB</span>
+                  <span class="view-hint label">Visualizar ↗</span>
+                </div>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
   </aside>
 </div>
+
+<DocViewer
+  bind:open={isDocViewerOpen}
+  doc={selectedDoc}
+  projectId={data.project.id}
+  repoUrl={data.project.repo_url}
+  defaultBranch={data.project.default_branch}
+/>
 
 <style>
   .grid {
@@ -632,6 +716,126 @@
   .help {
     margin-top: var(--s3);
     margin-bottom: var(--s4);
+  }
+
+  .docs-panel {
+    margin-top: var(--s6);
+  }
+
+  .head-title {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .doc-count {
+    font-size: var(--t-micro);
+    padding: 0.05rem 0.35rem;
+    border: 1px solid var(--rule-2);
+    border-radius: 2px;
+    color: var(--ink-2);
+  }
+
+  .refresh-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--ink-3);
+    padding: var(--s1);
+    display: inline-flex;
+    align-items: center;
+    transition: color var(--fast) var(--ease);
+  }
+
+  .refresh-btn:hover {
+    color: var(--ink);
+  }
+
+  .docs-status {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s3);
+    font-size: var(--t-micro);
+  }
+
+  .docs-empty {
+    margin-top: var(--s2);
+  }
+
+  .docs-list {
+    list-style: none;
+    padding: 0;
+    margin: var(--s3) 0 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    max-height: 22rem;
+    overflow-y: auto;
+  }
+
+  .doc-item {
+    width: 100%;
+    text-align: left;
+    padding: var(--s2) var(--s3);
+    background: var(--paper-2);
+    border: 1px solid var(--rule-ink);
+    cursor: pointer;
+    transition: all var(--fast) var(--ease);
+  }
+
+  .doc-item:hover {
+    border-color: var(--ink);
+    background: var(--paper-sunk);
+  }
+
+  .doc-item-header {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
+  .tag-cat {
+    font-size: var(--t-micro);
+    padding: 0.1rem 0.3rem;
+    border: 1px solid var(--rule-2);
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  .tag-cat.spec {
+    border-color: var(--ink);
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .tag-cat.plan {
+    border-color: var(--ink-2);
+    color: var(--ink);
+  }
+
+  .tag-cat.backlog {
+    border-color: var(--rule-2);
+    color: var(--ink-3);
+  }
+
+  .doc-title {
+    font-size: var(--t-micro);
+    color: var(--ink);
+  }
+
+  .doc-item-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: var(--s1);
+    font-size: var(--t-micro);
+  }
+
+  .view-hint {
+    color: var(--ink-2);
+    font-size: var(--t-micro);
   }
 
   @media (max-width: 900px) {

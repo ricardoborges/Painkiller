@@ -23,7 +23,24 @@ export interface Project {
   solution_description: string;
   attachments: string[];
   default_branch: string;
+  repo_url?: string | null;
   created_at: string;
+}
+
+export interface ProjectDoc {
+  path: string;
+  filename: string;
+  category: 'spec' | 'plan' | 'backlog' | 'doc';
+  size_bytes: number;
+  modified_at: string;
+}
+
+export interface ProjectDocContent {
+  path: string;
+  filename: string;
+  content: string;
+  size_bytes: number;
+  modified_at: string;
 }
 
 export interface Task {

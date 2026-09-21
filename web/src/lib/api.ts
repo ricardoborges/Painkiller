@@ -4,6 +4,8 @@ import type {
   Clarification,
   InterrogationStart,
   Project,
+  ProjectDoc,
+  ProjectDocContent,
   Task,
   User
 } from './types';
@@ -117,6 +119,13 @@ export const api = {
     );
   },
 
+  listProjectDocs: (projectId: string) =>
+    request<ProjectDoc[]>(`/projects/${projectId}/docs`),
+
+  getProjectDocContent: (projectId: string, path: string) =>
+    request<ProjectDocContent>(`/projects/${projectId}/docs/content?path=${encodeURIComponent(path)}`),
+
+
   /* ---- interrogação ---- */
   startInterrogation: (projectId: string) =>
     request<InterrogationStart>(`/projects/${projectId}/start-interrogation`, {
@@ -182,7 +191,18 @@ export const api = {
 
   /** Também síncrono: responde e reexecuta a tarefa do início. */
   answerClarification: (taskId: string, answer: string) =>
-    request<Task>(`/tasks/${taskId}/clarification`, { method: 'POST', ...json({ answer }) })
+    request<Task>(`/tasks/${taskId}/clarification`, { method: 'POST', ...json({ answer }) }),
+
+  mergeTask: (id: string) => request<Task>(`/tasks/${id}/merge`, { method: 'POST' }),
+
+  getTaskDiff: (id: string) =>
+    request<{
+      task_id: string;
+      branch: string;
+      base_branch: string;
+      diff: string;
+      gitea_url: string | null;
+    }>(`/tasks/${id}/diff`)
 };
 
 /**

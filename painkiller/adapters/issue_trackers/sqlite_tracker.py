@@ -44,6 +44,7 @@ class ProjectRecord(Base):
     solution_description = Column(Text, default="")
     attachments = Column(Text, default="[]")
     default_branch = Column(String, default="main")
+    repo_url = Column(String, default="", nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -125,6 +126,7 @@ class SQLiteIssueTracker(IssueTrackerPort):
         solution_description: str = "",
         attachments: Optional[Sequence[str]] = None,
         default_branch: str = "main",
+        repo_url: Optional[str] = None,
     ) -> Project:
         proj_id = f"proj-{uuid.uuid4().hex[:8]}"
         record = ProjectRecord(
@@ -136,6 +138,7 @@ class SQLiteIssueTracker(IssueTrackerPort):
             solution_description=solution_description,
             attachments=json.dumps(list(attachments or [])),
             default_branch=default_branch,
+            repo_url=repo_url or "",
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
@@ -165,6 +168,7 @@ class SQLiteIssueTracker(IssueTrackerPort):
         purpose: Optional[str] = None,
         solution_description: Optional[str] = None,
         attachments: Optional[Sequence[str]] = None,
+        repo_url: Optional[str] = None,
     ) -> Project:
         values: dict[str, Any] = {}
         if name is not None:
@@ -177,6 +181,8 @@ class SQLiteIssueTracker(IssueTrackerPort):
             values["solution_description"] = solution_description
         if attachments is not None:
             values["attachments"] = json.dumps(list(attachments))
+        if repo_url is not None:
+            values["repo_url"] = repo_url
 
         async with self.session_factory() as session:
             if values:
@@ -214,6 +220,7 @@ class SQLiteIssueTracker(IssueTrackerPort):
             solution_description=record.solution_description or "",
             attachments=json.loads(record.attachments or "[]"),
             default_branch=record.default_branch,
+            repo_url=record.repo_url or None,
             created_at=record.created_at,
         )
 

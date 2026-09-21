@@ -30,6 +30,12 @@
     <span>{data.project.id}</span>
     <span class="sep" aria-hidden="true">·</span>
     <span>branch base {data.project.default_branch}</span>
+    {#if data.project.repo_url}
+      <span class="sep" aria-hidden="true">·</span>
+      <a href={data.project.repo_url} target="_blank" rel="noopener noreferrer" class="gitea-link">
+        <Icon name="external" size={10} /> Ver no Gitea
+      </a>
+    {/if}
   </div>
 
   <nav aria-label="Seções do projeto">
@@ -65,6 +71,20 @@
   .ident {
     margin-top: var(--s3);
     font-size: var(--t-micro);
+  }
+
+  .gitea-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--ink-2);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: color var(--fast) var(--ease);
+  }
+
+  .gitea-link:hover {
+    color: var(--ink);
   }
 
   .sep {

@@ -1,7 +1,7 @@
 """Painkiller Task Execution Engine & State Machine."""
 
 import logging
-from typing import Optional
+from typing import Optional, Any
 from painkiller.core.domain.models import Task, TaskStatus, Project
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.sandbox import SandboxPort
@@ -18,10 +18,12 @@ class PainkillerOrchestrator:
         tracker: IssueTrackerPort,
         sandbox: SandboxPort,
         git: GitPort,
+        vcs: Optional[Any] = None,
     ):
         self.tracker = tracker
         self.sandbox = sandbox
         self.git = git
+        self.vcs = vcs
 
     async def dispatch_task(self, task_id: str) -> Task:
         """Dispatch a task to the sandbox environment and update lifecycle accordingly."""
@@ -73,6 +75,11 @@ class PainkillerOrchestrator:
             test_code, test_out = await self.git.run_tests(project.repo_path)
             if test_code == 0:
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
+                try:
+                    await self.git.push(project.repo_path, branch_name)
+                except Exception as push_err:
+                    logger.debug(f"Git push skipped or failed: {push_err}")
+
                 await self.tracker.update_task_status(task.id, TaskStatus.IN_REVIEW)
                 await self.tracker.add_comment(
                     task.id,
@@ -131,3 +138,37 @@ class PainkillerOrchestrator:
         )
 
         return "\n".join(instructions)
+
+    async def merge_task(self, task_id: str) -> Task:
+        """Merge a reviewed task branch into the project default branch and push to remote."""
+        task = await self.tracker.get_task(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+
+        project = await self.tracker.get_project(task.project_id)
+        if not project:
+            raise ValueError(f"Project {task.project_id} not found")
+
+        branch_name = task.assigned_branch or f"feature/{task.id}"
+        code, out = await self.git.merge_branch(
+            project.repo_path,
+            source_branch=branch_name,
+            target_branch=project.default_branch,
+        )
+        if code != 0:
+            raise RuntimeError(f"Falha ao realizar merge da branch {branch_name} na {project.default_branch}: {out}")
+
+        try:
+            await self.git.push(project.repo_path, project.default_branch)
+        except Exception as e:
+            logger.debug(f"Push after merge skipped or failed: {e}")
+
+        await self.tracker.update_task_status(task.id, TaskStatus.COMPLETED)
+        await self.tracker.add_comment(
+            task.id,
+            author="analyst",
+            comment=f"🚀 Tarefa aprovada e incorporada na branch principal ({project.default_branch}).",
+        )
+        updated_task = await self.tracker.get_task(task.id)
+        return updated_task or task
+

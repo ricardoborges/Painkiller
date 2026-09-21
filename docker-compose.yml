@@ -35,6 +35,8 @@ services:
     depends_on:
       llm-proxy:
         condition: service_healthy
+      gitea:
+        condition: service_started
 
     ports:
       - "8000:8000"
@@ -80,6 +82,13 @@ services:
       # O primeiro e fixo (segue o WORKDIR da imagem); o segundo vem do .env.
       PAINKILLER_CONTAINER_ROOT: /app/storage
       PAINKILLER_HOST_ROOT: ${PAINKILLER_HOST_ROOT:-}
+
+      # Gitea embutido para versionamento e visualizador de codigo
+      PAINKILLER_GITEA_INTERNAL_URL: http://gitea:3000
+      PAINKILLER_GITEA_EXTERNAL_URL: ${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:3000}
+      PAINKILLER_GITEA_USER: ${PAINKILLER_GITEA_USER:-painkiller}
+      PAINKILLER_GITEA_PASSWORD: ${PAINKILLER_GITEA_PASSWORD:-painkiller_secret_2026}
+      PAINKILLER_GITEA_EMAIL: ${PAINKILLER_GITEA_EMAIL:-bot@painkiller.local}
 
     volumes:
       # Fala com o daemon do host para criar os contentores do agente.
@@ -141,5 +150,35 @@ services:
     command: ["true"]
     restart: "no"
 
+  # Gitea embutido — servidor Git self-hosted com visualizador de codigo web
+  gitea:
+    image: gitea/gitea:1.22
+    container_name: painkiller-gitea
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__database__PATH=/data/gitea/gitea.db
+      - GITEA__security__INSTALL_LOCK=true
+      - GITEA__security__SECRET_KEY=painkiller-secret-key-2026
+      - GITEA__server__ROOT_URL=${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:3000/}
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__server__SSH_PORT=2222
+      - GITEA__service__DISABLE_REGISTRATION=true
+      - GITEA__service__REQUIRE_SIGNIN_VIEW=false
+    ports:
+      - "3000:3000"
+      - "2222:22"
+    volumes:
+      - gitea-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   painkiller-db:
+  gitea-data:
+

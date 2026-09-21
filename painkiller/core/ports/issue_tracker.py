@@ -25,6 +25,7 @@ class IssueTrackerPort(ABC):
         solution_description: str = "",
         attachments: Optional[Sequence[str]] = None,
         default_branch: str = "main",
+        repo_url: Optional[str] = None,
     ) -> Project:
         """Create or register a project."""
         pass
@@ -43,6 +44,7 @@ class IssueTrackerPort(ABC):
         purpose: Optional[str] = None,
         solution_description: Optional[str] = None,
         attachments: Optional[Sequence[str]] = None,
+        repo_url: Optional[str] = None,
     ) -> Project:
         """Update an existing project."""
         pass

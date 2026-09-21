@@ -12,8 +12,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import asyncio
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 from painkiller.adapters.git.git_adapter import GitCliAdapter
+from painkiller.adapters.vcs.gitea_adapter import GiteaAdapter
 from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
 from painkiller.adapters.sandbox.docker_agent_session import DockerAgentSession
 from painkiller.adapters.llm.litellm_adapter import LiteLLMAdapter
@@ -39,6 +41,9 @@ def create_app(
         # Startup
         tracker: SQLiteIssueTracker = app.state.tracker
         await tracker.init_db()
+        # Initialize Gitea admin user in background if service is reachable
+        vcs: GiteaAdapter = app.state.vcs
+        asyncio.create_task(vcs.ensure_admin_user())
         yield
         # Shutdown
         await tracker.close()
@@ -48,17 +53,19 @@ def create_app(
     # Instantiate adapters
     tracker = SQLiteIssueTracker(db_url=db_url)
     git = GitCliAdapter()
+    vcs = GiteaAdapter()
     sandbox = DockerSandboxRunner(image_name=docker_image)
     llm = LiteLLMAdapter()
     agent = DockerAgentSession(image_name=agent_image)
 
-    orchestrator = PainkillerOrchestrator(tracker=tracker, sandbox=sandbox, git=git)
+    orchestrator = PainkillerOrchestrator(tracker=tracker, sandbox=sandbox, git=git, vcs=vcs)
     wizard = InterrogationWizard(llm=llm, tracker=tracker)
     analysis = AnalysisOrchestrator(agent=agent, tracker=tracker)
 
     # Attach to application state
     app.state.tracker = tracker
     app.state.git = git
+    app.state.vcs = vcs
     app.state.sandbox = sandbox
     app.state.llm = llm
     app.state.orchestrator = orchestrator

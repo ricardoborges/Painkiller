@@ -62,3 +62,75 @@ class GitCliAdapter(GitPort):
         stdout, stderr = await proc.communicate()
         output = stdout.decode("utf-8", errors="replace") + "\n" + stderr.decode("utf-8", errors="replace")
         return (proc.returncode if proc.returncode is not None else 1, output)
+
+    async def init_repo(self, repo_path: str, default_branch: str = "main", initial_commit: bool = True) -> None:
+        os.makedirs(repo_path, exist_ok=True)
+        git_dir = os.path.join(repo_path, ".git")
+        if not os.path.exists(git_dir):
+            code, _, err = await self._run_git(repo_path, "init", "-b", default_branch)
+            if code != 0:
+                # Older git versions might not support -b in init
+                await self._run_git(repo_path, "init")
+                await self._run_git(repo_path, "checkout", "-b", default_branch)
+
+        # Configure local committer identity so commits never fail
+        await self._run_git(repo_path, "config", "user.name", "Painkiller Bot")
+        await self._run_git(repo_path, "config", "user.email", "bot@painkiller.local")
+
+        if initial_commit:
+            readme_path = os.path.join(repo_path, "README.md")
+            if not os.path.exists(readme_path):
+                with open(readme_path, "w", encoding="utf-8") as f:
+                    f.write("# Project\n\nGenerated and managed by Painkiller.\n")
+
+            gitignore_path = os.path.join(repo_path, ".gitignore")
+            if not os.path.exists(gitignore_path):
+                with open(gitignore_path, "w", encoding="utf-8") as f:
+                    f.write("__pycache__/\n*.pyc\nnode_modules/\n.env\n.DS_Store\n")
+
+            has_c = await self.has_changes(repo_path)
+            if has_c:
+                await self._run_git(repo_path, "add", "-A")
+                await self._run_git(repo_path, "commit", "-m", "Initial commit")
+
+    async def set_remote(self, repo_path: str, remote_url: str, remote_name: str = "origin") -> None:
+        code, _, _ = await self._run_git(repo_path, "remote", "get-url", remote_name)
+        if code == 0:
+            await self._run_git(repo_path, "remote", "set-url", remote_name, remote_url)
+        else:
+            await self._run_git(repo_path, "remote", "add", remote_name, remote_url)
+
+    async def push(
+        self,
+        repo_path: str,
+        branch_name: str,
+        remote_name: str = "origin",
+        set_upstream: bool = True,
+    ) -> tuple[int, str]:
+        args = ["push"]
+        if set_upstream:
+            args.extend(["-u", remote_name, branch_name])
+        else:
+            args.extend([remote_name, branch_name])
+        code, out, err = await self._run_git(repo_path, *args)
+        return code, (out + "\n" + err).strip()
+
+    async def merge_branch(
+        self,
+        repo_path: str,
+        source_branch: str,
+        target_branch: str = "main",
+    ) -> tuple[int, str]:
+        code, _, err = await self._run_git(repo_path, "checkout", target_branch)
+        if code != 0:
+            return code, f"Failed to checkout {target_branch}: {err}".strip()
+        code_merge, out, err_m = await self._run_git(
+            repo_path,
+            "merge",
+            "--no-ff",
+            "-m",
+            f"Merge branch '{source_branch}' into {target_branch}",
+            source_branch,
+        )
+        return code_merge, (out + "\n" + err_m).strip()
+

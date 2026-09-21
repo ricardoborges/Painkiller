@@ -92,6 +92,22 @@
       dispatching = null;
     }
   }
+
+  let merging = $state<string | null>(null);
+
+  async function merge(task: Task) {
+    merging = task.id;
+    try {
+      replace(await api.mergeTask(task.id));
+    } catch (e) {
+      dispatchError = {
+        id: task.id,
+        message: e instanceof Error ? e.message : 'Falha ao aprovar e incorporar (merge).'
+      };
+    } finally {
+      merging = null;
+    }
+  }
 </script>
 
 {#if justCreated > 0}
@@ -150,7 +166,19 @@
             <span title="Identificador da tarefa">{task.id}</span>
             {#if task.assigned_branch}
               <span class="sep" aria-hidden="true">·</span>
-              <span>{task.assigned_branch}</span>
+              {#if data.project.repo_url}
+                <a
+                  href="{data.project.repo_url}/src/branch/{task.assigned_branch}"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="branch-link"
+                  title="Ver branch no Gitea"
+                >
+                  {task.assigned_branch} <Icon name="external" size={9} />
+                </a>
+              {:else}
+                <span>{task.assigned_branch}</span>
+              {/if}
             {/if}
             {#if task.target_files.length}
               <span class="sep" aria-hidden="true">·</span>
@@ -221,21 +249,48 @@
         </div>
 
         <div class="side">
-          <button
-            type="button"
-            class="btn btn-line btn-sm"
-            onclick={() => dispatch(task)}
-            disabled={!canDispatch(task)}
-            title={stuck.length ? 'Dependências pendentes' : 'Executar no contêiner'}
-          >
-            {#if running}
-              Executando…
-            {:else if task.status === 'FAILED'}
-              <Icon name="play" size={11} /> Repetir
-            {:else}
-              <Icon name="play" size={11} /> Despachar
+          {#if task.status === 'IN_REVIEW'}
+            {#if data.project.repo_url && task.assigned_branch}
+              <a
+                href="{data.project.repo_url}/compare/{data.project.default_branch}...{task.assigned_branch}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn btn-line btn-sm"
+                title="Comparar e ver diff no Gitea"
+              >
+                <Icon name="external" size={11} /> Ver Diff
+              </a>
             {/if}
-          </button>
+            <button
+              type="button"
+              class="btn btn-solid btn-sm"
+              onclick={() => merge(task)}
+              disabled={merging === task.id}
+              title="Aprovar e incorporar branch na principal"
+            >
+              {#if merging === task.id}
+                Incorporando…
+              {:else}
+                <Icon name="check" size={11} /> Aprovar & Merge
+              {/if}
+            </button>
+          {:else}
+            <button
+              type="button"
+              class="btn btn-line btn-sm"
+              onclick={() => dispatch(task)}
+              disabled={!canDispatch(task)}
+              title={stuck.length ? 'Dependências pendentes' : 'Executar no contêiner'}
+            >
+              {#if running}
+                Executando…
+              {:else if task.status === 'FAILED'}
+                <Icon name="play" size={11} /> Repetir
+              {:else}
+                <Icon name="play" size={11} /> Despachar
+              {/if}
+            </button>
+          {/if}
         </div>
       </li>
     {/each}
@@ -445,6 +500,23 @@
 
   .side {
     padding-top: 0.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    align-items: flex-end;
+  }
+
+  .branch-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--ink-2);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .branch-link:hover {
+    color: var(--ink);
   }
 
   @media (max-width: 760px) {

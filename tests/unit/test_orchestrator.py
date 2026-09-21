@@ -81,3 +81,27 @@ async def test_dispatch_task_pause_on_clarification(mock_tracker, mock_sandbox, 
 
     mock_tracker.create_clarification.assert_called_once_with("t1", "Which JWT library?", "auth.py")
     mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.AWAITING_ANALYST)
+
+
+@pytest.mark.asyncio
+async def test_merge_task_success(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo", default_branch="main")
+    task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc", assigned_branch="feature/t1")
+
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_git.merge_branch.return_value = (0, "Fast-forward")
+    mock_git.push.return_value = (0, "Pushed")
+
+    orchestrator = PainkillerOrchestrator(
+        tracker=mock_tracker,
+        sandbox=mock_sandbox,
+        git=mock_git,
+    )
+
+    await orchestrator.merge_task("t1")
+
+    mock_git.merge_branch.assert_called_once_with("/repo", source_branch="feature/t1", target_branch="main")
+    mock_git.push.assert_called_once_with("/repo", "main")
+    mock_tracker.update_task_status.assert_called_with("t1", TaskStatus.COMPLETED)
+
