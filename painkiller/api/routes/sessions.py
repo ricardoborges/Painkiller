@@ -3,12 +3,17 @@
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from painkiller.api.security import require_project
 from painkiller.core.domain.models import SessionStatus, TaskStatus
 
-router = APIRouter(prefix="/api/projects/{project_id}/sessions", tags=["sessions"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/sessions",
+    tags=["sessions"],
+    dependencies=[Depends(require_project)],
+)
 
 
 class CreateSessionRequest(BaseModel):

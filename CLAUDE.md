@@ -14,7 +14,7 @@ Code comments, LLM prompts, API error messages and the UI are in **Portuguese (p
 
 ```bash
 pip install -e ".[dev]"           # install package + test deps
-pytest                             # full suite (107 tests, no Docker daemon needed — docker is mocked)
+pytest                             # full suite (129 tests, no Docker daemon needed — docker is mocked)
 pytest tests/unit/test_orchestrator.py::test_dispatch_task_success   # single test
 uvicorn painkiller.api.server:app --reload    # API + built UI at http://localhost:8000/
 docker build -f docker/worker.Dockerfile -t painkiller-worker:latest .   # worker image (required before dispatching tasks)
@@ -59,7 +59,7 @@ Two dependencies are imported but **not** declared in `pyproject.toml`: `python-
 Hexagonal / ports & adapters. The dependency rule is strict: `core/` and `engine/` import only from `core/`; adapters implement the ABCs in [core/ports/](painkiller/core/ports/); wiring happens only in `create_app()`.
 
 - **[core/domain/models.py](painkiller/core/domain/models.py)** — Pydantic entities (`Project`, `Task`, `ClarificationRequest`, `ExecutionResult`) plus the `TaskStatus` lifecycle: `BACKLOG → READY → RUNNING → {AWAITING_ANALYST | IN_REVIEW | FAILED} → COMPLETED`.
-- **[core/ports/](painkiller/core/ports/)** — six ABCs: `IssueTrackerPort`, `SandboxPort`, `AgentSessionPort`, `GitPort`, `LLMPort`, `UsageLedgerPort`. Adding a method here means updating the adapter *and* the `AsyncMock`-based unit tests.
+- **[core/ports/](painkiller/core/ports/)** — seven ABCs: `IssueTrackerPort`, `SandboxPort`, `AgentSessionPort`, `GitPort`, `LLMPort`, `UsageLedgerPort`, `UserDirectoryPort`. Adding a method here means updating the adapter *and* the `AsyncMock`-based unit tests.
 - **[adapters/](painkiller/adapters/)** — `sqlite_tracker` (async SQLAlchemy; list fields are stored as JSON text columns and converted in `_to_task_domain`/`_to_project_domain`), `git_adapter` (shells out to `git`), `docker_runner` (docker-py, one-shot), `docker_agent_session` (docker-py, long-lived), `litellm_adapter`. The container-to-host path rewrite both docker adapters need lives in `sandbox/paths.py`.
 - **[engine/orchestrator.py](painkiller/engine/orchestrator.py)** — the state machine. Everything below hangs off it.
 - **[engine/analysis.py](painkiller/engine/analysis.py)** — the interactive initial analysis (see **Initial analysis** below). `self.runs` is a cache over the tracker, not the source of truth.
@@ -173,4 +173,13 @@ Other pieces: `docker/api.Dockerfile` is multi-stage (Node builds `web/`, then a
 
 ### Auth
 
-[api/routes/auth.py](painkiller/api/routes/auth.py) is a hardcoded single-user stub (`admin`/`123456`, fixed token) and no route enforces it. Treat it as a placeholder, not a security boundary.
+Every router except `/api/auth` is mounted with `Depends(current_user)` in `create_app()`; tokens and authorization live in [api/security.py](painkiller/api/security.py). Tokens are HMAC-signed with `PAINKILLER_AUTH_SECRET` (empty = ephemeral key, every restart logs everyone out). `EventSource` and download links cannot send headers, so the backend also accepts `?token=` — the UI builds those URLs with `authedUrl()` in `api.ts`.
+
+Two kinds of user:
+
+- **Break-glass admin** — `PAINKILLER_ADMIN_USER` / `PAINKILLER_ADMIN_PASSWORD` in `.env`. Not stored in the database, sees every project. Empty password disables it; its tokens carry a fingerprint of the password, so changing it revokes them.
+- **Google users** — [routes/auth.py](painkiller/api/routes/auth.py) runs the OAuth Authorization Code flow server-side (`/api/auth/google/login` → Google → `/callback`, `state` signed and bound to a cookie) and hands the token back in the **fragment** of `/login#token=…`. First sign-in creates the `User` (`UserDirectoryPort`, implemented by `SQLiteIssueTracker`, `users` table). `PAINKILLER_GOOGLE_ALLOWED_DOMAINS` optionally restricts sign-up. The client is `app.state.google_oauth` so tests swap it out.
+
+**Every user is bound to their own Gitea account** (`User.gitea_username`), created by `ensure_gitea_account` through the Gitea admin API with a random password. A project stores `owner_id`, and its repo is created **private** under that account via `POST /admin/users/{owner}/repos`; the service account (a site admin) still does the pushing. When Google is configured the API also registers a `google` OAuth source in Gitea (via `docker exec`, `gitea admin auth add-oauth`) and links the account by the Google `sub`, so the user signs in to Gitea with the same Google account and sees only their repos. Compose adds `FORCE_PRIVATE` and private user visibility on top.
+
+Isolation in the API: `list_projects` filters by owner; `require_project` / `require_task` / `require_analysis` answer **404** (not 403) for anything that belongs to someone else. Projects with no `owner_id` (legacy, or created by the admin) are admin-only. Only the admin may pass `repo_path` on project creation. The price list at `/api/usage/settings` is still shared by everyone signed in.

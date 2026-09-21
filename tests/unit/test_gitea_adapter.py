@@ -48,3 +48,71 @@ async def test_create_repository_success():
         assert res["name"] == "app"
         assert res["clone_url_internal"] == "http://painkiller:secretpassword@gitea:3000/painkiller/app.git"
         assert res["web_url_external"] == "http://localhost:3000/painkiller/app"
+
+
+def test_username_candidate():
+    assert GiteaAdapter.username_candidate("Maria.Silva+dev@gmail.com") == "maria-silva-dev"
+    assert GiteaAdapter.username_candidate("___@x.com") == "user"
+
+
+def test_find_auth_source():
+    listing = "ID\tName\tType\tEnabled\n1\tldap\tLDAP\ttrue\n3   google   OAuth2   true\n"
+    assert GiteaAdapter._find_auth_source(listing, "google") == 3
+    assert GiteaAdapter._find_auth_source(listing, "github") is None
+
+
+def _response(status: int, payload=None, text: str = ""):
+    res = MagicMock(spec=httpx.Response)
+    res.status_code = status
+    res.json.return_value = payload or {}
+    res.text = text
+    return res
+
+
+@pytest.mark.asyncio
+async def test_create_repository_for_owner_is_private_under_their_account():
+    adapter = GiteaAdapter(
+        internal_base_url="http://gitea:3000",
+        external_base_url="http://localhost:3300",
+        username="painkiller",
+        password="pw",
+    )
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = _response(201)
+        res = await adapter.create_repository("Loja", owner="alice", private=False)
+
+    url = mock_post.call_args.args[0]
+    assert url == "http://gitea:3000/api/v1/admin/users/alice/repos"
+    assert mock_post.call_args.kwargs["json"]["private"] is True
+    assert res["web_url_external"] == "http://localhost:3300/alice/loja"
+    assert res["clone_url_internal"] == "http://painkiller:pw@gitea:3000/alice/loja.git"
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_creates_private_account_linked_to_google():
+    adapter = GiteaAdapter(internal_base_url="http://gitea:3000", username="painkiller", password="pw")
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = _response(201)
+        login = await adapter.ensure_user("alice@example.com", "Alice", oauth_source_id=3, oauth_login_name="g-1")
+
+    assert login == "alice"
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["visibility"] == "private"
+    assert payload["source_id"] == 3 and payload["login_name"] == "g-1"
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_skips_taken_login_and_reuses_own_account():
+    adapter = GiteaAdapter(internal_base_url="http://gitea:3000", username="painkiller", password="pw")
+    taken = _response(422, text="user already exists [name: alice]")
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+            patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        # "alice" é de outra pessoa; "alice-2" já é desta (banco do Painkiller perdido).
+        mock_post.side_effect = [taken, taken]
+        mock_get.side_effect = [
+            _response(200, {"email": "other@example.com"}),
+            _response(200, {"email": "Alice@example.com"}),
+        ]
+        login = await adapter.ensure_user("alice@example.com")
+
+    assert login == "alice-2"

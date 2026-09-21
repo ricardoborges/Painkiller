@@ -5,6 +5,7 @@ from painkiller.core.ports.sandbox import SandboxPort
 from painkiller.core.ports.git import GitPort
 from painkiller.core.ports.llm import LLMPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
+from painkiller.core.ports.user_directory import UserDirectoryPort
 
 __all__ = [
     "IssueTrackerPort",
@@ -12,4 +13,5 @@ __all__ = [
     "GitPort",
     "LLMPort",
     "UsageLedgerPort",
+    "UserDirectoryPort",
 ]

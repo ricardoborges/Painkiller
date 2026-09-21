@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from typing import Any, AsyncIterator, Optional
@@ -11,6 +12,8 @@ import docker
 from painkiller.core.domain.models import AgentEvent, AgentEventType
 from painkiller.core.ports.agent_session import AgentSessionPort
 from painkiller.adapters.sandbox.paths import daemon_path
+
+logger = logging.getLogger(__name__)
 
 #: Caminho, dentro do contêiner, da fila que a ponte (painkiller agent-run) lê.
 STDIN_RELATIVE = ".painkiller/agent-stdin.jsonl"
@@ -75,7 +78,7 @@ class DockerAgentSession(AgentSessionPort):
         repo_path: str,
         prompt: str = "",
         env: Optional[dict[str, str]] = None,
-        timeout_seconds: int = 86400,
+        timeout_seconds: int = 3600,
         resume: bool = False,
         claude_session_id: Optional[str] = None,
     ) -> str:
@@ -204,10 +207,65 @@ class DockerAgentSession(AgentSessionPort):
     async def stop(self, session_id: str) -> None:
         container = self._containers.pop(session_id, None)
         self._stdin_files.pop(session_id, None)
+        loop = asyncio.get_running_loop()
+        if not container:
+            try:
+                candidates = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.containers.list(
+                        all=True, filters={"name": f"pk-analysis-{session_id}"}
+                    ),
+                )
+                if candidates:
+                    container = candidates[0]
+            except Exception:
+                pass
         if not container:
             return
-        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._stop_sync, container)
+
+    async def stop_all(self) -> None:
+        """Encerra e remove todos os contêineres gerenciados."""
+        session_ids = list(self._containers.keys())
+        for session_id in session_ids:
+            try:
+                await self.stop(session_id)
+            except Exception as e:
+                logger.warning(f"Erro ao parar contêiner da sessão {session_id}: {e}")
+
+    async def cleanup_orphaned_containers(
+        self, active_session_ids: Optional[set[str]] = None
+    ) -> list[str]:
+        """Encerra e remove contêineres pk-analysis-* órfãos ou finalizados."""
+        loop = asyncio.get_running_loop()
+        cleaned = []
+        try:
+            containers = await loop.run_in_executor(
+                None,
+                lambda: self.client.containers.list(
+                    all=True, filters={"name": "pk-analysis-"}
+                ),
+            )
+            for c in containers:
+                name = c.name or ""
+                status = getattr(c, "status", "")
+                should_remove = False
+
+                if status in ("exited", "dead"):
+                    should_remove = True
+                elif active_session_ids is not None:
+                    # Se não pertence a nenhuma sessão ativa informada, é órfão
+                    is_active = any(f"pk-analysis-{sid}" in name for sid in active_session_ids)
+                    if not is_active:
+                        should_remove = True
+
+                if should_remove:
+                    logger.info(f"Removendo contêiner órfão de análise: {name} (status={status})")
+                    await loop.run_in_executor(None, self._stop_sync, c)
+                    cleaned.append(name)
+        except Exception as e:
+            logger.warning(f"Falha ao limpar contêineres órfãos de análise: {e}")
+        return cleaned
 
     @staticmethod
     def _stop_sync(container: Any) -> None:

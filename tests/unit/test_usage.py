@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 from painkiller.api.server import create_app
+from tests.auth_helpers import admin_headers
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
@@ -219,7 +220,7 @@ async def client(tmp_path):
     app.state.balance_lookup = balances
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as c:
             yield c, app
 
 

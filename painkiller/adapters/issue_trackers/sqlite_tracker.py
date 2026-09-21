@@ -33,9 +33,12 @@ from painkiller.core.domain.models import (
     UsageSource,
     IterationSession,
     SessionStatus,
+    User,
+    UserRole,
 )
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
+from painkiller.core.ports.user_directory import UserDirectoryPort
 
 Base = declarative_base()
 
@@ -52,6 +55,19 @@ class ProjectRecord(Base):
     attachments = Column(Text, default="[]")
     default_branch = Column(String, default="main")
     repo_url = Column(String, default="", nullable=True)
+    owner_id = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class UserRecord(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    email = Column(String, nullable=False, index=True)
+    name = Column(String, default="")
+    role = Column(SQLEnum(UserRole), default=UserRole.USER)
+    google_sub = Column(String, nullable=True, unique=True, index=True)
+    gitea_username = Column(String, nullable=True, unique=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -167,8 +183,8 @@ def _budget_key(project_id: str) -> str:
     return f"usage:budget:{project_id}"
 
 
-class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
-    """Asynchronous SQLite implementation of IssueTrackerPort and UsageLedgerPort."""
+class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
+    """Asynchronous SQLite implementation of the tracker, usage ledger and user directory ports."""
 
     def __init__(self, db_url: str = "sqlite+aiosqlite:///painkiller.db"):
         self.engine = create_async_engine(db_url, echo=False)
@@ -207,6 +223,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
         attachments: Optional[Sequence[str]] = None,
         default_branch: str = "main",
         repo_url: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> Project:
         proj_id = f"proj-{uuid.uuid4().hex[:8]}"
         record = ProjectRecord(
@@ -219,6 +236,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             attachments=json.dumps(list(attachments or [])),
             default_branch=default_branch,
             repo_url=repo_url or "",
+            owner_id=owner_id,
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
@@ -226,9 +244,12 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             await session.commit()
             return self._to_project_domain(record)
 
-    async def list_projects(self) -> list[Project]:
+    async def list_projects(self, owner_id: Optional[str] = None) -> list[Project]:
+        stmt = select(ProjectRecord).order_by(ProjectRecord.created_at.desc())
+        if owner_id is not None:
+            stmt = stmt.where(ProjectRecord.owner_id == owner_id)
         async with self.session_factory() as session:
-            res = await session.execute(select(ProjectRecord).order_by(ProjectRecord.created_at.desc()))
+            res = await session.execute(stmt)
             records = res.scalars().all()
             return [self._to_project_domain(r) for r in records]
 
@@ -303,6 +324,79 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             attachments=json.loads(record.attachments or "[]"),
             default_branch=record.default_branch,
             repo_url=record.repo_url or None,
+            owner_id=record.owner_id or None,
+            created_at=record.created_at,
+        )
+
+    # ------------------------------------------------------------------
+    # Usuários
+    # ------------------------------------------------------------------
+
+    async def create_user(
+        self,
+        email: str,
+        name: str = "",
+        google_sub: Optional[str] = None,
+        gitea_username: Optional[str] = None,
+    ) -> User:
+        record = UserRecord(
+            id=f"user-{uuid.uuid4().hex[:10]}",
+            email=email,
+            name=name,
+            role=UserRole.USER,
+            google_sub=google_sub,
+            gitea_username=gitea_username,
+            created_at=datetime.now(timezone.utc),
+        )
+        async with self.session_factory() as session:
+            session.add(record)
+            await session.commit()
+            return self._to_user_domain(record)
+
+    async def get_user(self, user_id: str) -> Optional[User]:
+        async with self.session_factory() as session:
+            res = await session.execute(select(UserRecord).where(UserRecord.id == user_id))
+            record = res.scalar_one_or_none()
+            return self._to_user_domain(record) if record else None
+
+    async def get_user_by_google_sub(self, google_sub: str) -> Optional[User]:
+        async with self.session_factory() as session:
+            res = await session.execute(select(UserRecord).where(UserRecord.google_sub == google_sub))
+            record = res.scalar_one_or_none()
+            return self._to_user_domain(record) if record else None
+
+    async def update_user(
+        self,
+        user_id: str,
+        email: Optional[str] = None,
+        name: Optional[str] = None,
+        gitea_username: Optional[str] = None,
+    ) -> User:
+        values: dict[str, Any] = {}
+        if email is not None:
+            values["email"] = email
+        if name is not None:
+            values["name"] = name
+        if gitea_username is not None:
+            values["gitea_username"] = gitea_username
+        async with self.session_factory() as session:
+            if values:
+                await session.execute(update(UserRecord).where(UserRecord.id == user_id).values(**values))
+                await session.commit()
+            res = await session.execute(select(UserRecord).where(UserRecord.id == user_id))
+            record = res.scalar_one_or_none()
+            if not record:
+                raise ValueError(f"User {user_id} not found")
+            return self._to_user_domain(record)
+
+    def _to_user_domain(self, record: UserRecord) -> User:
+        return User(
+            id=record.id,
+            email=record.email,
+            name=record.name or "",
+            role=record.role or UserRole.USER,
+            google_sub=record.google_sub,
+            gitea_username=record.gitea_username,
             created_at=record.created_at,
         )
 

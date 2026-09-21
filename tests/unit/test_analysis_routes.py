@@ -12,6 +12,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from painkiller.api.server import create_app
+from tests.auth_helpers import admin_headers
 from painkiller.core.domain.models import AgentEvent, AgentEventType
 from painkiller.core.ports.agent_session import AgentSessionPort
 from painkiller.engine.analysis import AnalysisOrchestrator
@@ -65,7 +66,7 @@ async def client(tmp_path):
     app.state.agent = agent
     app.state.analysis = AnalysisOrchestrator(agent=agent, tracker=app.state.tracker)
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as c:
         async with app.router.lifespan_context(app):
             c.agent = agent
             yield c

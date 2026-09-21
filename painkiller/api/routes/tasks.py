@@ -3,13 +3,15 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from painkiller.api.security import require_task
 from painkiller.core.domain.models import AgentEvent, AgentEventType
 
-router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+# Toda rota daqui tem {task_id}: a checagem de dono vale para o router inteiro.
+router = APIRouter(prefix="/api/tasks", tags=["tasks"], dependencies=[Depends(require_task)])
 
 
 class ClarificationReplyRequest(BaseModel):
@@ -161,7 +163,10 @@ async def get_task_diff(task_id: str, request: Request):
     diff_content = await git.get_diff(project.repo_path, base_branch=project.default_branch)
 
     gitea_url = None
-    if vcs and task.assigned_branch:
+    if task.assigned_branch and project.repo_url:
+        # repo_url já aponta para o dono certo (usuário ou conta de serviço).
+        gitea_url = f"{project.repo_url}/compare/{project.default_branch}...{task.assigned_branch}"
+    elif vcs and task.assigned_branch:
         gitea_url = vcs.get_diff_url(
             repo_name=project.name,
             branch_name=task.assigned_branch,

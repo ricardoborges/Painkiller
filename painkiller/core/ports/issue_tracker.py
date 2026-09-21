@@ -28,13 +28,14 @@ class IssueTrackerPort(ABC):
         attachments: Optional[Sequence[str]] = None,
         default_branch: str = "main",
         repo_url: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> Project:
         """Create or register a project."""
         pass
 
     @abstractmethod
-    async def list_projects(self) -> list[Project]:
-        """List all registered projects."""
+    async def list_projects(self, owner_id: Optional[str] = None) -> list[Project]:
+        """List registered projects, only those owned by ``owner_id`` when given."""
         pass
 
     @abstractmethod

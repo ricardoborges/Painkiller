@@ -3,6 +3,7 @@ import tempfile
 import pytest
 from httpx import AsyncClient, ASGITransport
 from painkiller.api.server import create_app
+from tests.auth_helpers import admin_headers
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 
 
@@ -15,7 +16,7 @@ async def app_client():
         await tracker.init_db()
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as client:
             yield client
         await tracker.close()
 

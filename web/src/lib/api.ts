@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  AuthConfig,
   AnalysisSession,
   Clarification,
   InterrogationStart,
@@ -91,6 +92,8 @@ export const api = {
     }),
 
   me: () => request<User>('/auth/me'),
+
+  authConfig: () => request<AuthConfig>('/auth/config'),
 
   /* ---- projetos ---- */
   listProjects: () => request<Project[]>('/projects'),
@@ -283,19 +286,28 @@ export const api = {
 };
 
 /**
+ * URL de /api para o que o navegador busca sozinho (EventSource, link de
+ * download), que não manda cabeçalho: o token vai na query, e o backend aceita
+ * os dois (ver api/security.py).
+ */
+export function authedUrl(path: string): string {
+  const token = getToken();
+  return token ? `/api${path}?token=${encodeURIComponent(token)}` : `/api${path}`;
+}
+
+/**
  * Assina o SSE da sessão de análise.
  *
  * Usa EventSource em vez de fetch porque o navegador já reconecta sozinho; o
  * backend reemite o histórico a cada assinatura, então reconectar não perde
- * conversa. Não dá para mandar Authorization aqui — nenhuma rota exige, e o
- * auth atual é um stub (ver api/routes/auth.py).
+ * conversa.
  */
 export function openAnalysisStream(
   sessionId: string,
   onEvent: (event: AgentEvent) => void,
   onClose: () => void
 ): () => void {
-  const source = new EventSource(`/api/analysis/${sessionId}/stream`);
+  const source = new EventSource(authedUrl(`/analysis/${sessionId}/stream`));
 
   const forward = (e: MessageEvent) => {
     try {
@@ -343,7 +355,7 @@ export function openTaskStream(
     onClose: () => void;
   }
 ): () => void {
-  const source = new EventSource(`/api/tasks/${taskId}/stream`);
+  const source = new EventSource(authedUrl(`/tasks/${taskId}/stream`));
 
   source.addEventListener('STATE', (e) => {
     try {

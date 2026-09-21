@@ -3,6 +3,8 @@
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 
+from painkiller.api.security import visible_project
+
 router = APIRouter(prefix="/api/interrogation", tags=["interrogation"])
 
 
@@ -20,9 +22,16 @@ class CommitBacklogRequest(BaseModel):
     session_id: str
 
 
+async def _authorize_session(request: Request, session_id: str) -> None:
+    session = request.app.state.wizard.sessions.get(session_id)
+    if session is not None:
+        await visible_project(request, session.project_id)
+
+
 @router.post("/start")
 async def start_session(req: StartInterrogationRequest, request: Request):
     wizard = request.app.state.wizard
+    await visible_project(request, req.project_id)
     session = await wizard.start_session(project_id=req.project_id, initial_goal=req.goal)
     return {
         "session_id": session.session_id,
@@ -34,6 +43,7 @@ async def start_session(req: StartInterrogationRequest, request: Request):
 @router.post("/reply")
 async def reply_session(req: ReplyInterrogationRequest, request: Request):
     wizard = request.app.state.wizard
+    await _authorize_session(request, req.session_id)
     try:
         reply, is_complete = await wizard.reply(req.session_id, req.answer)
         return {
@@ -47,6 +57,7 @@ async def reply_session(req: ReplyInterrogationRequest, request: Request):
 @router.post("/commit")
 async def commit_backlog(req: CommitBacklogRequest, request: Request):
     wizard = request.app.state.wizard
+    await _authorize_session(request, req.session_id)
     try:
         tasks = await wizard.commit_backlog(req.session_id)
         return tasks

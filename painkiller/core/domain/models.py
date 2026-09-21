@@ -93,7 +93,33 @@ class Project(BaseModel):
     attachments: list[str] = Field(default_factory=list)
     default_branch: str = "main"
     repo_url: Optional[str] = None
+    # Usuário dono do projeto. Vazio = legado ou criado pelo admin break-glass,
+    # visível só para o admin.
+    owner_id: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class UserRole(str, Enum):
+    """Access level of a Painkiller user."""
+    ADMIN = "admin"
+    USER = "user"
+
+
+class User(BaseModel):
+    """A person who signs in to Painkiller, bound to their own Gitea account."""
+    id: str
+    email: str
+    name: str = ""
+    role: UserRole = UserRole.USER
+    # Identidade estável no Google (claim `sub`); o e-mail pode mudar.
+    google_sub: Optional[str] = None
+    # Dono dos repositórios do usuário no Gitea. Vazio até o provisionamento dar certo.
+    gitea_username: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == UserRole.ADMIN
 
 
 class ExecutionResult(BaseModel):

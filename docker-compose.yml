@@ -58,8 +58,6 @@ services:
       # do shell/Windows ao .env, e esta secao sobrescreve o env_file.
       PAINKILLER_AGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-gemini-3.8-flash}
       PAINKILLER_AGENT_EFFORT: ${PAINKILLER_AGENT_EFFORT:-medium}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
       # O contentor do agente nasce IRMAO, pelo socket do host, entao nao entra
       # na rede do compose sozinho.
@@ -130,6 +128,10 @@ services:
       - GITEA__server__SSH_PORT=2222
       - GITEA__service__DISABLE_REGISTRATION=true
       - GITEA__service__REQUIRE_SIGNIN_VIEW=false
+      # Cada usuario do Painkiller tem uma conta aqui (criada pela api) e so ele
+      # ve os proprios repositorios: repo e perfil nascem privados, sem excecao.
+      - GITEA__repository__FORCE_PRIVATE=true
+      - GITEA__service__DEFAULT_USER_VISIBILITY=private
     ports:
       # So a porta do host muda; dentro da rede do compose continua gitea:3000.
       # 3300 porque a 3000 costuma estar ocupada por servidores de dev (Vite etc.).

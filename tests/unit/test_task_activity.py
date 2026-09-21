@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
 from painkiller.api.server import create_app
+from tests.auth_helpers import admin_headers
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
@@ -100,6 +101,7 @@ async def test_dispatch_publishes_and_finishes_activity():
     tracker.get_project.return_value = project
     git = AsyncMock()
     git.run_tests.return_value = (0, "ok")
+    git.merge_branch.return_value = (0, "ok")
     sandbox = AsyncMock()
 
     async def run_task(task, repo_path, instructions, on_event=None):
@@ -122,7 +124,7 @@ async def test_stream_route_reports_inactive_task(tmp_path):
     app = create_app(db_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as client:
             resp = await client.get("/api/tasks/t-ghost/stream")
 
     assert resp.status_code == 200
@@ -148,7 +150,7 @@ async def test_stream_route_replays_finished_run_with_tool_detail(tmp_path):
 
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as client:
             resp = await client.get("/api/tasks/t1/stream")
 
     tool = next(f for f in resp.text.split("\n\n") if f.startswith("event: TOOL_USE"))

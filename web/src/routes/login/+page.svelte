@@ -1,12 +1,55 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import { api } from '$lib/api';
+  import type { AuthConfig } from '$lib/types';
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
-  let username = $state('admin');
+  let username = $state('');
   let password = $state('');
   let error = $state<string | null>(null);
   let busy = $state(false);
+  // Na dúvida (config não carregou), mostra as duas portas de entrada.
+  let config = $state<AuthConfig>({ google: true, break_glass: true });
+  // O acesso break-glass fica recolhido quando o Google está disponível.
+  let showBreakGlass = $state(false);
+
+  onMount(async () => {
+    // O callback do Google volta para /login#token=… ou /login#error=…
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    if (fragment.has('token') || fragment.has('error')) {
+      history.replaceState(null, '', window.location.pathname);
+    }
+    const token = fragment.get('token');
+    if (token) {
+      busy = true;
+      try {
+        await auth.signInWithToken(token);
+        await goto('/projetos', { replaceState: true });
+        return;
+      } catch (e) {
+        error = e instanceof Error ? e.message : 'Não foi possível entrar.';
+      } finally {
+        busy = false;
+      }
+    } else if (fragment.get('error')) {
+      error = fragment.get('error');
+    }
+
+    try {
+      config = await api.authConfig();
+    } catch {
+      /* servidor fora: mantém as duas opções visíveis */
+    }
+    showBreakGlass = config.break_glass && !config.google;
+  });
+
+  function signInWithGoogle() {
+    busy = true;
+    // Navegação de página inteira: o fluxo OAuth passa pelo Google e volta.
+    window.location.href = '/api/auth/google/login';
+  }
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
@@ -39,6 +82,28 @@
         Orquestração de<br />agentes de codificação.
       </h1>
 
+      {#if config.google}
+        <div class="sso">
+          <button type="button" class="btn btn-solid submit" onclick={signInWithGoogle} disabled={busy}>
+            Entrar com Google
+            {#if !busy}<Icon name="arrow-right" />{/if}
+          </button>
+          <p class="help">
+            No primeiro acesso a conta é criada, junto com um usuário no Gitea que só
+            enxerga os seus repositórios.
+          </p>
+          {#if error && !showBreakGlass}
+            <p class="field-error" role="alert">{error}</p>
+          {/if}
+          {#if config.break_glass && !showBreakGlass}
+            <button type="button" class="link" onclick={() => (showBreakGlass = true)}>
+              Acesso de emergência (administrador)
+            </button>
+          {/if}
+        </div>
+      {/if}
+
+      {#if showBreakGlass || (!config.google && !config.break_glass)}
       <form onsubmit={submit} novalidate>
         <div class="field">
           <label for="u">Usuário</label>
@@ -69,16 +134,28 @@
           <p class="field-error" role="alert">{error}</p>
         {/if}
 
-        <button type="submit" class="btn btn-solid submit" disabled={busy}>
+        <button
+          type="submit"
+          class="btn submit {config.google ? 'btn-line' : 'btn-solid'}"
+          disabled={busy || !config.break_glass}
+        >
           {busy ? 'Entrando…' : 'Entrar'}
           {#if !busy}<Icon name="arrow-right" />{/if}
         </button>
 
         <p class="help">
-          Autenticação de usuário único, fixada no código do servidor
-          (<span class="mono">routes/auth.py</span>). Não é fronteira de segurança.
+          {#if config.break_glass}
+            Conta break-glass do administrador, definida no servidor
+            (<span class="mono">PAINKILLER_ADMIN_USER</span> e
+            <span class="mono">PAINKILLER_ADMIN_PASSWORD</span>). Enxerga todos os projetos.
+          {:else}
+            Nenhuma forma de entrar está configurada. Defina
+            <span class="mono">PAINKILLER_ADMIN_PASSWORD</span> ou as credenciais do
+            Google no <span class="mono">.env</span> do servidor.
+          {/if}
         </p>
       </form>
+      {/if}
     </div>
   </section>
 
@@ -155,6 +232,32 @@
   .submit {
     align-self: flex-start;
     margin-top: var(--s1);
+  }
+
+  .sso {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    border-top: 1px solid var(--rule-ink);
+    padding-top: var(--s5);
+    margin-bottom: var(--s6);
+  }
+
+  .link {
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: var(--t-small);
+    color: var(--ink-2);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+
+  .link:hover {
+    color: var(--ink);
   }
 
   .help {

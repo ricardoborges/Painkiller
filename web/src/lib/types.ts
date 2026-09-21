@@ -88,9 +88,20 @@ export interface Clarification {
 }
 
 export interface User {
+  id: string;
   username: string;
   name: string;
-  role: string;
+  email: string;
+  role: 'admin' | 'user';
+  /** Conta no Gitea dona dos repositórios deste usuário. */
+  gitea_username: string | null;
+}
+
+export interface AuthConfig {
+  /** Login com Google configurado no servidor. */
+  google: boolean;
+  /** Admin break-glass habilitado (senha definida no .env). */
+  break_glass: boolean;
 }
 
 export interface InterrogationStart {

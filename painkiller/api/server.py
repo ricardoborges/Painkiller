@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Ensure .env is loaded with priority
 load_dotenv(override=True)
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -16,6 +16,7 @@ import asyncio
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 from painkiller.adapters.git.git_adapter import GitCliAdapter
 from painkiller.adapters.vcs.gitea_adapter import GiteaAdapter
+from painkiller.adapters.identity.google_oauth import GoogleOAuthClient
 from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
 from painkiller.adapters.sandbox.docker_agent_session import DockerAgentSession
 from painkiller.adapters.llm.litellm_adapter import LiteLLMAdapter
@@ -24,6 +25,7 @@ from painkiller.adapters.llm.balance import fetch_balances
 from painkiller.engine.orchestrator import PainkillerOrchestrator
 from painkiller.engine.analysis import AnalysisOrchestrator
 from painkiller.interrogation.wizard import InterrogationWizard
+from painkiller.api.security import current_user
 from painkiller.api.routes.auth import router as auth_router
 from painkiller.api.routes.projects import router as projects_router
 from painkiller.api.routes.tasks import router as tasks_router
@@ -49,8 +51,25 @@ def create_app(
         # Initialize Gitea admin user in background if service is reachable
         vcs: GiteaAdapter = app.state.vcs
         asyncio.create_task(vcs.ensure_admin_user())
+
+        # Limpeza de contêineres órfãos deixados por execuções anteriores
+        agent = getattr(app.state, "agent", None)
+        sandbox = getattr(app.state, "sandbox", None)
+        try:
+            if agent and hasattr(agent, "cleanup_orphaned_containers"):
+                asyncio.create_task(agent.cleanup_orphaned_containers())
+            if sandbox and hasattr(sandbox, "cleanup_orphaned_containers"):
+                asyncio.create_task(sandbox.cleanup_orphaned_containers())
+        except Exception:
+            pass
+
         yield
         # Shutdown
+        try:
+            if agent and hasattr(agent, "stop_all"):
+                await agent.stop_all()
+        except Exception:
+            pass
         await tracker.close()
 
     app = FastAPI(title="Painkiller Engine", version="0.1.0", lifespan=lifespan)
@@ -86,16 +105,19 @@ def create_app(
     # Injetáveis para os testes não dependerem do catálogo do LiteLLM nem da rede.
     app.state.price_lookup = litellm_price
     app.state.balance_lookup = fetch_balances
+    app.state.google_oauth = GoogleOAuthClient()
 
-    # Register routers
+    # Register routers. Só /api/auth é público; o resto exige sessão, e cada
+    # router ainda confere se o projeto/tarefa/sessão é do usuário.
     app.include_router(auth_router)
-    app.include_router(projects_router)
-    app.include_router(tasks_router)
-    app.include_router(interrogation_router)
-    app.include_router(analysis_router)
-    app.include_router(sessions_router)
-    app.include_router(usage_router)
-    app.include_router(project_usage_router)
+    signed_in = [Depends(current_user)]
+    app.include_router(projects_router, dependencies=signed_in)
+    app.include_router(tasks_router, dependencies=signed_in)
+    app.include_router(interrogation_router, dependencies=signed_in)
+    app.include_router(analysis_router, dependencies=signed_in)
+    app.include_router(sessions_router, dependencies=signed_in)
+    app.include_router(usage_router, dependencies=signed_in)
+    app.include_router(project_usage_router, dependencies=signed_in)
 
     # SvelteKit SPA. Source lives in web/; `npm run build` emits here.
     static_dir = (Path(__file__).parent / "static").resolve()

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '$lib/api';
+  import { api, authedUrl } from '$lib/api';
   import type { ProjectDoc } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
@@ -184,7 +184,7 @@
       <h2 class="label">Repositório</h2>
       <a
         class="btn btn-line btn-sm download"
-        href="/api/projects/{data.project.id}/archive"
+        href={authedUrl(`/projects/${data.project.id}/archive`)}
         download
         title="Arquivos versionados da branch {data.project.default_branch}, sem .git"
       >

@@ -222,3 +222,26 @@ class DockerSandboxRunner(SandboxPort):
         if container:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, container.stop)
+
+    async def cleanup_orphaned_containers(self) -> list[str]:
+        """Remove contêineres pk-task-* que já finalizaram ou estão mortos."""
+        loop = asyncio.get_running_loop()
+        cleaned = []
+        try:
+            containers = await loop.run_in_executor(
+                None,
+                lambda: self.client.containers.list(all=True, filters={"name": "pk-task-"}),
+            )
+            for c in containers:
+                status = getattr(c, "status", "")
+                if status in ("exited", "dead"):
+                    try:
+                        name = c.name
+                        await loop.run_in_executor(None, lambda: c.remove(force=True))
+                        cleaned.append(name)
+                        logger.info(f"Removido contêiner de tarefa finalizado: {name}")
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Falha ao limpar contêineres órfãos de task: {e}")
+        return cleaned

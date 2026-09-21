@@ -21,7 +21,7 @@ class AgentSessionPort(ABC):
         repo_path: str,
         prompt: str = "",
         env: Optional[dict[str, str]] = None,
-        timeout_seconds: int = 86400,
+        timeout_seconds: int = 3600,
         resume: bool = False,
         claude_session_id: Optional[str] = None,
     ) -> str:

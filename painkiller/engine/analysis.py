@@ -124,6 +124,13 @@ class AnalysisOrchestrator:
                 if run and await self.agent.is_alive(active.id):
                     return active
                 return await self.resume(project, active.id)
+        else:
+            active = await self.get_active(project.id)
+            if isinstance(active, AnalysisSession):
+                try:
+                    await self.stop(active.id)
+                except Exception as e:
+                    logger.warning(f"Erro ao parar sessão anterior {active.id}: {e}")
 
         session_id = f"analysis-{uuid.uuid4().hex[:8]}"
         claude_session_id = str(uuid.uuid4())
@@ -318,6 +325,10 @@ class AnalysisOrchestrator:
             # None fecha os geradores de SSE que ainda estiverem pendurados.
             for queue in list(run.subscribers):
                 queue.put_nowait(None)
+            try:
+                await self.agent.stop(run.session.id)
+            except Exception:
+                pass
 
     async def _record_usage(self, run: AnalysisRun, event: AgentEvent) -> None:
         if self.usage is None:
@@ -613,6 +624,11 @@ class AnalysisOrchestrator:
                     await self.tracker.update_session(iter_sess)
             except Exception:
                 pass
+
+        try:
+            await self.agent.stop(session_id)
+        except Exception as e:
+            logger.warning(f"Erro ao parar agente após commit do backlog ({session_id}): {e}")
 
         return created
 

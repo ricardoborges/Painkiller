@@ -314,6 +314,7 @@ async def test_commit_backlog_creates_tasks_and_resolves_dependencies(tmp_path):
     # A dependência vem por título e precisa virar o ID que o tracker atribuiu.
     assert created[1].dependencies == ["task-0"]
     assert session.spec_path == "docs/superpowers/specs/2026-09-20-x-design.md"
+    assert agent.stopped is True
 
 
 async def test_commit_backlog_without_the_file_is_a_clear_error(tmp_path):
@@ -324,6 +325,19 @@ async def test_commit_backlog_without_the_file_is_a_clear_error(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="backlog.json"):
         await engine.commit_backlog(session.id)
+
+
+async def test_start_force_new_stops_previous_active_session(tmp_path):
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="aguardando")])
+    tracker = AsyncMock()
+    engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
+    proj = _project(tmp_path)
+    session1 = await engine.start(proj)
+    agent.stopped = False
+
+    session2 = await engine.start(proj, force_new=True)
+    assert agent.stopped is True
+    assert session2.id != session1.id
 
 
 # ---- prompt ----------------------------------------------------------------

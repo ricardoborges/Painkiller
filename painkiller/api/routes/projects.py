@@ -6,11 +6,14 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Request, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, Request, HTTPException, UploadFile, File, Form
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from painkiller.api.routes.auth import ensure_gitea_account
+from painkiller.api.security import current_user, require_project, visible_project
 from painkiller.core.attachment_reader import extract_attachment_text
+from painkiller.core.domain.models import User
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -45,16 +48,22 @@ def _get_storage_dir() -> str:
 
 
 @router.get("")
-async def list_projects(request: Request):
+async def list_projects(request: Request, user: User = Depends(current_user)):
     tracker = request.app.state.tracker
-    return await tracker.list_projects()
+    # O admin break-glass vê tudo; os demais, só os próprios projetos.
+    return await tracker.list_projects(owner_id=None if user.is_admin else user.id)
 
 
 @router.post("")
-async def create_project(req: CreateProjectRequest, request: Request):
+async def create_project(req: CreateProjectRequest, request: Request, user: User = Depends(current_user)):
     tracker = request.app.state.tracker
     git = request.app.state.git
     vcs = getattr(request.app.state, "vcs", None)
+
+    # Caminho arbitrário no servidor só para o admin: senão um usuário poderia
+    # apontar para o repositório de outro e ler seus artefatos.
+    if req.repo_path and not user.is_admin:
+        raise HTTPException(status_code=403, detail="Só o administrador pode escolher o caminho do repositório")
 
     # Default repo path inside storage if not provided
     proj_id_temp = f"proj-{uuid.uuid4().hex[:8]}"
@@ -67,7 +76,17 @@ async def create_project(req: CreateProjectRequest, request: Request):
     repo_url = None
     if vcs:
         try:
-            repo_info = await vcs.create_repository(name=req.name, description=req.description or "")
+            # Repositório privado na conta Gitea do usuário; o admin break-glass
+            # (sem conta própria) cria na conta de serviço, também privado.
+            owner = None
+            if not user.is_admin:
+                user = await ensure_gitea_account(request.app, user)
+                if not user.gitea_username:
+                    raise RuntimeError("usuário sem conta no Gitea")
+                owner = user.gitea_username
+            repo_info = await vcs.create_repository(
+                name=req.name, description=req.description or "", private=True, owner=owner
+            )
             await git.set_remote(base_repo_path, repo_info["clone_url_internal"], remote_name="origin")
             await git.push(base_repo_path, default_branch, remote_name="origin", set_upstream=True)
             repo_url = repo_info["web_url_external"]
@@ -83,11 +102,12 @@ async def create_project(req: CreateProjectRequest, request: Request):
         solution_description=req.solution_description or "",
         default_branch=default_branch,
         repo_url=repo_url,
+        owner_id=None if user.is_admin else user.id,
     )
     return project
 
 
-@router.get("/{project_id}")
+@router.get("/{project_id}", dependencies=[Depends(require_project)])
 async def get_project(project_id: str, request: Request):
     tracker = request.app.state.tracker
     project = await tracker.get_project(project_id)
@@ -96,7 +116,7 @@ async def get_project(project_id: str, request: Request):
     return project
 
 
-@router.put("/{project_id}")
+@router.put("/{project_id}", dependencies=[Depends(require_project)])
 async def update_project(project_id: str, req: UpdateProjectRequest, request: Request):
     tracker = request.app.state.tracker
     try:
@@ -112,14 +132,14 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.delete("/{project_id}")
+@router.delete("/{project_id}", dependencies=[Depends(require_project)])
 async def delete_project(project_id: str, request: Request):
     tracker = request.app.state.tracker
     await tracker.delete_project(project_id)
     return {"status": "deleted", "project_id": project_id}
 
 
-@router.post("/{project_id}/attachments")
+@router.post("/{project_id}/attachments", dependencies=[Depends(require_project)])
 async def upload_attachment(project_id: str, file: UploadFile = File(...), request: Request = None):
     tracker = request.app.state.tracker
     project = await tracker.get_project(project_id)
@@ -150,7 +170,7 @@ async def upload_attachment(project_id: str, file: UploadFile = File(...), reque
     }
 
 
-@router.post("/{project_id}/start-interrogation")
+@router.post("/{project_id}/start-interrogation", dependencies=[Depends(require_project)])
 async def start_project_interrogation(project_id: str, request: Request):
     tracker = request.app.state.tracker
     wizard = request.app.state.wizard
@@ -193,7 +213,7 @@ async def start_project_interrogation(project_id: str, request: Request):
         }
 
 
-@router.post("/{project_id}/tasks")
+@router.post("/{project_id}/tasks", dependencies=[Depends(require_project)])
 async def create_task(project_id: str, req: CreateTaskRequest, request: Request):
     tracker = request.app.state.tracker
     task = await tracker.create_task(
@@ -208,14 +228,14 @@ async def create_task(project_id: str, req: CreateTaskRequest, request: Request)
     return task
 
 
-@router.get("/{project_id}/tasks")
+@router.get("/{project_id}/tasks", dependencies=[Depends(require_project)])
 async def list_tasks(project_id: str, request: Request, session_id: Optional[str] = None):
     tracker = request.app.state.tracker
     tasks = await tracker.list_tasks(project_id=project_id, session_id=session_id)
     return tasks
 
 
-@router.get("/{project_id}/docs")
+@router.get("/{project_id}/docs", dependencies=[Depends(require_project)])
 async def list_project_docs(project_id: str, request: Request):
     """List superpowers specifications, implementation plans, and backlog files."""
     tracker = request.app.state.tracker
@@ -265,7 +285,7 @@ async def list_project_docs(project_id: str, request: Request):
     return results
 
 
-@router.get("/{project_id}/docs/content")
+@router.get("/{project_id}/docs/content", dependencies=[Depends(require_project)])
 async def get_project_doc_content(project_id: str, path: str, request: Request):
     """Retrieve the text content of a specific superpowers document."""
     tracker = request.app.state.tracker
@@ -298,7 +318,7 @@ async def get_project_doc_content(project_id: str, path: str, request: Request):
     }
 
 
-@router.get("/{project_id}/archive")
+@router.get("/{project_id}/archive", dependencies=[Depends(require_project)])
 async def download_project_archive(project_id: str, request: Request, ref: Optional[str] = None):
     """Download the repository as a zip (tracked files at ``ref``, default branch by default)."""
     tracker = request.app.state.tracker

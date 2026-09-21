@@ -2,9 +2,11 @@
 
 import json
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from painkiller.api.security import require_analysis, visible_project
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
@@ -29,12 +31,9 @@ def _session_payload(session) -> dict:
 @router.get("/projects/{project_id}/analysis/current")
 async def get_current_analysis(project_id: str, request: Request):
     """Retrieve the current active analysis session for a project, if any."""
-    tracker = request.app.state.tracker
     analysis = request.app.state.analysis
 
-    project = await tracker.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    await visible_project(request, project_id)
 
     session = await analysis.get_active(project_id)
     if not session:
@@ -45,12 +44,9 @@ async def get_current_analysis(project_id: str, request: Request):
 @router.post("/projects/{project_id}/analysis")
 async def start_analysis(project_id: str, request: Request, force_new: bool = False):
     """Boot or resume the agent container and return immediately — the UI then opens the stream."""
-    tracker = request.app.state.tracker
     analysis = request.app.state.analysis
 
-    project = await tracker.get_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    project = await visible_project(request, project_id)
 
     try:
         session = await analysis.start(project, force_new=force_new)
@@ -63,7 +59,7 @@ async def start_analysis(project_id: str, request: Request, force_new: bool = Fa
     return _session_payload(session)
 
 
-@router.get("/analysis/{session_id}")
+@router.get("/analysis/{session_id}", dependencies=[Depends(require_analysis)])
 async def get_analysis(session_id: str, request: Request):
     analysis = request.app.state.analysis
     try:
@@ -75,7 +71,7 @@ async def get_analysis(session_id: str, request: Request):
             raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/analysis/{session_id}/stream")
+@router.get("/analysis/{session_id}/stream", dependencies=[Depends(require_analysis)])
 async def stream_analysis(session_id: str, request: Request):
     """Server-sent events carrying the agent's output as it is produced."""
     analysis = request.app.state.analysis
@@ -109,7 +105,7 @@ async def stream_analysis(session_id: str, request: Request):
     )
 
 
-@router.post("/analysis/{session_id}/message")
+@router.post("/analysis/{session_id}/message", dependencies=[Depends(require_analysis)])
 async def send_message(session_id: str, req: MessageRequest, request: Request):
     try:
         session = await request.app.state.analysis.send(session_id, req.answer)
@@ -118,7 +114,7 @@ async def send_message(session_id: str, req: MessageRequest, request: Request):
     return _session_payload(session)
 
 
-@router.post("/analysis/{session_id}/finish")
+@router.post("/analysis/{session_id}/finish", dependencies=[Depends(require_analysis)])
 async def finish_analysis(session_id: str, request: Request):
     """Close the agent's input so it finishes the turn and exits cleanly."""
     try:
@@ -128,7 +124,7 @@ async def finish_analysis(session_id: str, request: Request):
     return _session_payload(session)
 
 
-@router.post("/analysis/{session_id}/commit")
+@router.post("/analysis/{session_id}/commit", dependencies=[Depends(require_analysis)])
 async def commit_analysis_backlog(session_id: str, request: Request):
     analysis = request.app.state.analysis
     try:
@@ -141,7 +137,7 @@ async def commit_analysis_backlog(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail=f"Backlog inválido: {e}")
 
 
-@router.delete("/analysis/{session_id}")
+@router.delete("/analysis/{session_id}", dependencies=[Depends(require_analysis)])
 async def stop_analysis(session_id: str, request: Request):
     await request.app.state.analysis.stop(session_id)
     return {"status": "stopped"}

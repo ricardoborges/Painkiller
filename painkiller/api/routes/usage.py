@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from painkiller.api.security import visible_project
 from painkiller.core.domain.models import ModelPrice, UsageSettings
 from painkiller.core.usage import record_cost, summarize
 
@@ -23,8 +24,7 @@ class ProjectBudgetRequest(BaseModel):
 
 
 async def _require_project(request: Request, project_id: str) -> None:
-    if await request.app.state.tracker.get_project(project_id) is None:
-        raise HTTPException(status_code=404, detail="Projeto não encontrado.")
+    await visible_project(request, project_id)
 
 
 @project_router.get("")

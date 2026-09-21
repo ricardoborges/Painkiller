@@ -16,3 +16,14 @@ def isolate_test_storage(tmp_path, monkeypatch):
     monkeypatch.setenv("PAINKILLER_STORAGE_DIR", str(test_storage))
     return test_storage
 
+
+
+@pytest.fixture(autouse=True)
+def isolate_auth_env(monkeypatch):
+    """Deterministic credentials, independent of whatever the local .env holds."""
+    monkeypatch.setenv("PAINKILLER_ADMIN_USER", "admin")
+    monkeypatch.setenv("PAINKILLER_ADMIN_PASSWORD", "test-admin-password")
+    monkeypatch.setenv("PAINKILLER_AUTH_SECRET", "test-auth-secret")
+    monkeypatch.setenv("PAINKILLER_GOOGLE_CLIENT_ID", "")
+    monkeypatch.setenv("PAINKILLER_GOOGLE_CLIENT_SECRET", "")
+    monkeypatch.delenv("PAINKILLER_GOOGLE_ALLOWED_DOMAINS", raising=False)

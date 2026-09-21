@@ -166,3 +166,40 @@ async def test_stream_parses_agy_events(tmp_path, client):
     assert events[3].text == "list_dir"
     assert events[5].text == "Qual o objetivo?"
     assert events[-1].raw["exit_code"] == 0
+
+
+async def test_stop_finds_container_in_docker_when_not_cached(client):
+    fake_container = MagicMock()
+    client.containers.list.return_value = [fake_container]
+    session = DockerAgentSession(client=client)
+
+    await session.stop("analysis-ghost")
+
+    client.containers.list.assert_called_once_with(
+        all=True, filters={"name": "pk-analysis-analysis-ghost"}
+    )
+    fake_container.remove.assert_called_once_with(force=True)
+
+
+async def test_cleanup_orphaned_containers_removes_untracked_and_dead_containers(client):
+    c1 = MagicMock(status="running")
+    c1.name = "pk-analysis-analysis-old-111"
+    c2 = MagicMock(status="running")
+    c2.name = "pk-analysis-analysis-active-222"
+    c3 = MagicMock(status="exited")
+    c3.name = "pk-analysis-analysis-dead-333"
+
+    client.containers.list.return_value = [c1, c2, c3]
+    session = DockerAgentSession(client=client)
+
+    cleaned = await session.cleanup_orphaned_containers(
+        active_session_ids={"analysis-active-222"}
+    )
+
+    assert "pk-analysis-analysis-old-111" in cleaned
+    assert "pk-analysis-analysis-dead-333" in cleaned
+    assert "pk-analysis-analysis-active-222" not in cleaned
+
+    c1.remove.assert_called_once_with(force=True)
+    c3.remove.assert_called_once_with(force=True)
+    c2.remove.assert_not_called()

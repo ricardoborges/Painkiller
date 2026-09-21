@@ -5,6 +5,7 @@ import tempfile
 import pytest
 from httpx import AsyncClient, ASGITransport
 from painkiller.api.server import create_app
+from tests.auth_helpers import admin_headers
 from painkiller.core.domain.models import Project
 
 
@@ -42,7 +43,7 @@ async def test_list_and_get_project_docs():
             )
 
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as ac:
                 # 1. List docs
                 res = await ac.get(f"/api/projects/{project.id}/docs")
                 assert res.status_code == 200
@@ -114,7 +115,7 @@ async def test_download_project_archive_zips_tracked_files_of_default_branch():
             project = await app.state.tracker.create_project(name="Meu App", repo_path=repo)
 
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as ac:
                 res = await ac.get(f"/api/projects/{project.id}/archive")
                 assert res.status_code == 200
                 assert res.headers["content-type"] == "application/zip"
