@@ -1,23 +1,29 @@
 <script lang="ts">
   import { page } from '$app/state';
   import Icon from '$lib/components/Icon.svelte';
+  import SessionSelector from '$lib/components/SessionSelector.svelte';
+  import { getProjectSessionStore } from '$lib/stores/session.svelte';
 
   let { data, children } = $props();
 
   const base = $derived(`/projetos/${data.project.id}`);
+  const sessionStore = $derived(getProjectSessionStore(data.project.id));
 
-  /* As três primeiras abas são um caminho, não um menu: numerá-las é o jeito
-     mais barato de dizer que existe uma ordem. Artefatos fica fora da
-     contagem — é consulta, acessível de qualquer ponto do caminho, assim como
-     Custos. */
+  $effect(() => {
+    sessionStore.loadSessions();
+  });
+
+  /* O ciclo ágil iterativo da sessão: Análise → Backlog → Sprints → Artefatos.
+     Contexto e Custos são visões de referência do projeto. */
   const steps = $derived([
-    { href: base, label: 'Contexto', exact: true },
-    { href: `${base}/analise-inicial`, label: 'Análise inicial', exact: false },
-    { href: `${base}/backlog`, label: 'Backlog', exact: false }
+    { href: `${base}/analise-inicial`, label: 'Análise', exact: false },
+    { href: `${base}/backlog`, label: 'Backlog', exact: false },
+    { href: `${base}/sprints`, label: 'Sprints', exact: false },
+    { href: `${base}/artefatos`, label: 'Artefatos', exact: false }
   ]);
 
   const aside = $derived([
-    { href: `${base}/artefatos`, label: 'Artefatos', exact: false },
+    { href: base, label: 'Contexto', exact: true },
     { href: `${base}/custos`, label: 'Custos', exact: false }
   ]);
 
@@ -57,6 +63,15 @@
     <span class="sep" aria-hidden="true">·</span>
     <span>branch base {data.project.default_branch}</span>
   </div>
+
+  <SessionSelector
+    sessions={sessionStore.sessions}
+    activeSessionId={sessionStore.activeSessionId}
+    loading={sessionStore.loading}
+    creating={sessionStore.creating}
+    onselect={(s) => sessionStore.selectSession(s.id)}
+    oncreate={() => sessionStore.createNextSession()}
+  />
 
   <nav aria-label="Seções do projeto">
     {#each steps as tab, i (tab.href)}
