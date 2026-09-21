@@ -3,10 +3,12 @@ import type {
   AnalysisSession,
   Clarification,
   InterrogationStart,
+  IterationSession,
   Project,
   ProjectDoc,
   ProjectDocContent,
   ProviderBalance,
+  SessionStatus,
   Task,
   UsageEntry,
   UsageSettings,
@@ -148,6 +150,48 @@ export const api = {
       ...json({ session_id: sessionId })
     }),
 
+  /* ---- sessões ágeis iterativas ---- */
+  listSessions: (projectId: string) =>
+    request<IterationSession[]>(`/projects/${projectId}/sessions`),
+
+  createSession: (projectId: string, title?: string) =>
+    request<IterationSession>(`/projects/${projectId}/sessions`, {
+      method: 'POST',
+      ...json({ title })
+    }),
+
+  getSession: (projectId: string, sessionId: string) =>
+    request<IterationSession>(`/projects/${projectId}/sessions/${sessionId}`),
+
+  updateSession: (
+    projectId: string,
+    sessionId: string,
+    data: {
+      title?: string;
+      status?: SessionStatus;
+      spec_path?: string;
+      analysis_session_id?: string;
+    }
+  ) =>
+    request<IterationSession>(`/projects/${projectId}/sessions/${sessionId}`, {
+      method: 'PATCH',
+      ...json(data)
+    }),
+
+  listSessionTasks: (projectId: string, sessionId: string, status?: string) =>
+    request<Task[]>(
+      `/projects/${projectId}/sessions/${sessionId}/tasks${status ? `?status=${status}` : ''}`
+    ),
+
+  listSessionArtifacts: (projectId: string, sessionId: string) =>
+    request<ProjectDoc[]>(`/projects/${projectId}/sessions/${sessionId}/artifacts`),
+
+  migrateTasksToSession: (projectId: string, sessionId: string, taskIds: string[]) =>
+    request<Task[]>(`/projects/${projectId}/sessions/${sessionId}/migrate-tasks`, {
+      method: 'POST',
+      ...json({ task_ids: taskIds })
+    }),
+
   /* ---- análise inicial (agente conteinerizado, streaming) ---- */
 
   /** Obtém a análise ativa do projeto, caso exista. */
@@ -155,10 +199,15 @@ export const api = {
     request<{ session: AnalysisSession | null }>(`/projects/${projectId}/analysis/current`),
 
   /** Sobe ou retoma o contêiner e retorna na hora; o acompanhamento é pelo stream. */
-  startAnalysis: (projectId: string, forceNew: boolean = false) =>
-    request<AnalysisSession>(`/projects/${projectId}/analysis${forceNew ? '?force_new=true' : ''}`, {
+  startAnalysis: (projectId: string, forceNew: boolean = false, iterationSessionId?: string) => {
+    const params = new URLSearchParams();
+    if (forceNew) params.set('force_new', 'true');
+    if (iterationSessionId) params.set('iteration_session_id', iterationSessionId);
+    const qs = params.toString();
+    return request<AnalysisSession>(`/projects/${projectId}/analysis${qs ? `?${qs}` : ''}`, {
       method: 'POST'
-    }),
+    });
+  },
 
   getAnalysis: (sessionId: string) => request<AnalysisSession>(`/analysis/${sessionId}`),
 
@@ -173,14 +222,17 @@ export const api = {
     request<AnalysisSession>(`/analysis/${sessionId}/finish`, { method: 'POST' }),
 
   /** Importa o .painkiller/backlog.json que o agente gravou no repositório. */
-  commitAnalysisBacklog: (sessionId: string) =>
-    request<Task[]>(`/analysis/${sessionId}/commit`, { method: 'POST' }),
+  commitAnalysisBacklog: (sessionId: string, iterationSessionId?: string) => {
+    const qs = iterationSessionId ? `?iteration_session_id=${encodeURIComponent(iterationSessionId)}` : '';
+    return request<Task[]>(`/analysis/${sessionId}/commit${qs}`, { method: 'POST' });
+  },
 
   stopAnalysis: (sessionId: string) =>
     request<{ status: string }>(`/analysis/${sessionId}`, { method: 'DELETE' }),
 
   /* ---- tarefas ---- */
-  listTasks: (projectId: string) => request<Task[]>(`/projects/${projectId}/tasks`),
+  listTasks: (projectId: string, sessionId?: string) =>
+    request<Task[]>(`/projects/${projectId}/tasks${sessionId ? `?session_id=${sessionId}` : ''}`),
 
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
 

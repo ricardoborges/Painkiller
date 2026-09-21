@@ -33,6 +33,7 @@ export interface ProjectDoc {
   category: 'spec' | 'plan' | 'backlog' | 'doc';
   size_bytes: number;
   modified_at: string;
+  is_session_spec?: boolean;
 }
 
 export interface ProjectDocContent {
@@ -41,6 +42,21 @@ export interface ProjectDocContent {
   content: string;
   size_bytes: number;
   modified_at: string;
+}
+
+export const SESSION_STATUSES = ['PLANNING', 'BACKLOG', 'IN_SPRINT', 'COMPLETED'] as const;
+export type SessionStatus = (typeof SESSION_STATUSES)[number];
+
+export interface IterationSession {
+  id: string;
+  project_id: string;
+  number: number;
+  title: string;
+  status: SessionStatus;
+  analysis_session_id?: string | null;
+  spec_path?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Task {
@@ -53,6 +69,7 @@ export interface Task {
   dependencies: string[];
   status: TaskStatus;
   assigned_branch: string | null;
+  session_id?: string | null;
   created_at: string;
   updated_at: string;
 }
