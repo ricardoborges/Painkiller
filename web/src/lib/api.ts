@@ -236,6 +236,7 @@ export function openAnalysisStream(
     'THINKING_DELTA',
     'TOOL_USE',
     'TOOL_RESULT',
+    'USER',
     'RESULT',
     'ERROR',
     'EXIT'

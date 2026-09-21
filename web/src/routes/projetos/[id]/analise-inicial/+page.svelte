@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { ApiError, api, openAnalysisStream } from '$lib/api';
   import type { AgentEvent, AnalysisSession, ProjectDoc } from '$lib/types';
+  import { marked } from 'marked';
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
@@ -147,6 +148,32 @@
     });
   }
 
+  function renderMarkdown(content: string): string {
+    if (!content) return '';
+    try {
+      return marked.parse(content, { gfm: true, breaks: true }) as string;
+    } catch {
+      return `<p>${content}</p>`;
+    }
+  }
+
+  function commitAgentText(text: string) {
+    const clean = text.trim();
+    if (!clean) return;
+
+    if (turns.length > 0 && turns[turns.length - 1].who === 'agent') {
+      const last = turns[turns.length - 1];
+      if (last.text === clean) {
+        return;
+      }
+      turns[turns.length - 1] = { who: 'agent', text: clean };
+      turns = [...turns];
+      return;
+    }
+
+    turns = [...turns, { who: 'agent', text: clean }];
+  }
+
   function onEvent(event: AgentEvent) {
     switch (event.type) {
       case 'ASSISTANT_DELTA':
@@ -158,16 +185,27 @@
         if (!streaming) reasoning += event.text;
         break;
       case 'USER':
-        turns = [...turns, { who: 'analyst', text: event.text }];
+        if (
+          turns.length === 0 ||
+          turns[turns.length - 1].who !== 'analyst' ||
+          turns[turns.length - 1].text !== event.text
+        ) {
+          turns = [...turns, { who: 'analyst', text: event.text }];
+        }
         break;
       case 'ASSISTANT':
         // Canônico: substitui o que foi montado por delta, então um pedaço
         // perdido no caminho não deixa o texto truncado na tela.
-        turns = [...turns, { who: 'agent', text: event.text }];
+        if (event.text?.trim()) {
+          commitAgentText(event.text);
+        }
         streaming = '';
         reasoning = '';
         break;
       case 'TOOL_USE':
+        if (streaming.trim()) {
+          commitAgentText(streaming);
+        }
         streaming = '';
         reasoning = '';
         // O agente lendo e escrevendo arquivos é o sinal de progresso honesto
@@ -176,6 +214,12 @@
         refreshDocs();
         break;
       case 'RESULT':
+        // O turno do agente acabou: garante que a fala final seja persistida no transcript.
+        // O texto pode vir em event.text (agy / claude) ou no streaming acumulado.
+        const finalText = event.text?.trim() || streaming.trim();
+        if (finalText) {
+          commitAgentText(finalText);
+        }
         streaming = '';
         reasoning = '';
         if (session) session = { ...session, status: 'WAITING_ANALYST' };
@@ -307,7 +351,9 @@
               class:is-analyst={turn.who === 'analyst'}
             >
               <span class="label who">{turn.who === 'agent' ? 'Agente' : 'Você'}</span>
-              <div class="content"><p>{turn.text}</p></div>
+              <div class="content markdown-body">
+                {@html renderMarkdown(turn.text)}
+              </div>
             </li>
           {/if}
         {/each}
@@ -317,7 +363,9 @@
             <span class="label who">Agente</span>
             <div class="content">
               {#if streaming}
-                <p class="live">{streaming}<span class="caret" aria-hidden="true"></span></p>
+                <div class="markdown-body live-streaming">
+                  {@html renderMarkdown(streaming)}<span class="caret" aria-hidden="true"></span>
+                </div>
               {:else if reasoning}
                 <p class="working">
                   <span class="pulse" aria-hidden="true"></span>
@@ -543,11 +591,6 @@
     max-width: var(--measure);
   }
 
-  .content p {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
   /* A fala do analista fica recuada sobre papel rebaixado — parece
      resposta preenchida num formulário impresso. */
   .is-analyst .content {
@@ -556,11 +599,148 @@
     border-left: 2px solid var(--ink);
   }
 
-  /* Turno em andamento: mesma tipografia da fala pronta, para o texto não
-     "pular" quando o evento canônico substituir o buffer. */
-  .live {
+  /* Tipografia do Markdown na conversa */
+  .markdown-body {
+    line-height: 1.6;
+    color: var(--ink);
+    font-size: var(--t-body);
+    word-break: break-word;
+  }
+
+  .markdown-body :global(h1),
+  .markdown-body :global(h2),
+  .markdown-body :global(h3),
+  .markdown-body :global(h4) {
+    color: var(--ink);
+    font-weight: 600;
+    margin-top: var(--s4);
+    margin-bottom: var(--s2);
+    letter-spacing: -0.01em;
+  }
+
+  .markdown-body :global(h1:first-child),
+  .markdown-body :global(h2:first-child),
+  .markdown-body :global(h3:first-child),
+  .markdown-body :global(h4:first-child) {
+    margin-top: 0;
+  }
+
+  .markdown-body :global(h1) {
+    font-size: var(--t-h3);
+  }
+
+  .markdown-body :global(h2) {
+    font-size: var(--t-body);
+    font-weight: 700;
+  }
+
+  .markdown-body :global(h3) {
+    font-size: var(--t-body);
+    font-weight: 600;
+  }
+
+  .markdown-body :global(h4) {
+    font-size: var(--t-small);
+    font-weight: 600;
+  }
+
+  .markdown-body :global(p) {
+    margin-top: 0;
+    margin-bottom: var(--s3);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+
+  .markdown-body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .markdown-body :global(ul),
+  .markdown-body :global(ol) {
+    margin-top: 0;
+    margin-bottom: var(--s3);
+    padding-left: 1.4rem;
+  }
+
+  .markdown-body :global(li) {
+    margin-bottom: var(--s1);
+  }
+
+  .markdown-body :global(li:last-child) {
+    margin-bottom: 0;
+  }
+
+  .markdown-body :global(strong),
+  .markdown-body :global(b) {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .markdown-body :global(code) {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.9em;
+    background: var(--paper-2);
+    padding: 0.15em 0.35em;
+    border-radius: 2px;
+    border: 1px solid var(--rule);
+  }
+
+  .markdown-body :global(pre) {
+    background: var(--paper-sunk);
+    border: 1px solid var(--rule-ink);
+    padding: var(--s3) var(--s4);
+    margin: var(--s3) 0;
+    overflow-x: auto;
+    font-family: var(--font-mono, monospace);
+    font-size: var(--t-micro);
+    line-height: 1.5;
+  }
+
+  .markdown-body :global(pre code) {
+    background: transparent;
+    padding: 0;
+    border: none;
+    font-size: 1em;
+  }
+
+  .markdown-body :global(blockquote) {
+    margin: var(--s3) 0;
+    padding-left: var(--s4);
+    border-left: 3px solid var(--rule-ink);
+    color: var(--ink-2);
+  }
+
+  .markdown-body :global(hr) {
+    border: none;
+    border-top: 1px solid var(--rule);
+    margin: var(--s4) 0;
+  }
+
+  .markdown-body :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    margin: var(--s3) 0;
+    font-size: var(--t-small);
+  }
+
+  .markdown-body :global(th),
+  .markdown-body :global(td) {
+    padding: var(--s2) var(--s3);
+    border: 1px solid var(--rule);
+    text-align: left;
+  }
+
+  .markdown-body :global(th) {
+    background: var(--paper-2);
+    font-weight: 600;
+  }
+
+  .live-streaming {
+    position: relative;
+  }
+
+  .live-streaming :global(p:last-child) {
+    display: inline;
   }
 
   /* Cursor de digitação — a única indicação de que ainda está vindo. */
@@ -568,7 +748,7 @@
     display: inline-block;
     width: 0.5em;
     height: 1em;
-    margin-left: 1px;
+    margin-left: 2px;
     vertical-align: text-bottom;
     background: var(--ink);
     animation: blink 1.1s var(--ease) infinite;

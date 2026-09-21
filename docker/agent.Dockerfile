@@ -29,8 +29,9 @@ RUN if [ ! -f /opt/superpowers/plugin.json ]; then echo '{"name": "superpowers"}
 COPY . /tmp/painkiller
 RUN pip install --no-cache-dir --break-system-packages /tmp/painkiller && rm -rf /tmp/painkiller
 
-# Prepara diretórios e copia o plugin para o diretório padrão de plugins do Antigravity
-RUN mkdir -p /workspace /root/.gemini/config/plugins \
+# Prepara diretórios, configura autenticação direta via GEMINI_API_KEY e copia o plugin para o Antigravity
+RUN mkdir -p /workspace /root/.gemini/config/plugins /root/.gemini/antigravity-cli \
+    && echo '{"modelProvider": "gemini"}' > /root/.gemini/antigravity-cli/settings.json \
     && cp -r /opt/superpowers /root/.gemini/config/plugins/superpowers
 
 WORKDIR /workspace

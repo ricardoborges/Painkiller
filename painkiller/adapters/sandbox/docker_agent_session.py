@@ -86,6 +86,22 @@ class DockerAgentSession(AgentSessionPort):
         # Pasta para persistir configurações e memória do Antigravity CLI
         gemini_home = os.path.join(repo_path, ".painkiller", "gemini_home")
         os.makedirs(gemini_home, exist_ok=True)
+        settings_file = os.path.join(gemini_home, "antigravity-cli", "settings.json")
+        try:
+            os.makedirs(os.path.dirname(settings_file), exist_ok=True)
+            settings_data = {}
+            if os.path.exists(settings_file):
+                try:
+                    with open(settings_file, "r", encoding="utf-8") as f:
+                        settings_data = json.load(f)
+                except Exception:
+                    settings_data = {}
+            if settings_data.get("modelProvider") != "gemini":
+                settings_data["modelProvider"] = "gemini"
+                with open(settings_file, "w", encoding="utf-8") as f:
+                    json.dump(settings_data, f, indent=2)
+        except Exception:
+            pass
 
         # A fila é criada no lado da API, pelo caminho local; o contêiner a
         # enxerga através do bind mount, que o daemon resolve por outro caminho.
@@ -109,8 +125,6 @@ class DockerAgentSession(AgentSessionPort):
                 agent_args.extend(["--conversation", claude_session_id])
             else:
                 agent_args.append("--continue")
-        elif claude_session_id:
-            agent_args.extend(["--conversation", claude_session_id])
 
         command = [
             "painkiller", "agent-run",

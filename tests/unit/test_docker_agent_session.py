@@ -71,6 +71,11 @@ async def test_start_mounts_the_repo_and_seeds_the_prompt_into_the_queue(tmp_pat
     assert first.get("event") == "user" or first.get("type") == "user"
     assert first["message"]["content"] == "Comece a entrevista"
 
+    # Configurações do agy devem ser inicializadas para autenticar com GEMINI_API_KEY
+    settings_file = tmp_path / ".painkiller" / "gemini_home" / "antigravity-cli" / "settings.json"
+    assert settings_file.exists()
+    assert json.loads(settings_file.read_text(encoding="utf-8"))["modelProvider"] == "gemini"
+
 
 async def test_send_appends_an_analyst_turn(tmp_path, client):
     session = DockerAgentSession(client=client)

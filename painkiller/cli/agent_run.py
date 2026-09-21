@@ -44,6 +44,24 @@ def agent_run(stdin_file: str, agent_bin: str, idle_timeout: int, agent_args: tu
         except Exception:
             pass
 
+    # Assegura que o Antigravity CLI use autenticação direta via GEMINI_API_KEY
+    gemini_settings_file = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
+    try:
+        os.makedirs(os.path.dirname(gemini_settings_file), exist_ok=True)
+        settings_data = {}
+        if os.path.exists(gemini_settings_file):
+            try:
+                with open(gemini_settings_file, "r", encoding="utf-8") as f:
+                    settings_data = json.load(f)
+            except Exception:
+                settings_data = {}
+        if settings_data.get("modelProvider") != "gemini":
+            settings_data["modelProvider"] = "gemini"
+            with open(gemini_settings_file, "w", encoding="utf-8") as f:
+                json.dump(settings_data, f, indent=2)
+    except Exception:
+        pass
+
     proc = subprocess.Popen(
         [agent_bin, *agent_args],
         stdin=subprocess.PIPE,
