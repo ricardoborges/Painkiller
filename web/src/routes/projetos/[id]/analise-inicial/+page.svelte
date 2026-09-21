@@ -29,6 +29,15 @@
   /** O leitor está colado no fim? Só então o auto-scroll pode agir. */
   let pinned = $state(true);
 
+  /* As perguntas do agente chegam como formulário (Choices.svelte), então a
+     caixa livre só aparece quando a última fala não trouxe o bloco — sem ela o
+     analista ficaria sem como responder. */
+  const needsComposer = $derived.by(() => {
+    if (!a.myTurn) return false;
+    const last = a.turns[a.turns.length - 1];
+    return !(last?.who === 'agent' && parseMessage(last.text).choices);
+  });
+
   let selectedDoc = $state<ProjectDoc | null>(null);
   let viewerOpen = $state(false);
 
@@ -393,7 +402,7 @@
         </div>
 
         {#if !pinned}
-          <button type="button" class="jump label" onclick={toBottom}>
+          <button type="button" class="jump label" class:low={!needsComposer} onclick={toBottom}>
             Ir para o fim ↓
           </button>
         {/if}
@@ -405,34 +414,36 @@
           </p>
         {/if}
 
-        <div class="composer">
-          <textarea
-            bind:this={composer}
-            bind:value={a.draft}
-            class="textarea"
-            rows="2"
-            placeholder={a.finished
-              ? 'Sessão encerrada.'
-              : a.myTurn
-                ? 'Responda ao agente…'
-                : 'Aguarde — o agente está com o turno.'}
-            onkeydown={onKeydown}
-            disabled={!a.myTurn}
-          ></textarea>
-          <div class="composer-foot">
-            <span class="help">
-              <span class="mono">Enter</span> envia, <span class="mono">Shift+Enter</span> quebra linha
-            </span>
-            <button
-              type="button"
-              class="btn btn-solid btn-sm"
-              onclick={() => a.send()}
-              disabled={!a.myTurn || !a.draft.trim()}
-            >
-              Enviar <Icon name="send" size={12} />
-            </button>
+        {#if needsComposer}
+          <div class="composer">
+            <textarea
+              bind:this={composer}
+              bind:value={a.draft}
+              class="textarea"
+              rows="2"
+              placeholder={a.finished
+                ? 'Sessão encerrada.'
+                : a.myTurn
+                  ? 'Responda ao agente…'
+                  : 'Aguarde — o agente está com o turno.'}
+              onkeydown={onKeydown}
+              disabled={!a.myTurn}
+            ></textarea>
+            <div class="composer-foot">
+              <span class="help">
+                <span class="mono">Enter</span> envia, <span class="mono">Shift+Enter</span> quebra linha
+              </span>
+              <button
+                type="button"
+                class="btn btn-solid btn-sm"
+                onclick={() => a.send()}
+                disabled={!a.myTurn || !a.draft.trim()}
+              >
+                Enviar <Icon name="send" size={12} />
+              </button>
+            </div>
           </div>
-        </div>
+        {/if}
       {/if}
     </section>
   </div>
@@ -1080,6 +1091,10 @@
     overflow-wrap: anywhere;
     max-height: 18rem;
     overflow-y: auto;
+  }
+
+  .jump.low {
+    bottom: var(--s4);
   }
 
   /* ---------- Composer ---------- */
