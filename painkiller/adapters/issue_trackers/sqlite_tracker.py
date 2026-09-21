@@ -31,6 +31,8 @@ from painkiller.core.domain.models import (
     UsageRecord,
     UsageSettings,
     UsageSource,
+    IterationSession,
+    SessionStatus,
 )
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
@@ -65,6 +67,21 @@ class TaskRecord(Base):
     dependencies = Column(Text, default="[]")
     status = Column(SQLEnum(TaskStatus), default=TaskStatus.BACKLOG)
     assigned_branch = Column(String, nullable=True)
+    session_id = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class IterationSessionRecord(Base):
+    __tablename__ = "iteration_sessions"
+
+    id = Column(String, primary_key=True)
+    project_id = Column(String, nullable=False, index=True)
+    number = Column(Integer, nullable=False)
+    title = Column(String, nullable=False)
+    status = Column(SQLEnum(SessionStatus), default=SessionStatus.PLANNING)
+    analysis_session_id = Column(String, nullable=True)
+    spec_path = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -258,6 +275,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             if task_ids:
                 await session.execute(delete(ClarificationRecord).where(ClarificationRecord.task_id.in_(task_ids)))
                 await session.execute(delete(TaskRecord).where(TaskRecord.project_id == project_id))
+            await session.execute(delete(IterationSessionRecord).where(IterationSessionRecord.project_id == project_id))
             await session.execute(delete(ProjectRecord).where(ProjectRecord.id == project_id))
             await session.execute(delete(SettingRecord).where(SettingRecord.key == _budget_key(project_id)))
             await session.commit()
@@ -284,6 +302,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
         target_files: Optional[Sequence[str]] = None,
         acceptance_criteria: Optional[Sequence[str]] = None,
         dependencies: Optional[Sequence[str]] = None,
+        session_id: Optional[str] = None,
     ) -> Task:
         task_id = f"task-{uuid.uuid4().hex[:8]}"
         record = TaskRecord(
@@ -295,6 +314,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             acceptance_criteria=json.dumps(list(acceptance_criteria or [])),
             dependencies=json.dumps(list(dependencies or [])),
             status=TaskStatus.BACKLOG,
+            session_id=session_id,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -315,11 +335,14 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
         self,
         project_id: str,
         status: Optional[TaskStatus] = None,
+        session_id: Optional[str] = None,
     ) -> list[Task]:
         async with self.session_factory() as session:
             stmt = select(TaskRecord).where(TaskRecord.project_id == project_id)
             if status:
                 stmt = stmt.where(TaskRecord.status == status)
+            if session_id:
+                stmt = stmt.where(TaskRecord.session_id == session_id)
             stmt = stmt.order_by(TaskRecord.created_at.asc())
             res = await session.execute(stmt)
             records = res.scalars().all()
@@ -432,6 +455,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
             dependencies=json.loads(record.dependencies or "[]"),
             status=record.status,
             assigned_branch=record.assigned_branch,
+            session_id=record.session_id,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
@@ -626,3 +650,137 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
     async def save_project_budget(self, project_id: str, budget_usd: Optional[float]) -> None:
         value = None if budget_usd is None else json.dumps({"budget_usd": budget_usd})
         await self._write_setting(_budget_key(project_id), value)
+
+    def _to_iteration_session_domain(self, record: IterationSessionRecord) -> IterationSession:
+        return IterationSession(
+            id=record.id,
+            project_id=record.project_id,
+            number=record.number,
+            title=record.title,
+            status=record.status,
+            analysis_session_id=record.analysis_session_id,
+            spec_path=record.spec_path,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+    async def ensure_initial_session(self, project_id: str) -> IterationSession:
+        async with self.session_factory() as session:
+            stmt = select(IterationSessionRecord).where(
+                IterationSessionRecord.project_id == project_id
+            ).order_by(IterationSessionRecord.number.asc())
+            res = await session.execute(stmt)
+            records = res.scalars().all()
+            if records:
+                return self._to_iteration_session_domain(records[0])
+
+            sess_id = f"sess-{uuid.uuid4().hex[:8]}"
+            now = datetime.now(timezone.utc)
+            record = IterationSessionRecord(
+                id=sess_id,
+                project_id=project_id,
+                number=1,
+                title="Sessão 1",
+                status=SessionStatus.PLANNING,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            # Associar tarefas legadas orfas do projeto à Sessão 1
+            await session.execute(
+                update(TaskRecord)
+                .where((TaskRecord.project_id == project_id) & (TaskRecord.session_id.is_(None)))
+                .values(session_id=sess_id)
+            )
+            await session.commit()
+            return self._to_iteration_session_domain(record)
+
+    async def create_session(
+        self,
+        project_id: str,
+        title: Optional[str] = None,
+    ) -> IterationSession:
+        async with self.session_factory() as session:
+            stmt = select(IterationSessionRecord.number).where(
+                IterationSessionRecord.project_id == project_id
+            )
+            res = await session.execute(stmt)
+            numbers = res.scalars().all()
+            next_num = max(numbers, default=0) + 1
+
+            sess_id = f"sess-{uuid.uuid4().hex[:8]}"
+            sess_title = title or f"Sessão {next_num}"
+            now = datetime.now(timezone.utc)
+            record = IterationSessionRecord(
+                id=sess_id,
+                project_id=project_id,
+                number=next_num,
+                title=sess_title,
+                status=SessionStatus.PLANNING,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            await session.commit()
+            return self._to_iteration_session_domain(record)
+
+    async def list_sessions(self, project_id: str) -> list[IterationSession]:
+        async with self.session_factory() as session:
+            stmt = select(IterationSessionRecord).where(
+                IterationSessionRecord.project_id == project_id
+            ).order_by(IterationSessionRecord.number.asc())
+            res = await session.execute(stmt)
+            records = res.scalars().all()
+            return [self._to_iteration_session_domain(r) for r in records]
+
+    async def get_session(self, session_id: str) -> Optional[IterationSession]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(IterationSessionRecord).where(IterationSessionRecord.id == session_id)
+            )
+            record = res.scalar_one_or_none()
+            if not record:
+                return None
+            return self._to_iteration_session_domain(record)
+
+    async def update_session(self, session: IterationSession) -> IterationSession:
+        now = datetime.now(timezone.utc)
+        async with self.session_factory() as db_session:
+            await db_session.execute(
+                update(IterationSessionRecord)
+                .where(IterationSessionRecord.id == session.id)
+                .values(
+                    title=session.title,
+                    status=session.status,
+                    analysis_session_id=session.analysis_session_id,
+                    spec_path=session.spec_path,
+                    updated_at=now,
+                )
+            )
+            await db_session.commit()
+            res = await db_session.execute(
+                select(IterationSessionRecord).where(IterationSessionRecord.id == session.id)
+            )
+            record = res.scalar_one()
+            return self._to_iteration_session_domain(record)
+
+    async def migrate_tasks_to_session(
+        self,
+        task_ids: Sequence[str],
+        target_session_id: str,
+    ) -> list[Task]:
+        if not task_ids:
+            return []
+        now = datetime.now(timezone.utc)
+        async with self.session_factory() as session:
+            await session.execute(
+                update(TaskRecord)
+                .where(TaskRecord.id.in_(list(task_ids)))
+                .values(session_id=target_session_id, updated_at=now)
+            )
+            await session.commit()
+            res = await session.execute(
+                select(TaskRecord).where(TaskRecord.id.in_(list(task_ids)))
+            )
+            records = res.scalars().all()
+            return [self._to_task_domain(r) for r in records]
