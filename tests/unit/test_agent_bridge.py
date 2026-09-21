@@ -98,3 +98,18 @@ def test_creates_the_queue_file_when_missing(tmp_path, agent_script):
 
     assert queue_file.exists()
     assert code == 7
+
+
+def test_agent_run_default_bin_is_agy():
+    from click.testing import CliRunner
+    from painkiller.cli.agent_run import agent_run
+
+    runner = CliRunner()
+    result = runner.invoke(agent_run, ["--help"])
+    assert result.exit_code == 0
+    # Verifica que o help exibe default: agy
+    assert "agy" in result.output
+    # Verifica diretamente no parâmetro click
+    agent_bin_param = next(p for p in agent_run.params if p.name == "agent_bin")
+    assert agent_bin_param.default == "agy"
+

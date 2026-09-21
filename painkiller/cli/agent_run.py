@@ -24,7 +24,7 @@ POLL_INTERVAL_SECONDS = 0.2
 
 @click.command(context_settings={"ignore_unknown_options": True})
 @click.option("--stdin-file", required=True, help="JSONL file polled for agent input.")
-@click.option("--agent-bin", default="claude", help="Executable to run as the agent.")
+@click.option("--agent-bin", default="agy", show_default=True, help="Executable to run as the agent.")
 @click.option("--idle-timeout", default=3600, type=int, help="Seconds without agent exit before giving up.")
 @click.argument("agent_args", nargs=-1, type=click.UNPROCESSED)
 def agent_run(stdin_file: str, agent_bin: str, idle_timeout: int, agent_args: tuple):
