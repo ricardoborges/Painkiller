@@ -75,47 +75,27 @@ The distinguishing mechanism of this codebase. When the agent in the container h
 
 So exit codes carry meaning end to end: `42` = paused for the analyst, `0` = agent finished (orchestrator then runs `git.run_tests`, which defaults to bare `pytest` in the *target* repo; failure → `FAILED`, success → commit + `IN_REVIEW`), anything else = `FAILED`. Do not repurpose 42.
 
-### Initial analysis (Claude Code + superpowers, streamed)
+### Initial analysis (Antigravity CLI + superpowers + Gemini 3.8 Flash, streamed)
 
-"Iniciar análise" runs a **different agent from the one that writes code**. Task dispatch runs Aider one-shot; the analysis runs **Claude Code** kept alive for a back-and-forth interview, driven by the [superpowers](https://github.com/obra/superpowers) `brainstorming` skill. Aider has no skill system, so this is not interchangeable — swapping the analysis back to Aider means losing the skills.
+"Iniciar análise" runs a **different agent from the one that writes code**. Task dispatch runs Aider one-shot; the analysis runs **Antigravity CLI (`agy`)** kept alive for a back-and-forth interview, driven by the [superpowers](https://github.com/obra/superpowers) `brainstorming` skill running on Google's **Gemini 3.8 Flash** (`--model gemini-3.8-flash --effort medium`).
 
-Two consequences that are easy to get wrong:
+Key architectural characteristics:
 
-- **It needs a backend that serves `/v1/messages`.** Claude Code speaks the Anthropic Messages API, so the `NVIDIA_API_KEY` / `PAINKILLER_LLM_*` chain that drives the rest of the platform does not reach it — `integrate.api.nvidia.com/v1/messages` returns 404 (only `/v1/chat/completions` exists there). Three options, and `DockerAgentSession._require_credentials` names all three in pt-BR before starting the container rather than letting it die silently. See **LLM backend for the analysis agent** below.
-- **Input is a file, not a socket.** A bidirectional `docker attach` is not portable (npipe on Windows; multiplexed frame headers without a TTY), so the API *appends* JSONL to `.painkiller/agent-stdin.jsonl` inside the bind-mounted repo, and `painkiller agent-run` ([cli/agent_run.py](painkiller/cli/agent_run.py)) polls that file inside the container and feeds the agent's stdin. It only forwards **complete** lines, propagates the agent's exit code, and treats `{"type": "__painkiller_eof__"}` as "close stdin so the agent wraps up". Output comes back the ordinary way, via `container.logs(stream=True, follow=True)`.
+- **Direct Authentication with `GEMINI_API_KEY`.** `agy` authenticates directly using the Google AI API key defined in `.env` (`GEMINI_API_KEY` or fallback `GOOGLE_API_KEY`). It does not require complex proxy translation.
+- **Input is a file, not a socket.** A bidirectional `docker attach` is not portable (npipe on Windows; multiplexed frame headers without a TTY), so the API *appends* NDJSON to `.painkiller/agent-stdin.jsonl` inside the bind-mounted repo, formatted with `{"event": "user", "type": "user", "message": {"content": ...}}`, and `painkiller agent-run` ([cli/agent_run.py](painkiller/cli/agent_run.py)) polls that file inside the container and feeds the agent's stdin. It only forwards **complete** lines, propagates the agent's exit code, and treats `{"type": "__painkiller_eof__"}` as "close stdin so the agent wraps up". Output comes back the ordinary way, via `container.logs(stream=True, follow=True)`.
 
-The stream-json envelope from Claude Code is parsed in `parse_agent_line` into an `AgentEvent`; a line that is not JSON becomes an `ERROR` event rather than being dropped, because node/npm warnings share the same log stream. `RESULT` means the agent handed the turn back — that is what enables the composer in the UI, and the only place the accent colour is spent on this screen.
+The stream-json envelope from `agy` is parsed in `parse_agent_line` into an `AgentEvent`:
+- `init`: System event initializing the session with `conversation_id`.
+- `step_update`:
+  - `step_type: "agent_response"` with `text_delta` -> `ASSISTANT_DELTA`
+  - `step_type: "agent_response"` with `thinking_delta` -> `THINKING_DELTA`
+  - `step_type: "tool"` with active/running state -> `TOOL_USE`
+  - `step_type: "tool"` with done/error state -> `TOOL_RESULT`
+- `result`: Turn completed -> `RESULT`, enabling the analyst composer in the UI.
 
-**Token-level streaming.** `--include-partial-messages` makes Claude Code emit `{"type": "stream_event", "event": {...}}` lines wrapping ordinary Anthropic SSE events. `content_block_delta` becomes `ASSISTANT_DELTA` / `THINKING_DELTA`; `signature_delta` and `input_json_delta` have nothing readable and are dropped. Two rules keep this from causing trouble:
+`AnalysisOrchestrator` fans events out to SSE subscribers and keeps a replay buffer, so a reconnecting `EventSource` sees the whole conversation. `POST /api/projects/{id}/analysis` returns immediately, streaming events via `/api/analysis/{sid}/stream`.
 
-- **Deltas never enter the replay buffer** (`TRANSIENT_EVENTS` in `analysis.py`). There are thousands per turn, and the canonical `assistant` message follows with the whole text anyway. A client that reconnects replays the conversation, not the typing.
-- **The canonical `ASSISTANT` event replaces the accumulated buffer** in the UI rather than appending to it, so a delta lost in transit cannot leave truncated text on screen.
-
-Measured against kimi-k3 through the NVIDIA proxy: first thinking delta at ~114s, first text delta at ~119s, canonical message at ~121s. So streaming the *text* buys about two seconds — the real gain is the ~114s of reasoning that would otherwise be a blank clock. The dead time before the first token is model prefill and nothing in this codebase can shorten it.
-
-`AnalysisOrchestrator` fans events out to SSE subscribers and keeps a replay buffer, so a reconnecting `EventSource` sees the whole conversation. `AnalysisRun.done` (not the session status) is what tells a late subscriber the stream is over — a stream can end without ever emitting `EXIT`, and without that flag the SSE generator hangs forever.
-
-`POST /api/projects/{id}/analysis` returns **immediately**; everything after that is `GET /api/analysis/{sid}/stream`. This is the opposite of task dispatch, which still blocks for the whole run.
-
-The handoff to the backlog is a file: the agent writes the spec to `docs/superpowers/specs/` and the decomposed tasks to `.painkiller/backlog.json`, and `POST /api/analysis/{sid}/commit` reads that JSON back off the bind mount. Dependencies are expressed by task *title* there, because the agent cannot know the IDs the tracker assigns on creation.
-
-### LLM backend for the analysis agent
-
-Three ways to feed the analysis agent, in increasing order of moving parts:
-
-1. **Anthropic directly** — set `ANTHROPIC_API_KEY`, leave `ANTHROPIC_BASE_URL` empty. Nothing else to run.
-2. **Self-hosted NIM** — NVIDIA's own NIM server already serves `/v1/messages`, so point `ANTHROPIC_BASE_URL` at it. This is the case [NVIDIA's Claude Code page](https://docs.nvidia.com/nim/large-language-models/latest/ai-assistant-integrations/claude-code.html) documents.
-3. **NVIDIA Build (hosted) through the translating proxy** — the default in `docker-compose.yml`. The `llm-proxy` service runs LiteLLM, which exposes `/v1/messages` and forwards to NVIDIA's OpenAI-compatible endpoint with the project's existing `NVIDIA_API_KEY`.
-
-Three things about option 3 were found by measurement, not by reading docs, and each one silently breaks the agent if changed:
-
-- **`use_chat_completions_url_for_anthropic_messages: true` is mandatory.** LiteLLM's `/v1/messages` bridge sends `openai`-provider models to the *Responses* API (`/v1/responses`), which NVIDIA Build does not have — every call 404s. The flag is what routes it to `/v1/chat/completions` instead (see `_should_route_to_responses_api` in litellm).
-- **`drop_params: true` is not enough.** Claude Code sends `prompt_cache_key`, which is a *valid* OpenAI parameter, so LiteLLM forwards it and NVIDIA rejects the request with 400. Those params are listed explicitly under `additional_drop_params`.
-- **The agent container must be told which network to join.** It is created as a *sibling* over the host socket, so it never joins the compose network on its own and cannot resolve `llm-proxy`. `PAINKILLER_AGENT_NETWORK` is what attaches it; `extra_hosts` additionally makes `host.docker.internal` work for a proxy published on a host port.
-
-The model aliases also have to be remapped. Claude Code keeps asking for `haiku`/`sonnet`/`opus` for background work regardless of `--model`, and a custom backend has no such models, so `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL` all point at the same served model. That caveat is NVIDIA's own and it applies identically here.
-
-A caveat worth keeping in view: Claude Code's system prompt and the superpowers skills are long and tuned for Claude models. They *work* on kimi-k3 — the skill gets invoked and the interview runs — but quality and latency are materially different, and the whole chain is slower.
+The handoff to the backlog is a file: the agent writes the spec to `docs/superpowers/specs/` and the decomposed tasks to `.painkiller/backlog.json`, and `POST /api/analysis/{sid}/commit` reads that JSON back off the bind mount.
 
 ### Task dispatch
 

@@ -54,28 +54,16 @@ services:
       PAINKILLER_WORKER_IMAGE: painkiller-worker:latest
       PAINKILLER_AGENT_IMAGE: painkiller-agent:latest
 
-      # Backend do agente de analise inicial. O Claude Code fala a Messages API
-      # da Anthropic (/v1/messages); o NVIDIA Build so expoe o protocolo OpenAI.
-      # Por padrao apontamos para o servico llm-proxy, que traduz entre os dois.
-      # Para usar a Anthropic direto, deixe ANTHROPIC_BASE_URL vazio no .env e
-      # ponha uma chave real em ANTHROPIC_API_KEY.
-      # Fixo de proposito: o .env guarda o endereco para rodar no host
-      # (host.docker.internal), que nao vale dentro da rede do compose.
+      # Backend do agente de analise inicial: Antigravity CLI + superpowers + Gemini 3.8 Flash.
+      # Autentica via GEMINI_API_KEY. Variaveis legadas sao mantidas para compatibilidade.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      PAINKILLER_AGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-gemini-3.8-flash}
+      PAINKILLER_AGENT_EFFORT: ${PAINKILLER_AGENT_EFFORT:-medium}
       ANTHROPIC_BASE_URL: http://llm-proxy:4000
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-${PAINKILLER_PROXY_KEY:-sk-painkiller-local}}
 
-      # O Claude Code continua pedindo os aliases embutidos (haiku/sonnet/opus)
-      # para tarefas de fundo. Sem remapear, cada uma delas toma 404 no backend
-      # proprio -- e a ressalva da documentacao da NVIDIA.
-      ANTHROPIC_CUSTOM_MODEL_OPTION: ${PAINKILLER_AGENT_MODEL:-painkiller-agent}
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: ${PAINKILLER_AGENT_MODEL:-painkiller-agent}
-      ANTHROPIC_DEFAULT_SONNET_MODEL: ${PAINKILLER_AGENT_MODEL:-painkiller-agent}
-      ANTHROPIC_DEFAULT_OPUS_MODEL: ${PAINKILLER_AGENT_MODEL:-painkiller-agent}
-      CLAUDE_CODE_SUBAGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-painkiller-agent}
-      PAINKILLER_AGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-painkiller-agent}
-
       # O contentor do agente nasce IRMAO, pelo socket do host, entao nao entra
-      # na rede do compose sozinho e nao resolveria o nome llm-proxy.
+      # na rede do compose sozinho.
       PAINKILLER_AGENT_NETWORK: ${PAINKILLER_AGENT_NETWORK:-painkiller_default}
 
       # Par de traducao de caminho lido por DockerSandboxRunner._daemon_path.
