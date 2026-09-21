@@ -35,6 +35,9 @@ from painkiller.core.domain.models import (
     SessionStatus,
     User,
     UserRole,
+    DeploymentRecord,
+    EnvironmentType,
+    DeploymentStatus,
 )
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
@@ -56,6 +59,9 @@ class ProjectRecord(Base):
     default_branch = Column(String, default="main")
     repo_url = Column(String, default="", nullable=True)
     owner_id = Column(String, nullable=True, index=True)
+    coolify_project_uuid = Column(String, nullable=True)
+    test_url = Column(String, nullable=True)
+    production_url = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -173,6 +179,25 @@ class SettingRecord(Base):
 
     key = Column(String, primary_key=True)
     value = Column(Text, default="{}")
+
+
+class DeploymentRecordRow(Base):
+    __tablename__ = "deployments"
+
+    id = Column(String, primary_key=True)
+    project_id = Column(String, nullable=False, index=True)
+    task_id = Column(String, nullable=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    environment = Column(SQLEnum(EnvironmentType), nullable=False)
+    branch = Column(String, default="main")
+    commit_sha = Column(String, nullable=True)
+    status = Column(SQLEnum(DeploymentStatus), default=DeploymentStatus.PENDING)
+    coolify_app_uuid = Column(String, nullable=True)
+    coolify_deployment_uuid = Column(String, nullable=True)
+    url = Column(String, nullable=True)
+    logs = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 #: Chave da linha de `settings` que guarda orçamento e preços.
@@ -325,6 +350,9 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             default_branch=record.default_branch,
             repo_url=record.repo_url or None,
             owner_id=record.owner_id or None,
+            coolify_project_uuid=getattr(record, "coolify_project_uuid", None) or None,
+            test_url=getattr(record, "test_url", None) or None,
+            production_url=getattr(record, "production_url", None) or None,
             created_at=record.created_at,
         )
 
@@ -921,3 +949,139 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             )
             records = res.scalars().all()
             return [self._to_task_domain(r) for r in records]
+
+    # ------------------------------------------------------------------
+    # Deployments
+    # ------------------------------------------------------------------
+
+    def _to_deployment_domain(self, record: DeploymentRecordRow) -> DeploymentRecord:
+        return DeploymentRecord(
+            id=record.id,
+            project_id=record.project_id,
+            task_id=record.task_id or None,
+            session_id=record.session_id or None,
+            environment=record.environment,
+            branch=record.branch or "main",
+            commit_sha=record.commit_sha or None,
+            status=record.status,
+            coolify_app_uuid=record.coolify_app_uuid or None,
+            coolify_deployment_uuid=record.coolify_deployment_uuid or None,
+            url=record.url or None,
+            logs=record.logs or None,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+    async def save_deployment(self, deployment: DeploymentRecord) -> DeploymentRecord:
+        now = datetime.now(timezone.utc)
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(DeploymentRecordRow).where(DeploymentRecordRow.id == deployment.id)
+            )
+            existing = res.scalar_one_or_none()
+            if existing:
+                await session.execute(
+                    update(DeploymentRecordRow)
+                    .where(DeploymentRecordRow.id == deployment.id)
+                    .values(
+                        status=deployment.status,
+                        commit_sha=deployment.commit_sha,
+                        coolify_app_uuid=deployment.coolify_app_uuid,
+                        coolify_deployment_uuid=deployment.coolify_deployment_uuid,
+                        url=deployment.url,
+                        logs=deployment.logs,
+                        updated_at=now,
+                    )
+                )
+            else:
+                row = DeploymentRecordRow(
+                    id=deployment.id,
+                    project_id=deployment.project_id,
+                    task_id=deployment.task_id,
+                    session_id=deployment.session_id,
+                    environment=deployment.environment,
+                    branch=deployment.branch,
+                    commit_sha=deployment.commit_sha,
+                    status=deployment.status,
+                    coolify_app_uuid=deployment.coolify_app_uuid,
+                    coolify_deployment_uuid=deployment.coolify_deployment_uuid,
+                    url=deployment.url,
+                    logs=deployment.logs,
+                    created_at=deployment.created_at,
+                    updated_at=now,
+                )
+                session.add(row)
+            await session.commit()
+
+            res = await session.execute(
+                select(DeploymentRecordRow).where(DeploymentRecordRow.id == deployment.id)
+            )
+            saved = res.scalar_one()
+            return self._to_deployment_domain(saved)
+
+    async def get_deployment(self, deployment_id: str) -> Optional[DeploymentRecord]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(DeploymentRecordRow).where(DeploymentRecordRow.id == deployment_id)
+            )
+            record = res.scalar_one_or_none()
+            return self._to_deployment_domain(record) if record else None
+
+    async def list_project_deployments(
+        self, project_id: str, limit: int = 20
+    ) -> list[DeploymentRecord]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(DeploymentRecordRow)
+                .where(DeploymentRecordRow.project_id == project_id)
+                .order_by(DeploymentRecordRow.created_at.desc())
+                .limit(limit)
+            )
+            records = res.scalars().all()
+            return [self._to_deployment_domain(r) for r in records]
+
+    async def get_latest_deployment(
+        self, project_id: str, environment: EnvironmentType
+    ) -> Optional[DeploymentRecord]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(DeploymentRecordRow)
+                .where(
+                    DeploymentRecordRow.project_id == project_id,
+                    DeploymentRecordRow.environment == environment,
+                )
+                .order_by(DeploymentRecordRow.created_at.desc())
+                .limit(1)
+            )
+            record = res.scalar_one_or_none()
+            return self._to_deployment_domain(record) if record else None
+
+    async def update_project_deployment_urls(
+        self,
+        project_id: str,
+        test_url: Optional[str] = None,
+        production_url: Optional[str] = None,
+        coolify_project_uuid: Optional[str] = None,
+    ) -> Project:
+        values: dict[str, Any] = {}
+        if test_url is not None:
+            values["test_url"] = test_url
+        if production_url is not None:
+            values["production_url"] = production_url
+        if coolify_project_uuid is not None:
+            values["coolify_project_uuid"] = coolify_project_uuid
+
+        if values:
+            async with self.session_factory() as session:
+                await session.execute(
+                    update(ProjectRecord)
+                    .where(ProjectRecord.id == project_id)
+                    .values(**values)
+                )
+                await session.commit()
+
+        project = await self.get_project(project_id)
+        if not project:
+            raise ValueError(f"Project {project_id} not found")
+        return project
+

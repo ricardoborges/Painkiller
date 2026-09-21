@@ -96,7 +96,43 @@ class Project(BaseModel):
     # Usuário dono do projeto. Vazio = legado ou criado pelo admin break-glass,
     # visível só para o admin.
     owner_id: Optional[str] = None
+    coolify_project_uuid: Optional[str] = None
+    test_url: Optional[str] = None
+    production_url: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class EnvironmentType(str, Enum):
+    """Target environment for deployments."""
+    TEST = "test"
+    PRODUCTION = "production"
+
+
+class DeploymentStatus(str, Enum):
+    """Lifecycle status of an environment deployment."""
+    PENDING = "PENDING"
+    BUILDING = "BUILDING"
+    HEALTHY = "HEALTHY"
+    FAILED = "FAILED"
+    STOPPED = "STOPPED"
+
+
+class DeploymentRecord(BaseModel):
+    """Record of a project environment deployment on Coolify."""
+    id: str
+    project_id: str
+    task_id: Optional[str] = None
+    session_id: Optional[str] = None
+    environment: EnvironmentType = EnvironmentType.TEST
+    branch: str = "main"
+    commit_sha: Optional[str] = None
+    status: DeploymentStatus = DeploymentStatus.PENDING
+    coolify_app_uuid: Optional[str] = None
+    coolify_deployment_uuid: Optional[str] = None
+    url: Optional[str] = None
+    logs: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class UserRole(str, Enum):

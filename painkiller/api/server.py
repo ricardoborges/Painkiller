@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import asyncio
+from typing import Optional, Any
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 from painkiller.adapters.git.git_adapter import GitCliAdapter
 from painkiller.adapters.vcs.gitea_adapter import GiteaAdapter
@@ -22,8 +23,10 @@ from painkiller.adapters.sandbox.docker_agent_session import DockerAgentSession
 from painkiller.adapters.llm.litellm_adapter import LiteLLMAdapter
 from painkiller.adapters.llm.pricing import litellm_price
 from painkiller.adapters.llm.balance import fetch_balances
+from painkiller.adapters.deployment.coolify_adapter import CoolifyAdapter
 from painkiller.engine.orchestrator import PainkillerOrchestrator
 from painkiller.engine.analysis import AnalysisOrchestrator
+from painkiller.engine.deployment_service import DeploymentService
 from painkiller.interrogation.wizard import InterrogationWizard
 from painkiller.api.security import current_user
 from painkiller.api.routes.auth import router as auth_router
@@ -34,12 +37,14 @@ from painkiller.api.routes.analysis import router as analysis_router
 from painkiller.api.routes.usage import project_router as project_usage_router
 from painkiller.api.routes.usage import router as usage_router
 from painkiller.api.routes.sessions import router as sessions_router
+from painkiller.api.routes.deployments import router as deployments_router
 
 
 def create_app(
     db_url: str = "sqlite+aiosqlite:///painkiller.db",
     docker_image: str = "painkiller-worker:latest",
     agent_image: str = "painkiller-agent:latest",
+    deployment_adapter: Optional[Any] = None,
 ) -> FastAPI:
     """Application factory initializing hexagonal adapters and state."""
 
@@ -91,6 +96,9 @@ def create_app(
     wizard = InterrogationWizard(llm=llm, tracker=tracker)
     analysis = AnalysisOrchestrator(agent=agent, tracker=tracker, usage=usage, git=git)
 
+    deployment = deployment_adapter or CoolifyAdapter()
+    deployment_service = DeploymentService(tracker=tracker, deployment=deployment)
+
     # Attach to application state
     app.state.tracker = tracker
     app.state.git = git
@@ -102,6 +110,8 @@ def create_app(
     app.state.agent = agent
     app.state.analysis = analysis
     app.state.usage = usage
+    app.state.deployment = deployment
+    app.state.deployment_service = deployment_service
     # Injetáveis para os testes não dependerem do catálogo do LiteLLM nem da rede.
     app.state.price_lookup = litellm_price
     app.state.balance_lookup = fetch_balances
@@ -116,8 +126,13 @@ def create_app(
     app.include_router(interrogation_router, dependencies=signed_in)
     app.include_router(analysis_router, dependencies=signed_in)
     app.include_router(sessions_router, dependencies=signed_in)
+    app.include_router(deployments_router, dependencies=signed_in)
     app.include_router(usage_router, dependencies=signed_in)
     app.include_router(project_usage_router, dependencies=signed_in)
+
+    @app.get("/api/health")
+    async def health_check():
+        return {"status": "ok"}
 
     # SvelteKit SPA. Source lives in web/; `npm run build` emits here.
     static_dir = (Path(__file__).parent / "static").resolve()

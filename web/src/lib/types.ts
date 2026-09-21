@@ -24,6 +24,9 @@ export interface Project {
   attachments: string[];
   default_branch: string;
   repo_url?: string | null;
+  coolify_project_uuid?: string | null;
+  test_url?: string | null;
+  production_url?: string | null;
   created_at: string;
 }
 
@@ -260,3 +263,42 @@ export interface ProviderBalance {
   currency: string | null;
   error: string | null;
 }
+
+export type EnvironmentType = 'test' | 'production';
+export type DeploymentStatus = 'PENDING' | 'BUILDING' | 'HEALTHY' | 'FAILED' | 'STOPPED';
+
+export interface DeploymentRecord {
+  id: string;
+  project_id: string;
+  task_id?: string | null;
+  session_id?: string | null;
+  environment: EnvironmentType;
+  branch: string;
+  commit_sha?: string | null;
+  status: DeploymentStatus;
+  coolify_app_uuid?: string | null;
+  coolify_deployment_uuid?: string | null;
+  url?: string | null;
+  logs?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EnvironmentStatusResponse {
+  project_id: string;
+  test: {
+    url: string | null;
+    status: DeploymentStatus | null;
+    branch: string | null;
+    updated_at: string | null;
+    deployment_id: string | null;
+  };
+  production: {
+    url: string | null;
+    status: DeploymentStatus | null;
+    branch: string | null;
+    updated_at: string | null;
+    deployment_id: string | null;
+  };
+}
+

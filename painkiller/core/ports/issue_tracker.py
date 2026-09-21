@@ -11,6 +11,8 @@ from painkiller.core.domain.models import (
     AgentEvent,
     IterationSession,
     SessionStatus,
+    DeploymentRecord,
+    EnvironmentType,
 )
 
 
@@ -194,3 +196,39 @@ class IssueTrackerPort(ABC):
     ) -> list[Task]:
         """Move tasks to a target iteration session."""
         pass
+
+    @abstractmethod
+    async def save_deployment(self, deployment: DeploymentRecord) -> DeploymentRecord:
+        """Create or update a deployment record."""
+        pass
+
+    @abstractmethod
+    async def get_deployment(self, deployment_id: str) -> Optional[DeploymentRecord]:
+        """Retrieve a deployment record by ID."""
+        pass
+
+    @abstractmethod
+    async def list_project_deployments(
+        self, project_id: str, limit: int = 20
+    ) -> list[DeploymentRecord]:
+        """List deployment records for a project, newest first."""
+        pass
+
+    @abstractmethod
+    async def get_latest_deployment(
+        self, project_id: str, environment: EnvironmentType
+    ) -> Optional[DeploymentRecord]:
+        """Get the most recent deployment record for a project environment."""
+        pass
+
+    @abstractmethod
+    async def update_project_deployment_urls(
+        self,
+        project_id: str,
+        test_url: Optional[str] = None,
+        production_url: Optional[str] = None,
+        coolify_project_uuid: Optional[str] = None,
+    ) -> Project:
+        """Update deployment URLs and coolify references for a project."""
+        pass
+

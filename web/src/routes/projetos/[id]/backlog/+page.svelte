@@ -1,7 +1,13 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { api } from '$lib/api';
-  import { STATUS_META, STATUS_ORDER, type Task } from '$lib/types';
+  import {
+    STATUS_META,
+    STATUS_ORDER,
+    type Task,
+    type EnvironmentStatusResponse,
+    type DeploymentRecord
+  } from '$lib/types';
   import { pending } from '$lib/stores/pending.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import StatusTag from '$lib/components/StatusTag.svelte';
@@ -37,6 +43,13 @@
   let diffOpen = $state(false);
   let diffLoading = $state(false);
   let diffData = $state<{ task_id: string; branch: string; base_branch: string; diff: string; gitea_url: string | null } | null>(null);
+
+  // Deploys (Coolify)
+  let envStatus = $state<EnvironmentStatusResponse | null>(null);
+  let deployingEnv = $state<'test' | 'production' | null>(null);
+  let deployingTaskId = $state<string | null>(null);
+  let deploymentModalOpen = $state(false);
+  let currentDeployment = $state<DeploymentRecord | null>(null);
 
   const justCreated = $derived(Number(page.url.searchParams.get('novas') ?? 0));
   const byId = $derived(new Map(tasks.map((t) => [t.id, t])));
@@ -136,9 +149,61 @@
     }
   }
 
+  async function loadEnvStatus() {
+    try {
+      envStatus = await api.getEnvironmentStatus(data.project.id);
+    } catch {
+      // Ignora erro para não bloquear interface
+    }
+  }
+
+  async function deployTest(taskId?: string) {
+    deployingEnv = 'test';
+    if (taskId) deployingTaskId = taskId;
+    try {
+      const record = await api.triggerDeploy(
+        data.project.id,
+        'test',
+        taskId,
+        activeSession?.id
+      );
+      currentDeployment = record;
+      deploymentModalOpen = true;
+      await loadEnvStatus();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Falha ao disparar deploy no ambiente de teste.');
+    } finally {
+      deployingEnv = null;
+      deployingTaskId = null;
+    }
+  }
+
+  async function deployProduction() {
+    if (!confirm('Deseja iniciar o provisionamento e deploy para o ambiente de PRODUÇÃO no Coolify?')) {
+      return;
+    }
+    deployingEnv = 'production';
+    try {
+      const record = await api.triggerDeploy(
+        data.project.id,
+        'production',
+        undefined,
+        activeSession?.id
+      );
+      currentDeployment = record;
+      deploymentModalOpen = true;
+      await loadEnvStatus();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Falha ao disparar deploy no ambiente de produção.');
+    } finally {
+      deployingEnv = null;
+    }
+  }
+
   $effect(() => {
     if (activeSession?.id || !sessionStore.loading) {
       load();
+      loadEnvStatus();
     }
   });
 
@@ -392,7 +457,40 @@
       <div class="runner-controls">
         <button
           type="button"
-          class="btn {isQueueRunning ? 'btn-line active-pulse' : 'btn-solid'} btn-sm"
+          class="btn btn-line btn-sm"
+          onclick={() => {
+            const target = ordered.find((t) => t.status !== 'COMPLETED') ?? ordered[ordered.length - 1];
+            deployTest(target?.id);
+          }}
+          disabled={deployingEnv === 'test' || isQueueRunning}
+          title="Provisionar / atualizar o ambiente de teste no Coolify com a branch da feature"
+        >
+          {#if deployingEnv === 'test'}
+            <span class="spinner-inline" aria-hidden="true"></span> Testando…
+          {:else}
+            <Icon name="play" size={11} /> Testar
+          {/if}
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-solid btn-sm"
+          onclick={deployProduction}
+          disabled={deployingEnv === 'production' || isQueueRunning || (tasks.length > 0 && completedCount < tasks.length)}
+          title={completedCount < tasks.length ? 'Conclua as tarefas do backlog para liberar o deploy em produção' : 'Disparar provisionamento e deploy em produção no Coolify'}
+        >
+          {#if deployingEnv === 'production'}
+            <span class="spinner-inline" aria-hidden="true"></span> Publicando…
+          {:else}
+            <Icon name="upload" size={11} /> Deploy
+          {/if}
+        </button>
+
+        <span class="ctrl-sep" aria-hidden="true">|</span>
+
+        <button
+          type="button"
+          class="btn {isQueueRunning ? 'btn-line active-pulse' : 'btn-line'} btn-sm"
           onclick={toggleRunAll}
           disabled={tasks.length === 0 || (completedCount === tasks.length && !isQueueRunning)}
           title={isQueueRunning ? 'Pausar execução da fila' : 'Executar todas as tarefas em ordem sequencial (uma por vez)'}
@@ -404,6 +502,63 @@
           {/if}
         </button>
       </div>
+    </div>
+
+    <!-- Barra de Ambientes Coolify -->
+    <div class="env-bar spread">
+      <div class="env-group">
+        <span class="label mono">Ambientes:</span>
+
+        <div class="env-item">
+          <span class="env-name mono">Teste:</span>
+          {#if envStatus?.test?.url}
+            <a
+              href={envStatus.test.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="env-url mono"
+              title="Abrir ambiente de teste provisionado no Coolify"
+            >
+              <span class="dot {envStatus.test.status === 'HEALTHY' ? 'dot-green' : 'dot-amber'}" aria-hidden="true"></span>
+              {envStatus.test.url}
+              <Icon name="external" size={9} />
+            </a>
+          {:else}
+            <span class="env-url mono dim">Não provisionado</span>
+          {/if}
+        </div>
+
+        <span class="sep" aria-hidden="true">·</span>
+
+        <div class="env-item">
+          <span class="env-name mono">Produção:</span>
+          {#if envStatus?.production?.url}
+            <a
+              href={envStatus.production.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="env-url mono"
+              title="Abrir ambiente de produção provisionado no Coolify"
+            >
+              <span class="dot {envStatus.production.status === 'HEALTHY' ? 'dot-green' : 'dot-amber'}" aria-hidden="true"></span>
+              {envStatus.production.url}
+              <Icon name="external" size={9} />
+            </a>
+          {:else}
+            <span class="env-url mono dim">Não provisionada</span>
+          {/if}
+        </div>
+      </div>
+
+      {#if currentDeployment}
+        <button
+          type="button"
+          class="btn btn-ghost btn-xs mono"
+          onclick={() => (deploymentModalOpen = true)}
+        >
+          Ver status do deploy
+        </button>
+      {/if}
     </div>
 
     {#if queueMessage}
@@ -521,6 +676,7 @@
                  abriu a página recarrega quando o stream encerra. -->
             <TaskActivity
               taskId={task.id}
+              starting={dispatching === task.id}
               onclosed={() => {
                 if (dispatching !== task.id) load();
               }}
@@ -553,9 +709,24 @@
 
         <div class="side">
           {#if isCompleted}
-            <span class="completed-tag label mono">
-              <Icon name="check" size={11} /> Concluída
-            </span>
+            <div class="completed-actions">
+              <span class="completed-tag label mono">
+                <Icon name="check" size={11} /> Concluída
+              </span>
+              <button
+                type="button"
+                class="btn btn-line btn-xs test-task-btn"
+                onclick={() => deployTest(task.id)}
+                disabled={deployingTaskId === task.id || isQueueRunning}
+                title="Provisionar ambiente de teste no Coolify com a branch desta tarefa"
+              >
+                {#if deployingTaskId === task.id}
+                  <span class="spinner-inline" aria-hidden="true"></span> Testando…
+                {:else}
+                  <Icon name="play" size={10} /> Testar
+                {/if}
+              </button>
+            </div>
           {:else if task.status === 'IN_REVIEW' || merging === task.id}
             <span class="completed-tag label mono">
               <span class="spinner-inline" aria-hidden="true"></span> Incorporando…
@@ -606,6 +777,56 @@
     <div class="spread modal-foot">
       <div></div>
       <button type="button" class="btn btn-line btn-sm" onclick={() => (diffOpen = false)}>
+        Fechar
+      </button>
+    </div>
+  {/snippet}
+</Modal>
+
+<!-- Modal de Deploy Coolify -->
+<Modal bind:open={deploymentModalOpen} title="Provisionamento e Deploy no Coolify">
+  {#snippet body()}
+    {#if currentDeployment}
+      <div class="deploy-modal-content">
+        <div class="spread mono faint deploy-meta">
+          <span>Ambiente: <strong class="upper">{currentDeployment.environment}</strong></span>
+          <span>Branch: <strong>{currentDeployment.branch}</strong></span>
+        </div>
+
+        <div class="deploy-status-box mono">
+          <div class="spread">
+            <span>Status: <strong>{currentDeployment.status}</strong></span>
+            {#if currentDeployment.url}
+              <a href={currentDeployment.url} target="_blank" rel="noopener noreferrer" class="link-ext bold">
+                Abrir Aplicação <Icon name="external" size={10} />
+              </a>
+            {/if}
+          </div>
+          {#if currentDeployment.url}
+            <div class="deploy-url-line">
+              <span class="muted">URL:</span>
+              <a href={currentDeployment.url} target="_blank" rel="noopener noreferrer" class="app-url">
+                {currentDeployment.url}
+              </a>
+            </div>
+          {/if}
+        </div>
+
+        {#if currentDeployment.logs}
+          <div class="deploy-logs">
+            <span class="label mono">Logs do Deploy</span>
+            <pre class="log-pre mono">{currentDeployment.logs}</pre>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <p class="muted">Nenhum deploy selecionado.</p>
+    {/if}
+  {/snippet}
+  {#snippet footer()}
+    <div class="spread modal-foot">
+      <div></div>
+      <button type="button" class="btn btn-line btn-sm" onclick={() => (deploymentModalOpen = false)}>
         Fechar
       </button>
     </div>
@@ -711,9 +932,145 @@
   .runner-controls {
     display: flex;
     align-items: center;
-    gap: var(--s4);
+    gap: var(--s3);
     padding-bottom: var(--s2);
     flex-wrap: wrap;
+  }
+
+  .ctrl-sep {
+    color: var(--rule-ink);
+    margin: 0 var(--s1);
+  }
+
+  /* Barra de Ambientes */
+  .env-bar {
+    align-items: center;
+    margin-top: var(--s3);
+    padding: var(--s2) var(--s3);
+    background: var(--paper-sunk);
+    border: 1px solid var(--rule-2);
+    font-size: var(--t-small);
+    flex-wrap: wrap;
+    gap: var(--s3);
+  }
+
+  .env-group {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    flex-wrap: wrap;
+  }
+
+  .env-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .env-name {
+    color: var(--ink-3);
+  }
+
+  .env-url {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .env-url.dim {
+    color: var(--ink-4);
+    text-decoration: none;
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .dot-green {
+    background: #10b981;
+  }
+
+  .dot-amber {
+    background: #f59e0b;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--ink-2);
+    text-decoration: underline;
+  }
+
+  .completed-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--s2);
+  }
+
+  .test-task-btn {
+    font-size: var(--t-micro);
+  }
+
+  /* Modal de Deploy */
+  .deploy-modal-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+  }
+
+  .deploy-meta {
+    font-size: var(--t-small);
+  }
+
+  .upper {
+    text-transform: uppercase;
+  }
+
+  .deploy-status-box {
+    padding: var(--s3) var(--s4);
+    background: var(--paper-sunk);
+    border: 1px solid var(--rule-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+
+  .deploy-url-line {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    word-break: break-all;
+  }
+
+  .app-url {
+    color: var(--ink);
+    text-decoration: underline;
+    font-weight: 500;
+  }
+
+  .deploy-logs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+
+  .log-pre {
+    max-height: 20rem;
+    overflow: auto;
+    font-size: var(--t-micro);
+    background: var(--paper-sunk);
+    padding: var(--s3);
+    border: 1px solid var(--rule);
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 
   .active-pulse {

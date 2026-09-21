@@ -15,7 +15,10 @@ import type {
   UsageEntry,
   UsageSettings,
   UsageSummary,
-  User
+  User,
+  DeploymentRecord,
+  EnvironmentType,
+  EnvironmentStatusResponse
 } from './types';
 
 const TOKEN_KEY = 'pk_token';
@@ -282,7 +285,28 @@ export const api = {
     request<UsageSettings>('/usage/settings', { method: 'PUT', ...json(body) }),
 
   /** Consulta os provedores na hora; pode demorar alguns segundos. */
-  getProviderBalances: () => request<ProviderBalance[]>('/usage/balances')
+  getProviderBalances: () => request<ProviderBalance[]>('/usage/balances'),
+
+  /* ---- deploys (Coolify: teste e produção) ---- */
+  triggerDeploy: (
+    projectId: string,
+    environment: EnvironmentType,
+    taskId?: string,
+    sessionId?: string
+  ) =>
+    request<DeploymentRecord>(`/projects/${projectId}/deploy`, {
+      method: 'POST',
+      ...json({ environment, task_id: taskId, session_id: sessionId })
+    }),
+
+  listDeployments: (projectId: string, limit = 20) =>
+    request<DeploymentRecord[]>(`/projects/${projectId}/deployments?limit=${limit}`),
+
+  getEnvironmentStatus: (projectId: string) =>
+    request<EnvironmentStatusResponse>(`/projects/${projectId}/deployments/status`),
+
+  getDeployment: (deploymentId: string) =>
+    request<DeploymentRecord>(`/deployments/${deploymentId}`)
 };
 
 /**

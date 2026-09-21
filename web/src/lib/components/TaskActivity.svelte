@@ -13,9 +13,16 @@
 
   let {
     taskId,
+    starting = false,
     onclosed
   }: {
     taskId: string;
+    /**
+     * Esta aba acabou de disparar a tarefa. O stream pode chegar ao servidor
+     * antes do POST de dispatch registrar a execução; nesse caso "inativo"
+     * quer dizer "ainda não começou", e o painel reconecta em vez de avisar.
+     */
+    starting?: boolean;
     /** Chamado quando o servidor encerra o stream de uma execução que estava ativa. */
     onclosed?: () => void;
   } = $props();
@@ -25,6 +32,9 @@
   // Acima disto sem nenhum evento, o painel avisa que pode estar travado.
   const SILENCE_WARN_S = 120;
   const MAX_LINES = 300;
+  // Enquanto o dispatch desta aba não registra a execução no servidor.
+  const RETRY_MS = 1000;
+  const RETRY_MAX = 15;
 
   let active = $state<boolean | null>(null);
   let startedAt = $state<number | null>(null);
@@ -83,19 +93,41 @@
     partial = '';
     active = null;
     let wasActive = false;
-    const close = openTaskStream(id, {
-      onState: (s) => {
-        active = s.active;
-        wasActive = s.active;
-        startedAt = s.started_at ? Date.parse(s.started_at) : null;
-        lastAt = s.last_event_at ? Date.parse(s.last_event_at) : startedAt;
-      },
-      onEvent,
-      onClose: () => {
-        if (wasActive) onclosed?.();
-      }
-    });
-    return close;
+    let tries = 0;
+    let retrying = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let close = () => {};
+
+    function connect() {
+      close = openTaskStream(id, {
+        onState: (s) => {
+          if (!s.active && starting && tries < RETRY_MAX) {
+            tries += 1;
+            retrying = true;
+            return;
+          }
+          active = s.active;
+          wasActive = s.active;
+          startedAt = s.started_at ? Date.parse(s.started_at) : null;
+          lastAt = s.last_event_at ? Date.parse(s.last_event_at) : startedAt;
+        },
+        onEvent,
+        onClose: () => {
+          if (retrying) {
+            retrying = false;
+            timer = setTimeout(connect, RETRY_MS);
+            return;
+          }
+          if (wasActive) onclosed?.();
+        }
+      });
+    }
+
+    connect();
+    return () => {
+      clearTimeout(timer);
+      close();
+    };
   });
 
   $effect(() => {

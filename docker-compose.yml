@@ -75,6 +75,13 @@ services:
       PAINKILLER_GITEA_PASSWORD: ${PAINKILLER_GITEA_PASSWORD:-painkiller_secret_2026}
       PAINKILLER_GITEA_EMAIL: ${PAINKILLER_GITEA_EMAIL:-bot@painkiller.local}
 
+      # Integracao com Coolify on-premise
+      COOLIFY_API_URL: ${COOLIFY_API_URL:-http://coolify:8000}
+      COOLIFY_API_TOKEN: ${COOLIFY_API_TOKEN:-}
+      COOLIFY_SERVER_UUID: ${COOLIFY_SERVER_UUID:-}
+      COOLIFY_WILDCARD_DOMAIN: ${COOLIFY_WILDCARD_DOMAIN:-127.0.0.1.nip.io}
+      COOLIFY_GITEA_URL: ${COOLIFY_GITEA_URL:-http://gitea:3000}
+
     volumes:
       # Fala com o daemon do host para criar os contentores do agente.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -145,7 +152,54 @@ services:
       timeout: 5s
       retries: 10
 
+  # Coolify On-Premise — Orquestrador de Deploys para Teste e Producao
+  coolify:
+    image: ghcr.io/coollabsio/coolify:latest
+    container_name: painkiller-coolify
+    restart: unless-stopped
+    depends_on:
+      - coolify-db
+      - coolify-redis
+    ports:
+      - "${COOLIFY_PORT:-8008}:8000"
+    environment:
+      - APP_ENV=production
+      - APP_ID=painkiller-coolify
+      - APP_KEY=${COOLIFY_APP_KEY:-base64:IaLYJE2m2rTYH5Xu7qdL1ZYPiOloKiWPgnbNx0CetHU=}
+      - APP_URL=${COOLIFY_APP_URL:-http://localhost:8008}
+      - DB_DATABASE=coolify
+      - DB_USERNAME=coolify
+      - DB_PASSWORD=coolify_secret_2026
+      - DB_HOST=coolify-db
+      - DB_PORT=5432
+      - REDIS_HOST=coolify-redis
+      - REDIS_PORT=6379
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - coolify-data:/data/coolify
+
+  coolify-db:
+    image: postgres:16-alpine
+    container_name: painkiller-coolify-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=coolify
+      - POSTGRES_USER=coolify
+      - POSTGRES_PASSWORD=coolify_secret_2026
+    volumes:
+      - coolify-db-data:/var/lib/postgresql/data
+
+  coolify-redis:
+    image: redis:alpine
+    container_name: painkiller-coolify-redis
+    restart: unless-stopped
+    volumes:
+      - coolify-redis-data:/data
+
 volumes:
   painkiller-db:
   gitea-data:
+  coolify-data:
+  coolify-db-data:
+  coolify-redis-data:
 
