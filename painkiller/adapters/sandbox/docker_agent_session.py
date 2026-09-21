@@ -1,4 +1,4 @@
-"""Docker adapter for interactive agent sessions (Claude Code + superpowers)."""
+"""Docker adapter for interactive agent sessions (Antigravity CLI + Superpowers)."""
 
 import asyncio
 import json
@@ -16,18 +16,17 @@ from painkiller.adapters.sandbox.paths import daemon_path
 STDIN_RELATIVE = ".painkiller/agent-stdin.jsonl"
 EOF_SENTINEL = "__painkiller_eof__"
 
-#: Variáveis repassadas ao contêiner. O Claude Code fala a Messages API da
-#: Anthropic, então o backend precisa servir /v1/messages: ou a Anthropic
-#: direto, ou um NIM auto-hospedado, ou o proxy tradutor do LiteLLM apontando
-#: para o NVIDIA Build (ver docker/litellm-proxy.yaml).
+#: Variáveis repassadas ao contêiner. O Antigravity CLI autentica via GEMINI_API_KEY
+#: (ou GOOGLE_API_KEY). Variáveis legadas da Anthropic são mantidas para retrocompatibilidade.
 FORWARDED_ENV = [
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "PAINKILLER_AGENT_MODEL",
+    "PAINKILLER_AGENT_EFFORT",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
-    # Um backend próprio não atende pelos nomes de modelo da Anthropic. Sem
-    # remapear os aliases embutidos, o Claude Code continua pedindo "haiku"
-    # para tarefas de fundo e toma 404 — é a ressalva da documentação da NVIDIA.
     "ANTHROPIC_CUSTOM_MODEL_OPTION",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -42,7 +41,7 @@ FORWARDED_ENV = [
 
 
 class DockerAgentSession(AgentSessionPort):
-    """Runs Claude Code inside a container, kept alive for a back-and-forth interview."""
+    """Runs Antigravity CLI inside a container, kept alive for a back-and-forth interview."""
 
     def __init__(
         self,
@@ -50,14 +49,13 @@ class DockerAgentSession(AgentSessionPort):
         client: Optional[Any] = None,
         plugin_dir: str = "/opt/superpowers",
         model: Optional[str] = None,
+        effort: Optional[str] = None,
         network: Optional[str] = None,
     ):
         self.image_name = image_name
         self.plugin_dir = plugin_dir
-        self.model = model or os.environ.get("PAINKILLER_AGENT_MODEL") or None
-        # O contêiner do agente é criado como IRMÃO pelo socket do host, então
-        # não entra na rede do compose por conta própria. Sem isto ele não
-        # resolve o nome do proxy tradutor. Vazio = rede padrão (bridge).
+        self.model = model or os.environ.get("PAINKILLER_AGENT_MODEL") or "gemini-3.8-flash"
+        self.effort = effort or os.environ.get("PAINKILLER_AGENT_EFFORT") or "medium"
         self.network = network or os.environ.get("PAINKILLER_AGENT_NETWORK") or None
         self._client = client
         self._containers: dict[str, Any] = {}
@@ -85,9 +83,9 @@ class DockerAgentSession(AgentSessionPort):
         env_vars.update(env or {})
         self._require_credentials(env_vars)
 
-        # Pasta para persistir configurações e memória do Claude Code
-        claude_home = os.path.join(repo_path, ".painkiller", "claude_home")
-        os.makedirs(claude_home, exist_ok=True)
+        # Pasta para persistir configurações e memória do Antigravity CLI
+        gemini_home = os.path.join(repo_path, ".painkiller", "gemini_home")
+        os.makedirs(gemini_home, exist_ok=True)
 
         # A fila é criada no lado da API, pelo caminho local; o contêiner a
         # enxerga através do bind mount, que o daemon resolve por outro caminho.
@@ -99,30 +97,25 @@ class DockerAgentSession(AgentSessionPort):
         self._stdin_files[session_id] = stdin_path
 
         agent_args = [
-            "--print",
-            "--verbose",
+            "--model", self.model,
+            "--effort", self.effort,
+            "--dangerously-skip-permissions",
             "--input-format", "stream-json",
             "--output-format", "stream-json",
-            # Emite os pedaços conforme o modelo produz, para o analista ver o
-            # texto nascendo em vez de encarar um cronômetro por minutos.
-            "--include-partial-messages",
-            "--plugin-dir", self.plugin_dir,
-            "--permission-mode", "bypassPermissions",
-            "--add-dir", "/workspace",
+            '--print=""',
         ]
-        if self.model:
-            agent_args.extend(["--model", self.model])
 
         if resume:
             if claude_session_id:
-                agent_args.extend(["--resume", claude_session_id])
+                agent_args.extend(["--conversation", claude_session_id])
             else:
                 agent_args.append("--continue")
         elif claude_session_id:
-            agent_args.extend(["--session-id", claude_session_id])
+            agent_args.extend(["--conversation", claude_session_id])
 
         command = [
             "painkiller", "agent-run",
+            "--agent-bin", "agy",
             "--stdin-file", "/workspace/" + STDIN_RELATIVE,
             "--idle-timeout", str(timeout_seconds),
             "--", *agent_args,
@@ -132,7 +125,7 @@ class DockerAgentSession(AgentSessionPort):
         loop = asyncio.get_running_loop()
         volumes = {
             daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
-            daemon_path(claude_home): {"bind": "/home/node/.claude", "mode": "rw"},
+            daemon_path(gemini_home): {"bind": "/home/node/.gemini", "mode": "rw"},
         }
         container = await loop.run_in_executor(
             None,
@@ -144,8 +137,6 @@ class DockerAgentSession(AgentSessionPort):
                 environment=env_vars,
                 working_dir="/workspace",
                 network=self.network,
-                # Permite que ANTHROPIC_BASE_URL aponte para um proxy publicado
-                # numa porta do host quando o agente não está na rede do compose.
                 extra_hosts={"host.docker.internal": "host-gateway"},
                 detach=True,
                 remove=False,
@@ -161,21 +152,21 @@ class DockerAgentSession(AgentSessionPort):
     @staticmethod
     def _require_credentials(env_vars: dict[str, str]) -> None:
         """Fail early and in pt-BR rather than letting the container die silently."""
-        has_key = any(env_vars.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
+        has_gemini = any(env_vars.get(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY"))
+        has_anthropic = any(env_vars.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
         has_cloud = any(env_vars.get(k) for k in ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"))
-        if has_key or has_cloud:
+        if has_gemini or has_anthropic or has_cloud:
             return
         raise RuntimeError(
-            "ANTHROPIC_API_KEY não está definida. A análise inicial roda o Claude Code, que fala a "
-            "Messages API da Anthropic (/v1/messages) — a NVIDIA_API_KEY sozinha não serve, porque o "
-            "NVIDIA Build só expõe o protocolo OpenAI. Escolha um destes e reinicie o servidor: "
-            "(a) ANTHROPIC_API_KEY da Anthropic; (b) suba o proxy tradutor (serviço llm-proxy do "
-            "docker-compose, ver docker/litellm-proxy.yaml) e aponte ANTHROPIC_BASE_URL para ele; "
-            "(c) um NIM auto-hospedado, que já serve /v1/messages nativamente."
+            "GEMINI_API_KEY não está definida. O agente de análise utiliza o Antigravity CLI com o "
+            "modelo Gemini 3.8 Flash. Defina GEMINI_API_KEY no arquivo .env antes de iniciar a análise."
         )
 
     async def send(self, session_id: str, text: str) -> None:
-        await self._append(session_id, {"type": "user", "message": {"role": "user", "content": text}})
+        await self._append(
+            session_id,
+            {"event": "user", "type": "user", "message": {"role": "user", "content": text}}
+        )
 
     async def close_input(self, session_id: str) -> None:
         await self._append(session_id, {"type": EOF_SENTINEL})
@@ -296,15 +287,45 @@ class DockerAgentSession(AgentSessionPort):
 
 
 def parse_agent_line(line: str) -> Optional[AgentEvent]:
-    """Map one stream-json line from Claude Code onto a domain event."""
+    """Map one stream-json line from Antigravity CLI or Claude Code onto a domain event."""
     if not line:
         return None
     try:
         data = json.loads(line)
     except ValueError:
-        # Ruído de stderr (avisos do node, progresso de instalação) não é fatal.
+        # Ruído de stderr não é fatal.
         return AgentEvent(type=AgentEventType.ERROR, text=line, raw={"line": line})
 
+    # Eventos nativos do Antigravity CLI (`agy`)
+    if "event" in data:
+        evt = data.get("event")
+        if evt == "init":
+            init_data = data.get("init") or {}
+            model = init_data.get("model", "gemini-3.8-flash")
+            return AgentEvent(type=AgentEventType.SYSTEM, text=f"Iniciando agente com {model}", raw=data)
+        if evt == "step_update":
+            step = data.get("step_update") or {}
+            step_type = step.get("step_type")
+            if step_type == "agent_response":
+                if "text_delta" in step:
+                    return AgentEvent(type=AgentEventType.ASSISTANT_DELTA, text=step["text_delta"], raw=data)
+                if "thinking_delta" in step:
+                    return AgentEvent(type=AgentEventType.THINKING_DELTA, text=step["thinking_delta"], raw=data)
+                if step.get("state") == "DONE" and step.get("response"):
+                    return AgentEvent(type=AgentEventType.ASSISTANT, text=step["response"], raw=data)
+            elif step_type == "tool":
+                tool_name = step.get("tool_name") or (step.get("tool_info") or {}).get("name") or ""
+                state = step.get("state")
+                if state in ("ACTIVE", "RUNNING"):
+                    return AgentEvent(type=AgentEventType.TOOL_USE, text=tool_name, raw=data)
+                return AgentEvent(type=AgentEventType.TOOL_RESULT, text=tool_name, raw=data)
+            return None
+        if evt == "result":
+            res = data.get("result") or {}
+            text = res.get("response") or ""
+            return AgentEvent(type=AgentEventType.RESULT, text=text, raw=data)
+
+    # Eventos legados do Claude Code (retrocompatibilidade)
     kind = data.get("type")
     if kind == "stream_event":
         return _from_stream_event(data)
@@ -320,11 +341,7 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
 
 
 def _from_stream_event(data: dict) -> Optional[AgentEvent]:
-    """Map an incremental chunk. Everything but visible text is ignored here.
-
-    The canonical `assistant` message still arrives once the block closes, so a
-    dropped delta costs nothing — the UI replaces the buffer with that text.
-    """
+    """Map an incremental chunk. Everything but visible text is ignored here."""
     event = data.get("event") or {}
     if event.get("type") != "content_block_delta":
         return None
@@ -336,7 +353,6 @@ def _from_stream_event(data: dict) -> Optional[AgentEvent]:
     if kind == "thinking_delta":
         text = delta.get("thinking") or ""
         return AgentEvent(type=AgentEventType.THINKING_DELTA, text=text) if text else None
-    # signature_delta e input_json_delta não têm nada legível para mostrar.
     return None
 
 
