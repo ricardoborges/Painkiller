@@ -31,6 +31,7 @@ from painkiller.api.routes.interrogation import router as interrogation_router
 from painkiller.api.routes.analysis import router as analysis_router
 from painkiller.api.routes.usage import project_router as project_usage_router
 from painkiller.api.routes.usage import router as usage_router
+from painkiller.api.routes.sessions import router as sessions_router
 
 
 def create_app(
@@ -92,6 +93,7 @@ def create_app(
     app.include_router(tasks_router)
     app.include_router(interrogation_router)
     app.include_router(analysis_router)
+    app.include_router(sessions_router)
     app.include_router(usage_router)
     app.include_router(project_usage_router)
 

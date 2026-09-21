@@ -36,6 +36,7 @@ class CreateTaskRequest(BaseModel):
     target_files: Optional[list[str]] = None
     acceptance_criteria: Optional[list[str]] = None
     dependencies: Optional[list[str]] = None
+    session_id: Optional[str] = None
 
 
 @router.get("")
@@ -197,14 +198,15 @@ async def create_task(project_id: str, req: CreateTaskRequest, request: Request)
         target_files=req.target_files,
         acceptance_criteria=req.acceptance_criteria,
         dependencies=req.dependencies,
+        session_id=req.session_id,
     )
     return task
 
 
 @router.get("/{project_id}/tasks")
-async def list_tasks(project_id: str, request: Request):
+async def list_tasks(project_id: str, request: Request, session_id: Optional[str] = None):
     tracker = request.app.state.tracker
-    tasks = await tracker.list_tasks(project_id=project_id)
+    tasks = await tracker.list_tasks(project_id=project_id, session_id=session_id)
     return tasks
 
 
