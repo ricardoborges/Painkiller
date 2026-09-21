@@ -16,6 +16,8 @@ from painkiller.core.domain.models import (
     TaskStatus,
     UsageRecord,
     UsageSource,
+    IterationSession,
+    SessionStatus,
 )
 from painkiller.core.ports.agent_session import AgentSessionPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
@@ -98,7 +100,12 @@ class AnalysisOrchestrator:
 
     # ---- ciclo de vida -------------------------------------------------
 
-    async def start(self, project: Project, force_new: bool = False) -> AnalysisSession:
+    async def start(
+        self,
+        project: Project,
+        force_new: bool = False,
+        iteration_session_id: Optional[str] = None,
+    ) -> AnalysisSession:
         if not force_new:
             active = await self.get_active(project.id)
             if isinstance(active, AnalysisSession):
@@ -122,7 +129,44 @@ class AnalysisOrchestrator:
         except Exception:
             pass
 
-        prompt = build_analysis_prompt(project)
+        session_number = 1
+        previous_sessions: list[IterationSession] = []
+        previous_completed_tasks: list[Task] = []
+        if iteration_session_id:
+            try:
+                iter_sess = await self.tracker.get_session(iteration_session_id)
+                if iter_sess:
+                    num = getattr(iter_sess, "number", 1)
+                    session_number = num if isinstance(num, int) else 1
+                    iter_sess.analysis_session_id = session.id
+                    await self.tracker.update_session(iter_sess)
+                    all_sessions = await self.tracker.list_sessions(project.id)
+                    if isinstance(all_sessions, (list, tuple)):
+                        previous_sessions = [s for s in all_sessions if getattr(s, "number", 0) < session_number]
+                    all_tasks = await self.tracker.list_tasks(project.id, status=TaskStatus.COMPLETED)
+                    if isinstance(all_tasks, (list, tuple)):
+                        previous_completed_tasks = list(all_tasks)
+            except Exception:
+                pass
+        else:
+            try:
+                iter_sess = await self.tracker.ensure_initial_session(project.id)
+                if iter_sess:
+                    iteration_session_id = getattr(iter_sess, "id", None)
+                    num = getattr(iter_sess, "number", 1)
+                    session_number = num if isinstance(num, int) else 1
+                    if hasattr(iter_sess, "analysis_session_id"):
+                        iter_sess.analysis_session_id = session.id
+                        await self.tracker.update_session(iter_sess)
+            except Exception:
+                pass
+
+        prompt = build_analysis_prompt(
+            project,
+            session_number=session_number,
+            previous_sessions=previous_sessions,
+            previous_completed_tasks=previous_completed_tasks,
+        )
         try:
             session.container_name = await self.agent.start(
                 session_id=session_id,
@@ -431,7 +475,11 @@ class AnalysisOrchestrator:
 
     # ---- colheita ------------------------------------------------------
 
-    async def commit_backlog(self, session_id: str) -> list[Task]:
+    async def commit_backlog(
+        self,
+        session_id: str,
+        iteration_session_id: Optional[str] = None,
+    ) -> list[Task]:
         """Turn the backlog.json the agent wrote into real tasks."""
         run = self._require(session_id)
         path = os.path.join(run.repo_path, ".painkiller", "backlog.json")
@@ -444,6 +492,20 @@ class AnalysisOrchestrator:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
+        target_session_id = iteration_session_id
+        if not target_session_id:
+            try:
+                all_sessions = await self.tracker.list_sessions(run.session.project_id)
+                if isinstance(all_sessions, (list, tuple)):
+                    for s in all_sessions:
+                        if getattr(s, "analysis_session_id", None) == session_id:
+                            target_session_id = s.id
+                            break
+                    if not target_session_id and all_sessions:
+                        target_session_id = all_sessions[-1].id
+            except Exception:
+                pass
+
         drafts = data.get("tasks") or []
         created: list[Task] = []
         title_to_id: dict[str, str] = {}
@@ -452,14 +514,21 @@ class AnalysisOrchestrator:
             # Dependências vêm por título, porque o agente não conhece os IDs
             # que o tracker só atribui na criação.
             resolved = [title_to_id[d] for d in draft.get("dependencies", []) if d in title_to_id]
-            task = await self.tracker.create_task(
-                project_id=run.session.project_id,
-                title=draft.get("title", "Sem título"),
-                description=draft.get("description", ""),
-                target_files=draft.get("target_files", []),
-                acceptance_criteria=draft.get("acceptance_criteria", []),
-                dependencies=resolved,
-            )
+            task_kwargs = {
+                "project_id": run.session.project_id,
+                "title": draft.get("title", "Sem título"),
+                "description": draft.get("description", ""),
+                "target_files": draft.get("target_files", []),
+                "acceptance_criteria": draft.get("acceptance_criteria", []),
+                "dependencies": resolved,
+            }
+            if target_session_id:
+                task_kwargs["session_id"] = target_session_id
+            try:
+                task = await self.tracker.create_task(**task_kwargs)
+            except TypeError:
+                task_kwargs.pop("session_id", None)
+                task = await self.tracker.create_task(**task_kwargs)
             title_to_id[task.title] = task.id
             created.append(task)
 
@@ -472,13 +541,29 @@ class AnalysisOrchestrator:
             await self.tracker.save_analysis_session(run.session)
         except Exception:
             pass
+
+        if target_session_id:
+            try:
+                iter_sess = await self.tracker.get_session(target_session_id)
+                if iter_sess:
+                    iter_sess.spec_path = data.get("spec_path")
+                    iter_sess.status = SessionStatus.BACKLOG
+                    await self.tracker.update_session(iter_sess)
+            except Exception:
+                pass
+
         return created
 
 
-def build_analysis_prompt(project: Project) -> str:
+def build_analysis_prompt(
+    project: Project,
+    session_number: int = 1,
+    previous_sessions: Optional[list[IterationSession]] = None,
+    previous_completed_tasks: Optional[list[Task]] = None,
+) -> str:
     """Compose the pt-BR kickoff prompt handed to the containerized agent."""
     parts = [
-        "Você é o agente de análise inicial do Painkiller.",
+        "Você é o agente de análise do Painkiller.",
         "",
         "Conduza a elicitação de requisitos com o analista usando a skill "
         "superpowers:brainstorming. Regras desta sessão:",
@@ -520,6 +605,25 @@ def build_analysis_prompt(project: Project) -> str:
         parts.append("=== DOCUMENTOS DE CONTEXTO ANEXADOS ===")
         for att_path in project.attachments:
             parts.append(extract_attachment_text(att_path))
+
+    if isinstance(session_number, int) and session_number > 1:
+        parts.append("")
+        parts.append(f"=== CICLO ÁGIL ITERATIVO: SESSÃO {session_number} ===")
+        parts.append(
+            f"Esta é a iteração/sessão de número {session_number} deste projeto. "
+            "O software já possui entregas anteriores consolidadas no repositório. "
+            "Seu objetivo nesta sessão é elicitar os novos requisitos, melhorias ou "
+            "próximas funcionalidades a serem construídas neste ciclo."
+        )
+        if previous_sessions:
+            parts.append("\nHistórico de sessões anteriores:")
+            for ps in previous_sessions:
+                spec_note = f" (spec: {ps.spec_path})" if ps.spec_path else ""
+                parts.append(f"- {ps.title}: status {ps.status.value}{spec_note}")
+        if previous_completed_tasks:
+            parts.append("\nTarefas concluídas com sucesso em ciclos anteriores:")
+            for pt in previous_completed_tasks:
+                parts.append(f"- [{pt.id}] {pt.title}: {pt.description}")
 
     parts.append("")
     parts.append("Comece cumprimentando o analista e fazendo a primeira pergunta.")
