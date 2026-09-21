@@ -51,6 +51,7 @@ class Task(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
     status: TaskStatus = TaskStatus.BACKLOG
     assigned_branch: Optional[str] = None
+    session_id: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -147,6 +148,27 @@ class AnalysisSession(BaseModel):
     claude_session_id: Optional[str] = None
     exit_code: Optional[int] = None
     error: Optional[str] = None
+    spec_path: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SessionStatus(str, Enum):
+    """Lifecycle of an iterative agile session."""
+    PLANNING = "PLANNING"     # Em fase de análise / elicitação
+    BACKLOG = "BACKLOG"       # Backlog gerado / em refinamento
+    IN_SPRINT = "IN_SPRINT"   # Tarefas em execução ativa (sprints)
+    COMPLETED = "COMPLETED"   # Sessão finalizada
+
+
+class IterationSession(BaseModel):
+    """An iterative development session grouping analysis, backlog and sprints."""
+    id: str
+    project_id: str
+    number: int
+    title: str
+    status: SessionStatus = SessionStatus.PLANNING
+    analysis_session_id: Optional[str] = None
     spec_path: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

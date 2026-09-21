@@ -9,6 +9,8 @@ from painkiller.core.domain.models import (
     ClarificationRequest,
     AnalysisSession,
     AgentEvent,
+    IterationSession,
+    SessionStatus,
 )
 
 
@@ -68,6 +70,7 @@ class IssueTrackerPort(ABC):
         target_files: Optional[Sequence[str]] = None,
         acceptance_criteria: Optional[Sequence[str]] = None,
         dependencies: Optional[Sequence[str]] = None,
+        session_id: Optional[str] = None,
     ) -> Task:
         """Create a new task."""
         pass
@@ -82,8 +85,9 @@ class IssueTrackerPort(ABC):
         self,
         project_id: str,
         status: Optional[TaskStatus] = None,
+        session_id: Optional[str] = None,
     ) -> list[Task]:
-        """List tasks for a project, optionally filtered by status."""
+        """List tasks for a project, optionally filtered by status or session."""
         pass
 
     @abstractmethod
@@ -143,4 +147,42 @@ class IssueTrackerPort(ABC):
     @abstractmethod
     async def list_analysis_events(self, session_id: str) -> list[AgentEvent]:
         """Retrieve chronological events recorded for a session."""
+        pass
+
+    @abstractmethod
+    async def ensure_initial_session(self, project_id: str) -> IterationSession:
+        """Ensure Session 1 exists for the project, creating it if needed."""
+        pass
+
+    @abstractmethod
+    async def create_session(
+        self,
+        project_id: str,
+        title: Optional[str] = None,
+    ) -> IterationSession:
+        """Create the next incremental agile iteration session for the project."""
+        pass
+
+    @abstractmethod
+    async def list_sessions(self, project_id: str) -> list[IterationSession]:
+        """List all iteration sessions for a project, ordered by number ascending."""
+        pass
+
+    @abstractmethod
+    async def get_session(self, session_id: str) -> Optional[IterationSession]:
+        """Retrieve an iteration session by ID."""
+        pass
+
+    @abstractmethod
+    async def update_session(self, session: IterationSession) -> IterationSession:
+        """Update an iteration session."""
+        pass
+
+    @abstractmethod
+    async def migrate_tasks_to_session(
+        self,
+        task_ids: Sequence[str],
+        target_session_id: str,
+    ) -> list[Task]:
+        """Move tasks to a target iteration session."""
         pass
