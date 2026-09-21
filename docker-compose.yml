@@ -33,8 +33,6 @@ services:
     container_name: painkiller-api
     restart: unless-stopped
     depends_on:
-      llm-proxy:
-        condition: service_healthy
       gitea:
         condition: service_started
 
@@ -59,8 +57,8 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       PAINKILLER_AGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-gemini-3.8-flash}
       PAINKILLER_AGENT_EFFORT: ${PAINKILLER_AGENT_EFFORT:-medium}
-      ANTHROPIC_BASE_URL: http://llm-proxy:4000
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-${PAINKILLER_PROXY_KEY:-sk-painkiller-local}}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
       # O contentor do agente nasce IRMAO, pelo socket do host, entao nao entra
       # na rede do compose sozinho.
@@ -88,33 +86,6 @@ services:
 
       - painkiller-db:/data
 
-  # Traduz /v1/messages (protocolo Anthropic, que o Claude Code fala) para
-  # /v1/chat/completions (protocolo OpenAI, o unico que o NVIDIA Build expoe).
-  # Desnecessario se voce usa a Anthropic direto ou um NIM auto-hospedado.
-  llm-proxy:
-    image: ghcr.io/berriai/litellm:main-latest
-    container_name: painkiller-llm-proxy
-    restart: unless-stopped
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
-
-    # Publicado porque o caminho "uvicorn no host" alcanca o proxy por
-    # host.docker.internal:4000 -- um bind em 127.0.0.1 nao serviria, ja que o
-    # host-gateway visto de dentro do contentor do agente nao e o loopback.
-    # Dentro do compose o acesso e pelo nome do servico e dispensa isto.
-    # Fica protegido pelo master_key (PAINKILLER_PROXY_KEY).
-    ports:
-      - "4000:4000"
-
-    environment:
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      PAINKILLER_PROXY_KEY: ${PAINKILLER_PROXY_KEY:-sk-painkiller-local}
-    volumes:
-      - ./docker/litellm-proxy.yaml:/app/config.yaml:ro
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:4000/health/liveliness')\""]
-      interval: 10s
-      timeout: 5s
-      retries: 12
 
   # Nao sao servicos que rodam: existem so para o compose construir as imagens
   # que a api instancia por nome. Ficam sob profile para que `up` nao os inicie.
