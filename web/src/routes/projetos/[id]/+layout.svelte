@@ -22,6 +22,21 @@
     { href: `${base}/artefatos`, label: 'Artefatos', exact: false }
   ]);
 
+  /* Quantas etapas a sessão ativa já cumpriu, pelo status dela:
+     PLANNING → nenhuma; BACKLOG → Análise; IN_SPRINT → +Backlog; COMPLETED → todas. */
+  const doneCount = $derived.by(() => {
+    switch (sessionStore.activeSession?.status) {
+      case 'BACKLOG':
+        return 1;
+      case 'IN_SPRINT':
+        return 2;
+      case 'COMPLETED':
+        return steps.length;
+      default:
+        return 0;
+    }
+  });
+
   const aside = $derived([
     { href: base, label: 'Contexto', exact: true },
     { href: `${base}/custos`, label: 'Custos', exact: false }
@@ -76,13 +91,24 @@
       </div>
 
       <nav aria-label="Seções do projeto">
-        {#each steps as tab, i (tab.href)}
-          {@const active = isActive(tab.href, tab.exact)}
-          <a href={tab.href} class="tab" class:active aria-current={active ? 'page' : undefined}>
-            <span class="n mono" aria-hidden="true">{i + 1}</span>
-            {tab.label}
-          </a>
-        {/each}
+        <ol class="steps">
+          {#each steps as tab, i (tab.href)}
+            {@const active = isActive(tab.href, tab.exact)}
+            {@const done = i < doneCount}
+            <li class="step" class:done class:reached={i <= doneCount}>
+              {#if i > 0}
+                <span class="link" class:done={i <= doneCount} aria-hidden="true"></span>
+              {/if}
+              <a href={tab.href} class="tab" class:active aria-current={active ? 'page' : undefined}>
+                <span class="n mono" aria-hidden="true">
+                  {#if done}<Icon name="check" size={10} />{:else}{i + 1}{/if}
+                </span>
+                {tab.label}
+                {#if done}<span class="sr-only">(concluída)</span>{/if}
+              </a>
+            </li>
+          {/each}
+        </ol>
 
         <span class="gap" aria-hidden="true"></span>
 
@@ -243,6 +269,70 @@
 
   .quiet {
     color: var(--ink-4);
+  }
+
+  /* Stepper: as etapas da sessão ligadas por um filete, verde até onde ela chegou. */
+  .steps {
+    display: flex;
+    align-items: stretch;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .step {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .link {
+    align-self: center;
+    width: clamp(1.5rem, 4vw, 3rem);
+    height: 1px;
+    margin-inline: var(--s3);
+    /* centraliza no ordinal, descontando o respiro do sublinhado ativo */
+    margin-bottom: var(--s3);
+    background: var(--rule-2);
+    transition: background var(--base) var(--ease);
+  }
+
+  .link.done {
+    height: 2px;
+    background: var(--done);
+  }
+
+  .step.done .n {
+    background: var(--done);
+    border-color: var(--done);
+    color: var(--paper);
+  }
+
+  .step.done .tab {
+    color: var(--ink-2);
+  }
+
+  .step.done .tab:hover,
+  .step.done .tab.active {
+    color: var(--ink);
+  }
+
+  /* A etapa atual da sessão (a primeira ainda não cumprida) ganha contorno de tinta. */
+  .step.reached:not(.done) .tab:not(.active) .n {
+    border-color: var(--ink);
+    color: var(--ink);
+  }
+
+  .step.done .tab.active::after {
+    background: var(--done);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   @media (max-width: 768px) {
