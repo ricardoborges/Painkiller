@@ -141,6 +141,27 @@
     if (tasks) await goto(`/projetos/${data.project.id}/backlog?novas=${tasks.length}`);
   }
 
+  function handleChoiceSubmit(text: string) {
+    if (
+      text.toLowerCase().includes('seguir para backlog') ||
+      text.toLowerCase().includes('importar backlog') ||
+      text.toLowerCase().includes('abrir backlog')
+    ) {
+      importBacklog();
+    } else {
+      a.send(text);
+    }
+  }
+
+  function hasBacklogCreated(text: string): boolean {
+    const lower = text.toLowerCase();
+    return (
+      lower.includes('backlog.json') ||
+      (lower.includes('backlog') && lower.includes('tarefas planejadas')) ||
+      (lower.includes('backlog') && lower.includes('critérios de aceitação'))
+    );
+  }
+
   function confirmRestart() {
     menuOpen = false;
     if (a.finished || confirm('Descartar a sessão atual e iniciar uma nova análise do zero?')) {
@@ -303,18 +324,6 @@
           </div>
         {/if}
       </div>
-
-      <!-- CTA Principal em Destaque -->
-      <button
-        type="button"
-        class="btn btn-solid btn-sm cta-btn"
-        onclick={importBacklog}
-        disabled={a.committing || !a.session}
-        title="Importar tarefas geradas diretamente para o backlog"
-      >
-        <span>{a.committing ? 'Importando…' : 'Importar backlog'}</span>
-        {#if !a.committing}<Icon name="arrow-right" size={12} />{/if}
-      </button>
     </div>
   </div>
 
@@ -349,18 +358,38 @@
 
             {#each a.turns as turn, i (i)}
               {@const parsed = turn.who === 'agent' ? parseMessage(turn.text) : null}
+              {@const showBacklogAction =
+                turn.who === 'agent' &&
+                (hasBacklogCreated(turn.text) ||
+                  (parsed?.choices?.options.some((o) =>
+                    o.label.toLowerCase().includes('seguir para backlog') ||
+                    o.label.toLowerCase().includes('backlog')
+                  ) ?? false))}
               <li class="turn" class:is-analyst={turn.who === 'analyst'}>
                 <span class="label who">{turn.who === 'agent' ? 'Agente' : 'Você'}</span>
                 <div class="content">
                   <div class="markdown-body">
                     {@html renderMarkdown(parsed ? parsed.body : turn.text)}
                   </div>
-                  {#if parsed?.choices}
+                  {#if showBacklogAction}
+                    <div class="backlog-handoff">
+                      <button
+                        type="button"
+                        class="btn btn-solid btn-sm follow-backlog-btn"
+                        onclick={importBacklog}
+                        disabled={a.committing}
+                        title="Importar tarefas geradas e seguir para o backlog"
+                      >
+                        <span>{a.committing ? 'Importando tarefas…' : 'Seguir para backlog'}</span>
+                        <Icon name="arrow-right" size={12} />
+                      </button>
+                    </div>
+                  {:else if parsed?.choices}
                     <Choices
                       choices={parsed.choices}
                       active={a.myTurn && i === a.turns.length - 1}
                       answer={a.turns[i + 1]?.who === 'analyst' ? a.turns[i + 1].text : undefined}
-                      onsubmit={(text) => a.send(text)}
+                      onsubmit={(text) => handleChoiceSubmit(text)}
                     />
                   {/if}
                 </div>
@@ -682,8 +711,20 @@
     gap: var(--s1);
   }
 
-  .cta-btn {
-    letter-spacing: 0.02em;
+  .backlog-handoff {
+    margin-top: var(--s4);
+    padding-top: var(--s3);
+    border-top: 1px solid var(--rule-2);
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+
+  .follow-backlog-btn {
+    padding: 0.5rem 1rem;
+    font-size: var(--t-small);
+    font-weight: 500;
+    gap: var(--s2);
   }
 
   .danger-action {
