@@ -337,6 +337,14 @@ def test_prompt_carries_project_context_and_the_backlog_contract(tmp_path):
     assert "Automatizar" in prompt
 
 
+def test_prompt_teaches_the_clickable_choices_block(tmp_path):
+    prompt = build_analysis_prompt(_project(tmp_path))
+    # A UI (web/src/lib/choices.ts) procura exatamente esta cerca.
+    assert "```painkiller-choices" in prompt
+    assert '"options"' in prompt
+    assert '"multiple"' in prompt
+
+
 async def test_start_resumes_existing_active_session(tmp_path):
     tracker = AsyncMock()
     existing_session = AnalysisSession(

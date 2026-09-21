@@ -1,152 +1,94 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { ApiError, api, openAnalysisStream } from '$lib/api';
-  import type { AgentEvent, AnalysisSession, ProjectDoc } from '$lib/types';
   import { marked } from 'marked';
+  import { analysisFor } from '$lib/stores/analysis.svelte';
+  import type { ProjectDoc } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
   import Elapsed from '$lib/components/Elapsed.svelte';
   import DocViewer from '$lib/components/DocViewer.svelte';
+  import Choices from '$lib/components/Choices.svelte';
+  import { parseMessage, hidePartialBlock } from '$lib/choices';
 
   let { data } = $props();
 
-  interface Turn {
-    who: 'agent' | 'analyst' | 'tool';
-    text: string;
-  }
-
-  /** Permite que um F5 reencontre a sessão em vez de subir outro contêiner. */
-  const storageKey = $derived(`pk_analysis_${data.project.id}`);
-
-  let session = $state<AnalysisSession | null>(null);
-  let turns = $state<Turn[]>([]);
-  /** Linhas não-JSON do contêiner (avisos do node, falhas de plugin). */
-  let diagnostics = $state<string[]>([]);
-
-  let starting = $state(true);
-  let startError = $state<string | null>(null);
-  let sendError = $state<string | null>(null);
-  let draft = $state('');
-  let closing = $state(false);
-  let committing = $state(false);
-  let streamClosed = $state(false);
-
-  /** Texto do turno em andamento, montado a partir dos deltas. */
-  let streaming = $state('');
-  /** Raciocínio do modelo enquanto ele ainda não escreveu nada visível. */
-  let reasoning = $state('');
+  /* A sessão vive num módulo, não neste componente: trocar de aba e voltar
+     não fecha o stream nem remonta a conversa. Ver stores/analysis.svelte.ts. */
+  const a = $derived(analysisFor(data.project.id));
 
   let composer = $state<HTMLTextAreaElement | null>(null);
-  let waitingSince = $state(Date.now());
-  let disposeStream: (() => void) | null = null;
+  let scroller = $state<HTMLElement | null>(null);
+  let host = $state<HTMLElement | null>(null);
+  let menuOpen = $state(false);
 
-  /** Documentos do superpowers descobertos no repositório. */
-  let docs = $state<ProjectDoc[]>([]);
-  let loadingDocs = $state(false);
+  /** O leitor está colado no fim? Só então o auto-scroll pode agir. */
+  let pinned = $state(true);
+
   let selectedDoc = $state<ProjectDoc | null>(null);
-  let isDocViewerOpen = $state(false);
+  let viewerOpen = $state(false);
 
-  async function refreshDocs() {
-    loadingDocs = true;
-    try {
-      docs = await api.listProjectDocs(data.project.id);
-    } catch {
-      /* falha silenciosa em background */
-    } finally {
-      loadingDocs = false;
-    }
+  /* A área útil não dá para escrever em CSS: o cabeçalho do projeto tem altura
+     variável (título + abas). Medimos uma vez e a cada resize. */
+  let avail = $state(0);
+
+  $effect(() => {
+    if (!host) return;
+    const recompute = () => {
+      const top = host!.getBoundingClientRect().top + window.scrollY;
+      avail = Math.max(420, window.innerHeight - top - 16);
+    };
+    recompute();
+    window.addEventListener('resize', recompute);
+    return () => window.removeEventListener('resize', recompute);
+  });
+
+  $effect(() => {
+    a.ensureBooted();
+  });
+
+  /* Menu sem biblioteca: fecha no clique fora e no Esc, como se espera. */
+  $effect(() => {
+    if (!menuOpen) return;
+    const away = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement)?.closest('.menu')) menuOpen = false;
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') menuOpen = false;
+    };
+    window.addEventListener('click', away, true);
+    window.addEventListener('keydown', esc);
+    return () => {
+      window.removeEventListener('click', away, true);
+      window.removeEventListener('keydown', esc);
+    };
+  });
+
+  function onScroll() {
+    if (!scroller) return;
+    const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    pinned = gap < 48;
   }
 
-  function openDoc(d: ProjectDoc) {
-    selectedDoc = d;
-    isDocViewerOpen = true;
+  function toBottom() {
+    scroller?.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    pinned = true;
   }
 
-  /** O agente devolveu o turno: é a única hora em que o analista pode digitar. */
-  const myTurn = $derived(session?.status === 'WAITING_ANALYST' && !streamClosed);
-  const finished = $derived(session?.status === 'FINISHED' || streamClosed);
+  /* Segue a conversa sozinho, mas só enquanto o analista já estava no fim —
+     puxar a tela de quem voltou para reler é pior que não rolar nada. */
+  $effect(() => {
+    void a.turns.length;
+    void a.streaming;
+    void a.reasoning;
+    void a.starting;
+    if (!scroller || !pinned) return;
+    queueMicrotask(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
+  });
 
-  function remember(id: string | null) {
-    try {
-      if (id) {
-        sessionStorage.setItem(storageKey, id);
-        localStorage.setItem(storageKey, id);
-      } else {
-        sessionStorage.removeItem(storageKey);
-        localStorage.removeItem(storageKey);
-      }
-    } catch {
-      /* modo privado / storage bloqueado */
-    }
-  }
-
-  function recall(): string | null {
-    try {
-      return sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey);
-    } catch {
-      return null;
-    }
-  }
-
-  async function boot(forceNew: boolean = false) {
-    starting = true;
-    startError = null;
-    turns = [];
-    diagnostics = [];
-    streaming = '';
-    reasoning = '';
-    streamClosed = false;
-    waitingSince = Date.now();
-    refreshDocs();
-
-    if (!forceNew) {
-      try {
-        const current = await api.getCurrentAnalysis(data.project.id);
-        if (current?.session) {
-          session = current.session;
-          remember(session.session_id);
-          attach(session.session_id);
-          starting = false;
-          return;
-        }
-      } catch {
-        /* se rota não responder, usa fallback local */
-      }
-
-      const previous = recall();
-      if (previous) {
-        try {
-          // O stream reemite o histórico, então reatar é suficiente.
-          session = await api.getAnalysis(previous);
-          attach(previous);
-          starting = false;
-          return;
-        } catch {
-          // Sessão não encontrada: limpa e recomeça.
-          remember(null);
-        }
-      }
-    }
-
-    try {
-      session = await api.startAnalysis(data.project.id, forceNew);
-      remember(session.session_id);
-      attach(session.session_id);
-    } catch (e) {
-      startError = e instanceof Error ? e.message : 'Falha ao subir o agente de análise.';
-    } finally {
-      starting = false;
-    }
-  }
-
-  function attach(sessionId: string) {
-    disposeStream?.();
-    disposeStream = openAnalysisStream(sessionId, onEvent, () => {
-      streamClosed = true;
-    });
-  }
+  $effect(() => {
+    if (a.myTurn) queueMicrotask(() => composer?.focus());
+  });
 
   function renderMarkdown(content: string): string {
     if (!content) return '';
@@ -157,398 +99,279 @@
     }
   }
 
-  function commitAgentText(text: string) {
-    const clean = text.trim();
-    if (!clean) return;
-
-    if (turns.length > 0 && turns[turns.length - 1].who === 'agent') {
-      const last = turns[turns.length - 1];
-      if (last.text === clean) {
-        return;
-      }
-      turns[turns.length - 1] = { who: 'agent', text: clean };
-      turns = [...turns];
-      return;
-    }
-
-    turns = [...turns, { who: 'agent', text: clean }];
-  }
-
-  function onEvent(event: AgentEvent) {
-    switch (event.type) {
-      case 'ASSISTANT_DELTA':
-        streaming += event.text;
-        // Assim que o texto de verdade começa, o raciocínio perde a vez.
-        reasoning = '';
-        break;
-      case 'THINKING_DELTA':
-        if (!streaming) reasoning += event.text;
-        break;
-      case 'USER':
-        if (
-          turns.length === 0 ||
-          turns[turns.length - 1].who !== 'analyst' ||
-          turns[turns.length - 1].text !== event.text
-        ) {
-          turns = [...turns, { who: 'analyst', text: event.text }];
-        }
-        break;
-      case 'ASSISTANT':
-        // Canônico: substitui o que foi montado por delta, então um pedaço
-        // perdido no caminho não deixa o texto truncado na tela.
-        if (event.text?.trim()) {
-          commitAgentText(event.text);
-        }
-        streaming = '';
-        reasoning = '';
-        break;
-      case 'TOOL_USE':
-        if (streaming.trim()) {
-          commitAgentText(streaming);
-        }
-        streaming = '';
-        reasoning = '';
-        // O agente lendo e escrevendo arquivos é o sinal de progresso honesto
-        // enquanto ele não fala — superpowers grava spec e plano em disco.
-        turns = [...turns, { who: 'tool', text: event.text }];
-        refreshDocs();
-        break;
-      case 'RESULT':
-        // O turno do agente acabou: garante que a fala final seja persistida no transcript.
-        // O texto pode vir em event.text (agy / claude) ou no streaming acumulado.
-        const finalText = event.text?.trim() || streaming.trim();
-        if (finalText) {
-          commitAgentText(finalText);
-        }
-        streaming = '';
-        reasoning = '';
-        if (session) session = { ...session, status: 'WAITING_ANALYST' };
-        queueMicrotask(() => composer?.focus());
-        refreshDocs();
-        break;
-      case 'EXIT':
-        if (session) {
-          session = { ...session, status: event.text === '0' ? 'FINISHED' : 'FAILED' };
-        }
-        break;
-      case 'ERROR':
-        diagnostics = [...diagnostics, event.text];
-        break;
-    }
-  }
-
-  async function send() {
-    const text = draft.trim();
-    if (!text || !session || !myTurn) return;
-
-    turns = [...turns, { who: 'analyst', text }];
-    draft = '';
-    streaming = '';
-    reasoning = '';
-    sendError = null;
-    waitingSince = Date.now();
-    session = { ...session, status: 'WAITING_AGENT' };
-
-    try {
-      await api.answerAnalysis(session.session_id, text);
-    } catch (e) {
-      sendError =
-        e instanceof ApiError && e.status === 404
-          ? 'A sessão não existe mais no servidor. As sessões vivem em memória, então um restart do uvicorn as apaga. Recomece a análise.'
-          : e instanceof Error
-            ? e.message
-            : 'Falha ao enviar a resposta.';
-    }
-  }
-
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      send();
+      a.send();
     }
   }
 
-  async function closeSession() {
-    if (!session) return;
-    closing = true;
-    sendError = null;
-    try {
-      await api.finishAnalysis(session.session_id);
-    } catch (e) {
-      sendError = e instanceof Error ? e.message : 'Falha ao encerrar a sessão.';
-    } finally {
-      closing = false;
+  async function importBacklog() {
+    const tasks = await a.commit();
+    if (tasks) await goto(`/projetos/${data.project.id}/backlog?novas=${tasks.length}`);
+  }
+
+  function confirmRestart() {
+    menuOpen = false;
+    if (a.finished || confirm('Descartar a sessão atual e iniciar uma nova análise do zero?')) {
+      a.restart();
     }
   }
 
-  async function commit() {
-    if (!session) return;
-    committing = true;
-    sendError = null;
-    try {
-      const tasks = await api.commitAnalysisBacklog(session.session_id);
-      remember(null);
-      await goto(`/projetos/${data.project.id}/backlog?novas=${tasks.length}`);
-    } catch (e) {
-      sendError = e instanceof Error ? e.message : 'Falha ao importar o backlog.';
-    } finally {
-      committing = false;
-    }
+  function openDoc(d: ProjectDoc) {
+    selectedDoc = d;
+    viewerOpen = true;
   }
 
-  async function restart() {
-    if (session) {
-      try {
-        await api.stopAnalysis(session.session_id);
-      } catch {
-        /* contêiner já pode ter morrido */
-      }
-    }
-    remember(null);
-    session = null;
-    boot(true);
-  }
-
-  $effect(() => {
-    boot();
+  /** Um rótulo só para o estado da sessão — é o que a toolbar precisa dizer. */
+  const phase = $derived.by(() => {
+    if (a.startError) return { key: 'error', text: 'O agente não subiu' };
+    if (a.starting) return { key: 'boot', text: 'Subindo o contêiner' };
+    if (a.session?.status === 'FAILED') return { key: 'error', text: 'Sessão falhou' };
+    if (a.finished) return { key: 'done', text: 'Sessão encerrada' };
+    if (a.myTurn) return { key: 'you', text: 'Sua vez' };
+    return { key: 'agent', text: 'Agente trabalhando' };
   });
-
-  onDestroy(() => disposeStream?.());
 </script>
 
-<div class="grid">
-  <section class="transcript-col">
-    {#if starting}
-      <div class="turn">
-        <span class="label who">Agente</span>
-        <div class="content">
-          <p class="working">
-            <span class="pulse" aria-hidden="true"></span>
-            Subindo o contêiner e carregando as skills.
-            <span class="clock"><Elapsed from={waitingSince} /></span>
-          </p>
-          <Skeleton variant="lines" rows={4} />
-        </div>
-      </div>
-    {:else if startError}
-      <Placeholder kind="error" title="O agente não subiu" detail={startError}>
-        {#snippet action()}
-          <button type="button" class="btn btn-solid" onclick={restart}>Tentar de novo</button>
-          <a class="btn btn-line" href="/projetos">Voltar</a>
-        {/snippet}
-      </Placeholder>
-    {:else}
-      <ol class="transcript">
-        {#each turns as turn, i (i)}
-          {#if turn.who === 'tool'}
-            <li class="tool-line mono">
-              <Icon name="clip" size={11} /> {turn.text}
-            </li>
-          {:else}
-            <li
-              class="turn rise"
-              style="--i: {Math.min(i, 6)}"
-              class:is-analyst={turn.who === 'analyst'}
-            >
-              <span class="label who">{turn.who === 'agent' ? 'Agente' : 'Você'}</span>
-              <div class="content markdown-body">
-                {@html renderMarkdown(turn.text)}
-              </div>
-            </li>
-          {/if}
-        {/each}
-
-        {#if !myTurn && !finished}
-          <li class="turn">
-            <span class="label who">Agente</span>
-            <div class="content">
-              {#if streaming}
-                <div class="markdown-body live-streaming">
-                  {@html renderMarkdown(streaming)}<span class="caret" aria-hidden="true"></span>
-                </div>
-              {:else if reasoning}
-                <p class="working">
-                  <span class="pulse" aria-hidden="true"></span>
-                  Raciocinando.
-                  <span class="clock"><Elapsed from={waitingSince} /></span>
-                </p>
-                <!-- O raciocínio é registro de máquina, não fala: fica
-                     rebaixado, e some assim que o texto de verdade começa. -->
-                <p class="reasoning">{reasoning}</p>
-              {:else}
-                <p class="working">
-                  <span class="pulse" aria-hidden="true"></span>
-                  Trabalhando.
-                  <span class="clock"><Elapsed from={waitingSince} /></span>
-                </p>
-                <Skeleton variant="lines" rows={2} />
-              {/if}
-            </div>
-          </li>
-        {/if}
-      </ol>
-
-      {#if sendError}
-        <p class="error-line" role="alert">
-          <Icon name="alert" size={12} />
-          {sendError}
-        </p>
+<div class="workbench" bind:this={host} style="height: {avail ? `${avail}px` : '70vh'}">
+  <!-- Toolbar: estado à esquerda, ações à direita, hierarquia explícita.
+       A ação que conclui a etapa é a única sólida. -->
+  <div class="toolbar">
+    <div class="state" class:is-you={phase.key === 'you'} class:is-error={phase.key === 'error'}>
+      {#if phase.key === 'boot' || phase.key === 'agent'}
+        <span class="pulse" aria-hidden="true"></span>
+      {:else if phase.key === 'you'}
+        <span class="dot" aria-hidden="true"></span>
       {/if}
-
-      {#if diagnostics.length}
-        <details class="diag">
-          <summary class="label">Saída bruta do contêiner ({diagnostics.length})</summary>
-          <pre class="mono">{diagnostics.join('\n')}</pre>
-        </details>
-      {/if}
-
-      <div class="composer">
-        <textarea
-          bind:this={composer}
-          bind:value={draft}
-          class="textarea"
-          rows="2"
-          placeholder={finished
-            ? 'Sessão encerrada.'
-            : myTurn
-              ? 'Responda ao agente…'
-              : 'Aguarde — o agente está com o turno.'}
-          onkeydown={onKeydown}
-          disabled={!myTurn}
-        ></textarea>
-        <div class="composer-foot">
-          <span class="help">
-            <span class="mono">Enter</span> envia, <span class="mono">Shift+Enter</span> quebra linha
-          </span>
-          <button type="button" class="btn btn-solid" onclick={send} disabled={!myTurn || !draft.trim()}>
-            Enviar <Icon name="send" size={12} />
-          </button>
-        </div>
-      </div>
-    {/if}
-  </section>
-
-  <aside>
-    <div class="panel">
-      <div class="panel-head">
-        <h2 class="label">Sessão</h2>
-        {#if myTurn}
-          <span class="label turn-badge">Sua vez</span>
-        {/if}
-      </div>
-
-      <dl class="meta">
-        <div>
-          <dt class="label">Agente</dt>
-          <dd class="mono">Claude Code + superpowers</dd>
-        </div>
-        <div>
-          <dt class="label">Contêiner</dt>
-          <dd class="mono truncate">{session?.container_name ?? '—'}</dd>
-        </div>
-        <div>
-          <dt class="label">Workspace</dt>
-          <dd class="mono truncate">{data.project.repo_path}</dd>
-        </div>
-      </dl>
-
-      <p class="help">
-        A conversa roda dentro do contêiner. A especificação é gravada em
-        <span class="mono">docs/superpowers/specs/</span> e o backlog em
-        <span class="mono">.painkiller/backlog.json</span>, ambos no próprio repositório.
-      </p>
-
-      <button
-        type="button"
-        class="btn btn-line full"
-        onclick={closeSession}
-        disabled={closing || finished || !session}
-      >
-        {closing ? 'Encerrando…' : 'Encerrar sessão'}
-      </button>
-
-      <button
-        type="button"
-        class="btn btn-solid full"
-        onclick={commit}
-        disabled={committing || !session}
-      >
-        {committing ? 'Importando…' : 'Importar backlog'}
-        {#if !committing}<Icon name="arrow-right" size={12} />{/if}
-      </button>
-
-      {#if finished}
-        <button type="button" class="btn btn-line full" onclick={restart}>Nova sessão</button>
-      {:else}
-        <button
-          type="button"
-          class="btn btn-line full"
-          onclick={() => {
-            if (confirm('Deseja descartar a sessão atual e iniciar uma nova análise do zero?')) {
-              restart();
-            }
-          }}
-          disabled={starting}
-        >
-          Recomeçar do zero
-        </button>
+      <span class="label">{phase.text}</span>
+      {#if phase.key === 'boot' || phase.key === 'agent'}
+        <span class="clock mono"><Elapsed from={a.waitingSince} /></span>
       {/if}
     </div>
 
-    <!-- Painel de Documentos Superpowers -->
-    <div class="panel docs-panel">
-      <div class="panel-head">
-        <div class="head-title">
-          <h2 class="label">Docs Superpowers</h2>
-          {#if docs.length}
-            <span class="mono doc-count">{docs.length}</span>
-          {/if}
-        </div>
+    <div class="acts">
+      <button
+        type="button"
+        class="btn btn-line btn-sm"
+        onclick={() => a.closeSession()}
+        disabled={a.closing || a.finished || !a.session}
+      >
+        {a.closing ? 'Encerrando…' : 'Encerrar'}
+      </button>
+
+      <button
+        type="button"
+        class="btn btn-solid btn-sm"
+        onclick={importBacklog}
+        disabled={a.committing || !a.session}
+      >
+        {a.committing ? 'Importando…' : 'Importar backlog'}
+        {#if !a.committing}<Icon name="arrow-right" size={12} />{/if}
+      </button>
+
+      <div class="menu">
         <button
           type="button"
-          class="refresh-btn"
-          onclick={refreshDocs}
-          title="Recarregar documentos"
-          disabled={loadingDocs}
+          class="btn btn-quiet btn-sm more"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onclick={() => (menuOpen = !menuOpen)}
         >
-          <Icon name="upload" size={12} />
+          <span aria-hidden="true">···</span>
+          <span class="sr">Mais ações</span>
         </button>
+        {#if menuOpen}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="sheet" role="menu">
+            <button type="button" role="menuitem" onclick={confirmRestart} disabled={a.starting}>
+              {a.finished ? 'Nova sessão' : 'Recomeçar do zero'}
+            </button>
+            <a role="menuitem" href="/projetos/{data.project.id}/artefatos" onclick={() => (menuOpen = false)}>
+              Ver artefatos
+            </a>
+          </div>
+        {/if}
       </div>
+    </div>
+  </div>
 
-      {#if loadingDocs && !docs.length}
-        <div class="docs-status faint mono">
-          <span class="pulse" aria-hidden="true"></span> Buscando documentos…
-        </div>
-      {:else if !docs.length}
-        <div class="docs-empty">
-          <p class="help">
-            Nenhum documento gerado ainda. Conforme a elicitação avança, o agente gravará especificações e planos em <span class="mono">docs/superpowers/</span>.
-          </p>
-        </div>
-      {:else}
-        <ul class="docs-list">
-          {#each docs as d (d.path)}
-            <li>
-              <button type="button" class="doc-item" onclick={() => openDoc(d)}>
-                <div class="doc-item-header">
-                  <span class="tag-cat mono {d.category}">{d.category}</span>
-                  <span class="doc-title mono truncate" title={d.filename}>{d.filename}</span>
-                </div>
-                <div class="doc-item-foot mono faint">
-                  <span>{(d.size_bytes / 1024).toFixed(1)} KB</span>
-                  <span class="view-hint label">Visualizar ↗</span>
-                </div>
+  <div class="panes">
+    <section class="chat">
+      {#if a.startError}
+        <div class="scroller">
+          <Placeholder kind="error" title="O agente não subiu" detail={a.startError}>
+            {#snippet action()}
+              <button type="button" class="btn btn-solid" onclick={() => a.boot(true)}>
+                Tentar de novo
               </button>
-            </li>
-          {/each}
-        </ul>
+              <a class="btn btn-line" href="/projetos">Voltar</a>
+            {/snippet}
+          </Placeholder>
+        </div>
+      {:else}
+        <div class="scroller" bind:this={scroller} onscroll={onScroll}>
+          <ol class="transcript">
+            {#if a.starting}
+              <li class="turn">
+                <span class="label who">Agente</span>
+                <div class="content">
+                  <p class="working">
+                    <span class="pulse" aria-hidden="true"></span>
+                    Subindo o contêiner e carregando as skills.
+                  </p>
+                  <Skeleton variant="lines" rows={4} />
+                </div>
+              </li>
+            {/if}
+
+            {#each a.turns as turn, i (i)}
+              {@const parsed = turn.who === 'agent' ? parseMessage(turn.text) : null}
+              <li class="turn" class:is-analyst={turn.who === 'analyst'}>
+                <span class="label who">{turn.who === 'agent' ? 'Agente' : 'Você'}</span>
+                <div class="content">
+                  <div class="markdown-body">
+                    {@html renderMarkdown(parsed ? parsed.body : turn.text)}
+                  </div>
+                  {#if parsed?.choices}
+                    <Choices
+                      choices={parsed.choices}
+                      active={a.myTurn && i === a.turns.length - 1}
+                      answer={a.turns[i + 1]?.who === 'analyst' ? a.turns[i + 1].text : undefined}
+                      onsubmit={(text) => a.send(text)}
+                    />
+                  {/if}
+                </div>
+              </li>
+            {/each}
+
+            {#if !a.myTurn && !a.finished && !a.starting}
+              <li class="turn">
+                <span class="label who">Agente</span>
+                <div class="content">
+                  {#if a.streaming}
+                    <div class="markdown-body live-streaming">
+                      {@html renderMarkdown(hidePartialBlock(a.streaming))}<span class="caret" aria-hidden="true"></span>
+                    </div>
+                  {:else if a.reasoning}
+                    <p class="working">
+                      <span class="pulse" aria-hidden="true"></span> Raciocinando.
+                    </p>
+                    <!-- O raciocínio é registro de máquina, não fala: fica
+                         rebaixado, e some assim que o texto de verdade começa. -->
+                    <p class="reasoning">{a.reasoning}</p>
+                  {:else}
+                    <p class="working">
+                      <span class="pulse" aria-hidden="true"></span> Trabalhando.
+                    </p>
+                    <Skeleton variant="lines" rows={2} />
+                  {/if}
+                </div>
+              </li>
+            {/if}
+          </ol>
+
+          {#if a.diagnostics.length}
+            <details class="diag">
+              <summary class="label">Saída bruta do contêiner ({a.diagnostics.length})</summary>
+              <pre class="mono">{a.diagnostics.join('\n')}</pre>
+            </details>
+          {/if}
+        </div>
+
+        {#if !pinned}
+          <button type="button" class="jump label" onclick={toBottom}>
+            Ir para o fim ↓
+          </button>
+        {/if}
+
+        {#if a.sendError}
+          <p class="error-line" role="alert">
+            <Icon name="alert" size={12} />
+            {a.sendError}
+          </p>
+        {/if}
+
+        <div class="composer">
+          <textarea
+            bind:this={composer}
+            bind:value={a.draft}
+            class="textarea"
+            rows="2"
+            placeholder={a.finished
+              ? 'Sessão encerrada.'
+              : a.myTurn
+                ? 'Responda ao agente…'
+                : 'Aguarde — o agente está com o turno.'}
+            onkeydown={onKeydown}
+            disabled={!a.myTurn}
+          ></textarea>
+          <div class="composer-foot">
+            <span class="help">
+              <span class="mono">Enter</span> envia, <span class="mono">Shift+Enter</span> quebra linha
+            </span>
+            <button
+              type="button"
+              class="btn btn-solid btn-sm"
+              onclick={() => a.send()}
+              disabled={!a.myTurn || !a.draft.trim()}
+            >
+              Enviar <Icon name="send" size={12} />
+            </button>
+          </div>
+        </div>
       {/if}
-    </div>
-  </aside>
+    </section>
+
+    <aside class="rail">
+      <div class="panel">
+        <h2 class="label">Sessão</h2>
+        <dl class="meta">
+          <div>
+            <dt class="label">Contêiner</dt>
+            <dd class="mono truncate">{a.session?.container_name ?? '—'}</dd>
+          </div>
+          <div>
+            <dt class="label">Workspace</dt>
+            <dd class="mono truncate" title={data.project.repo_path}>{data.project.repo_path}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="panel grow">
+        <div class="panel-head">
+          <h2 class="label">Artefatos</h2>
+          <a class="label more-link" href="/projetos/{data.project.id}/artefatos">Ver todos ↗</a>
+        </div>
+
+        {#if a.loadingDocs && !a.docs.length}
+          <p class="docs-status faint mono">
+            <span class="pulse" aria-hidden="true"></span> Buscando…
+          </p>
+        {:else if !a.docs.length}
+          <p class="help">
+            Nada gravado ainda. Conforme a elicitação avança, o agente escreve a
+            especificação e o plano em <span class="mono">docs/superpowers/</span>.
+          </p>
+        {:else}
+          <ul class="docs">
+            {#each a.docs.slice(0, 6) as d (d.path)}
+              <li>
+                <button type="button" class="doc" onclick={() => openDoc(d)}>
+                  <span class="cat mono {d.category}">{d.category}</span>
+                  <span class="mono truncate" title={d.filename}>{d.filename}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    </aside>
+  </div>
 </div>
 
 <DocViewer
-  bind:open={isDocViewerOpen}
+  bind:open={viewerOpen}
   doc={selectedDoc}
   projectId={data.project.id}
   repoUrl={data.project.repo_url}
@@ -556,16 +379,256 @@
 />
 
 <style>
-  .grid {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: var(--s9);
-    padding-top: var(--s6);
-    align-items: start;
+  /* O `main` do layout raiz reserva um rodapé de var(--s9) para páginas que
+     rolam. Esta não rola: cancelamos, senão sobra uma barra de rolagem morta. */
+  .workbench {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin-bottom: calc(-1 * var(--s9));
+    padding-top: var(--s4);
   }
 
-  /* Transcrição de entrevista: rótulo de fala à esquerda, texto na medida
-     de leitura. Sem balões. */
+  /* ---------- Toolbar ---------- */
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s4);
+    flex-wrap: wrap;
+    padding-bottom: var(--s3);
+    border-bottom: 1px solid var(--rule-ink);
+  }
+
+  .state {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    color: var(--ink-2);
+    min-width: 0;
+  }
+
+  /* Único uso de cor na tela, e pelo mesmo motivo de sempre: o agente parou
+     e depende do analista. Ver STATUS_META.AWAITING_ANALYST. */
+  .state.is-you,
+  .state.is-error {
+    color: var(--accent);
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    background: var(--accent);
+  }
+
+  .clock {
+    color: var(--ink-3);
+    font-size: var(--t-micro);
+  }
+
+  .acts {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .menu {
+    position: relative;
+  }
+
+  .more {
+    letter-spacing: 0.1em;
+  }
+
+  .sheet {
+    position: absolute;
+    right: 0;
+    top: calc(100% + var(--s2));
+    z-index: 30;
+    min-width: 13rem;
+    background: var(--paper);
+    border: 1px solid var(--rule-ink);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sheet > :global(*) {
+    padding: var(--s2) var(--s3);
+    text-align: left;
+    font-size: var(--t-small);
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+  }
+
+  .sheet > :global(* + *) {
+    border-top: 1px solid var(--rule);
+  }
+
+  .sheet > :global(*:hover) {
+    background: var(--paper-sunk);
+  }
+
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  /* ---------- Painéis ---------- */
+
+  .panes {
+    display: grid;
+    grid-template-columns: 1fr 17rem;
+    gap: var(--s6);
+    flex: 1;
+    min-height: 0;
+  }
+
+  .chat {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+  }
+
+  /* A rolagem é daqui, não do documento: o composer fica ancorado e a página
+     inteira para de correr enquanto o agente escreve. */
+  .scroller {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: var(--s4);
+  }
+
+  .jump {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 7.5rem;
+    z-index: 5;
+    padding: var(--s2) var(--s3);
+    background: var(--paper);
+    border: 1px solid var(--rule-ink);
+    color: var(--ink);
+    cursor: pointer;
+  }
+
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s5);
+    min-height: 0;
+    border-left: 1px solid var(--rule);
+    padding-left: var(--s5);
+  }
+
+  .panel {
+    border-top: 1px solid var(--rule-ink);
+    padding-top: var(--s3);
+    min-height: 0;
+  }
+
+  .panel.grow {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  .panel-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s3);
+  }
+
+  .more-link {
+    color: var(--ink-3);
+    transition: color var(--fast) var(--ease);
+  }
+
+  .more-link:hover {
+    color: var(--ink);
+  }
+
+  .meta {
+    margin-top: var(--s3);
+  }
+
+  .meta div + div {
+    margin-top: var(--s3);
+  }
+
+  .meta dd {
+    font-size: var(--t-micro);
+    color: var(--ink-2);
+  }
+
+  .docs {
+    margin-top: var(--s3);
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+
+  .doc {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    padding: var(--s2);
+    text-align: left;
+    background: transparent;
+    border: 1px solid var(--rule);
+    cursor: pointer;
+    font-size: var(--t-micro);
+    color: var(--ink);
+    transition: border-color var(--fast) var(--ease);
+  }
+
+  .doc:hover {
+    border-color: var(--ink);
+  }
+
+  .cat {
+    flex-shrink: 0;
+    font-size: var(--t-micro);
+    padding: 0.05rem 0.3rem;
+    border: 1px solid var(--rule-2);
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .cat.spec {
+    border-color: var(--ink);
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .cat.plan {
+    border-color: var(--ink-2);
+    color: var(--ink);
+  }
+
+  .docs-status {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s3);
+    font-size: var(--t-micro);
+  }
+
+  /* ---------- Transcrição ---------- */
+
   .transcript {
     border-top: 1px solid var(--rule);
   }
@@ -599,7 +662,6 @@
     border-left: 2px solid var(--ink);
   }
 
-  /* Tipografia do Markdown na conversa */
   .markdown-body {
     line-height: 1.6;
     color: var(--ink);
@@ -679,9 +741,8 @@
   .markdown-body :global(code) {
     font-family: var(--font-mono, monospace);
     font-size: 0.9em;
-    background: var(--paper-2);
+    background: var(--paper-sunk);
     padding: 0.15em 0.35em;
-    border-radius: 2px;
     border: 1px solid var(--rule);
   }
 
@@ -731,7 +792,7 @@
   }
 
   .markdown-body :global(th) {
-    background: var(--paper-2);
+    background: var(--paper-sunk);
     font-weight: 600;
   }
 
@@ -767,18 +828,6 @@
     overflow-y: auto;
   }
 
-  /* Ferramenta acionada: registro de máquina, não fala. Fica rebaixado para
-     não competir com a conversa. */
-  .tool-line {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    padding: var(--s2) 0;
-    border-bottom: 1px solid var(--rule);
-    color: var(--ink-3);
-    font-size: var(--t-micro);
-  }
-
   .working {
     display: flex;
     align-items: center;
@@ -788,23 +837,19 @@
     margin-bottom: var(--s3);
   }
 
-  .clock {
-    margin-left: auto;
-    color: var(--ink-3);
-  }
-
   .pulse {
     width: 6px;
     height: 6px;
     background: var(--ink);
     animation: blink 1.3s var(--ease) infinite;
+    flex-shrink: 0;
   }
 
   .error-line {
     display: flex;
     align-items: flex-start;
     gap: var(--s2);
-    margin-top: var(--s4);
+    margin-top: var(--s3);
     color: var(--accent);
     font-size: var(--t-small);
     max-width: var(--measure);
@@ -833,12 +878,13 @@
     overflow-y: auto;
   }
 
+  /* ---------- Composer ---------- */
+
   .composer {
-    position: sticky;
-    bottom: 0;
-    margin-top: var(--s5);
-    padding-bottom: var(--s5);
-    background: linear-gradient(to bottom, transparent, var(--paper) 18%);
+    flex-shrink: 0;
+    padding-top: var(--s4);
+    margin-top: var(--s2);
+    border-top: 1px solid var(--rule-ink);
   }
 
   .composer-foot {
@@ -849,189 +895,36 @@
     margin-top: var(--s3);
   }
 
-  aside {
-    position: sticky;
-    top: 4.5rem;
-  }
-
-  .panel {
-    border-top: 1px solid var(--rule-ink);
-    padding-top: var(--s3);
-  }
-
-  .panel-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s3);
-  }
-
-  /* Único uso de cor na tela, e pelo mesmo motivo de sempre: o agente parou
-     e depende do analista. Ver STATUS_META.AWAITING_ANALYST. */
-  .turn-badge {
-    color: var(--accent);
-  }
-
-  .meta {
-    margin: var(--s4) 0;
-  }
-
-  .meta div + div {
-    margin-top: var(--s3);
-  }
-
-  .meta dd {
-    font-size: var(--t-micro);
-    color: var(--ink-2);
-  }
-
-  .full {
-    width: 100%;
-  }
-
-  .full + .full {
-    margin-top: var(--s3);
-  }
-
-  .help {
-    margin-top: var(--s3);
-    margin-bottom: var(--s4);
-  }
-
-  .docs-panel {
-    margin-top: var(--s6);
-  }
-
-  .head-title {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-  }
-
-  .doc-count {
-    font-size: var(--t-micro);
-    padding: 0.05rem 0.35rem;
-    border: 1px solid var(--rule-2);
-    border-radius: 2px;
-    color: var(--ink-2);
-  }
-
-  .refresh-btn {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    color: var(--ink-3);
-    padding: var(--s1);
-    display: inline-flex;
-    align-items: center;
-    transition: color var(--fast) var(--ease);
-  }
-
-  .refresh-btn:hover {
-    color: var(--ink);
-  }
-
-  .docs-status {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    margin-top: var(--s3);
-    font-size: var(--t-micro);
-  }
-
-  .docs-empty {
-    margin-top: var(--s2);
-  }
-
-  .docs-list {
-    list-style: none;
-    padding: 0;
-    margin: var(--s3) 0 0 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s2);
-    max-height: 22rem;
-    overflow-y: auto;
-  }
-
-  .doc-item {
-    width: 100%;
-    text-align: left;
-    padding: var(--s2) var(--s3);
-    background: var(--paper-2);
-    border: 1px solid var(--rule-ink);
-    cursor: pointer;
-    transition: all var(--fast) var(--ease);
-  }
-
-  .doc-item:hover {
-    border-color: var(--ink);
-    background: var(--paper-sunk);
-  }
-
-  .doc-item-header {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-    min-width: 0;
-  }
-
-  .tag-cat {
-    font-size: var(--t-micro);
-    padding: 0.1rem 0.3rem;
-    border: 1px solid var(--rule-2);
-    text-transform: uppercase;
-    flex-shrink: 0;
-  }
-
-  .tag-cat.spec {
-    border-color: var(--ink);
-    color: var(--ink);
-    font-weight: 600;
-  }
-
-  .tag-cat.plan {
-    border-color: var(--ink-2);
-    color: var(--ink);
-  }
-
-  .tag-cat.backlog {
-    border-color: var(--rule-2);
-    color: var(--ink-3);
-  }
-
-  .doc-title {
-    font-size: var(--t-micro);
-    color: var(--ink);
-  }
-
-  .doc-item-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: var(--s1);
-    font-size: var(--t-micro);
-  }
-
-  .view-hint {
-    color: var(--ink-2);
-    font-size: var(--t-micro);
-  }
-
   @media (max-width: 900px) {
-    .grid {
-      grid-template-columns: 1fr;
-      gap: var(--s7);
+    /* Sem altura fixa no celular: a tela é curta demais para dois painéis. */
+    .workbench {
+      height: auto !important;
+      margin-bottom: 0;
     }
 
-    aside {
-      position: static;
+    .panes {
+      grid-template-columns: 1fr;
+      gap: var(--s6);
+    }
+
+    .rail {
+      border-left: 0;
+      padding-left: 0;
       order: -1;
+    }
+
+    .scroller {
+      overflow: visible;
+      padding-right: 0;
     }
 
     .turn {
       grid-template-columns: 1fr;
       gap: var(--s2);
+    }
+
+    .jump {
+      display: none;
     }
   }
 </style>

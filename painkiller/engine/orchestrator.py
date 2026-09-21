@@ -1,11 +1,21 @@
 """Painkiller Task Execution Engine & State Machine."""
 
 import logging
+import os
 from typing import Optional, Any
-from painkiller.core.domain.models import Task, TaskStatus, Project
+from painkiller.core.domain.models import (
+    ExecutionResult,
+    Project,
+    Task,
+    TaskStatus,
+    UsageRecord,
+    UsageSource,
+)
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.sandbox import SandboxPort
 from painkiller.core.ports.git import GitPort
+from painkiller.core.ports.usage_ledger import UsageLedgerPort
+from painkiller.core.usage import parse_aider_usage
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +29,13 @@ class PainkillerOrchestrator:
         sandbox: SandboxPort,
         git: GitPort,
         vcs: Optional[Any] = None,
+        usage: Optional[UsageLedgerPort] = None,
     ):
         self.tracker = tracker
         self.sandbox = sandbox
         self.git = git
         self.vcs = vcs
+        self.usage = usage
 
     async def dispatch_task(self, task_id: str) -> Task:
         """Dispatch a task to the sandbox environment and update lifecycle accordingly."""
@@ -55,6 +67,7 @@ class PainkillerOrchestrator:
 
         # Execute container
         result = await self.sandbox.run_task(task, project.repo_path, instructions)
+        await self._record_usage(task, result)
 
         # Handle exit codes
         if result.exit_code == 42 and result.clarification:
@@ -103,6 +116,31 @@ class PainkillerOrchestrator:
 
         updated_task = await self.tracker.get_task(task.id)
         return updated_task or task
+
+    async def _record_usage(self, task: Task, result: ExecutionResult) -> None:
+        """Book what Aider says it spent, whatever the exit code — a failed run still costs."""
+        if self.usage is None:
+            return
+        parsed = parse_aider_usage(result.logs)
+        if parsed is None:
+            return
+        input_tokens, output_tokens, cost, model = parsed
+        try:
+            await self.usage.record_usage(
+                UsageRecord(
+                    source=UsageSource.TASK,
+                    # O runner passa --model a partir desta variável; o log do
+                    # Aider nem sempre repete o nome.
+                    model=model or os.environ.get("PAINKILLER_LLM_MODEL", ""),
+                    project_id=task.project_id,
+                    task_id=task.id,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    reported_cost_usd=cost,
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Usage not recorded for {task.id}: {e}")
 
     async def reply_clarification(self, clarification_id: str, answer: str) -> Task:
         """Provide answer to a paused clarification and resume the task."""

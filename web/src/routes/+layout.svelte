@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { pending } from '$lib/stores/pending.svelte';
+  import { disposeAnalyses } from '$lib/stores/analysis.svelte';
 
   let { children } = $props();
 
@@ -27,6 +28,9 @@
   function signOut() {
     auth.signOut();
     pending.reset();
+    // As sessões de análise vivem num módulo e sobrevivem à navegação de
+    // propósito; o logout é o único momento em que devem ser descartadas.
+    disposeAnalyses();
     goto('/login', { replaceState: true });
   }
 

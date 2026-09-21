@@ -8,7 +8,9 @@ import httpx
 import litellm
 from pydantic import BaseModel
 
+from painkiller.core.domain.models import UsageRecord, UsageSource
 from painkiller.core.ports.llm import LLMPort
+from painkiller.core.ports.usage_ledger import UsageLedgerPort
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -21,7 +23,9 @@ class LiteLLMAdapter(LLMPort):
         default_model: Optional[str] = None,
         api_base: Optional[str] = None,
         api_key: Optional[str] = None,
+        usage: Optional[UsageLedgerPort] = None,
     ):
+        self.usage = usage
         # Prioritize environment configuration
         self.default_model = (
             os.environ.get("PAINKILLER_LLM_MODEL")
@@ -55,6 +59,7 @@ class LiteLLMAdapter(LLMPort):
         model: str,
         temperature: float = 1.0,
         max_tokens: int = 4096,
+        project_id: Optional[str] = None,
     ) -> str:
         """Call NVIDIA Build NIM directly with streaming to handle reasoning tokens and long horizons."""
         base_url = self.api_base.rstrip("/") if self.api_base else "https://integrate.api.nvidia.com/v1"
@@ -71,6 +76,8 @@ class LiteLLMAdapter(LLMPort):
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": True,
+            # Sem isto o stream não traz a contagem de tokens no último chunk.
+            "stream_options": {"include_usage": True},
         }
 
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -80,6 +87,7 @@ class LiteLLMAdapter(LLMPort):
                     raise RuntimeError(f"NVIDIA API error ({response.status_code}): {error_text.decode('utf-8', errors='replace')}")
 
                 content_chunks = []
+                usage: dict = {}
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data: "):
                         continue
@@ -88,6 +96,8 @@ class LiteLLMAdapter(LLMPort):
                         break
                     try:
                         chunk = json.loads(data_str)
+                        if isinstance(chunk.get("usage"), dict):
+                            usage = chunk["usage"]
                         choices = chunk.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})
@@ -97,7 +107,37 @@ class LiteLLMAdapter(LLMPort):
                     except Exception:
                         continue
 
+                await self._record(
+                    clean_model,
+                    usage.get("prompt_tokens", 0),
+                    usage.get("completion_tokens", 0),
+                    project_id=project_id,
+                )
                 return "".join(content_chunks).strip()
+
+    async def _record(
+        self,
+        model: str,
+        input_tokens: Optional[int],
+        output_tokens: Optional[int],
+        cost: Optional[float] = None,
+        project_id: Optional[str] = None,
+    ) -> None:
+        if self.usage is None or not (input_tokens or output_tokens or cost):
+            return
+        try:
+            await self.usage.record_usage(
+                UsageRecord(
+                    source=UsageSource.LLM,
+                    model=model,
+                    project_id=project_id,
+                    input_tokens=int(input_tokens or 0),
+                    output_tokens=int(output_tokens or 0),
+                    reported_cost_usd=cost,
+                )
+            )
+        except Exception:
+            pass
 
     async def complete(
         self,
@@ -105,6 +145,7 @@ class LiteLLMAdapter(LLMPort):
         system_prompt: str = "",
         model: str = "",
         temperature: float = 0.7,
+        project_id: Optional[str] = None,
     ) -> str:
         chosen_model = model or self.default_model
         messages = []
@@ -117,6 +158,7 @@ class LiteLLMAdapter(LLMPort):
                 messages=messages,
                 model=chosen_model,
                 temperature=temperature,
+                project_id=project_id,
             )
 
         kwargs: dict = {
@@ -130,6 +172,18 @@ class LiteLLMAdapter(LLMPort):
             kwargs["api_key"] = self.api_key
 
         response = await litellm.acompletion(**kwargs)
+        usage = getattr(response, "usage", None)
+        try:
+            cost = litellm.completion_cost(completion_response=response)
+        except Exception:
+            cost = None
+        await self._record(
+            chosen_model,
+            getattr(usage, "prompt_tokens", 0),
+            getattr(usage, "completion_tokens", 0),
+            cost or None,
+            project_id=project_id,
+        )
         return response.choices[0].message.content or ""
 
     async def structured_output(
@@ -138,6 +192,7 @@ class LiteLLMAdapter(LLMPort):
         response_model: Type[T],
         system_prompt: str = "",
         model: str = "",
+        project_id: Optional[str] = None,
     ) -> T:
         chosen_model = model or self.default_model
         sys_msg = (
@@ -152,6 +207,7 @@ class LiteLLMAdapter(LLMPort):
             system_prompt=sys_msg,
             model=chosen_model,
             temperature=0.3 if self.is_nvidia else 0.0,
+            project_id=project_id,
         )
 
         clean_text = response_text.strip()

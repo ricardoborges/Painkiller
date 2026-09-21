@@ -6,7 +6,11 @@ import type {
   Project,
   ProjectDoc,
   ProjectDocContent,
+  ProviderBalance,
   Task,
+  UsageEntry,
+  UsageSettings,
+  UsageSummary,
   User
 } from './types';
 
@@ -202,7 +206,27 @@ export const api = {
       base_branch: string;
       diff: string;
       gitea_url: string | null;
-    }>(`/tasks/${id}/diff`)
+    }>(`/tasks/${id}/diff`),
+
+  /* ---- custos (por projeto; preços e câmbio são compartilhados) ---- */
+  getProjectUsage: (projectId: string) => request<UsageSummary>(`/projects/${projectId}/usage`),
+
+  listProjectUsageRecords: (projectId: string, limit = 50) =>
+    request<UsageEntry[]>(`/projects/${projectId}/usage/records?limit=${limit}`),
+
+  saveProjectBudget: (projectId: string, budget_usd: number | null) =>
+    request<{ budget_usd: number | null }>(`/projects/${projectId}/usage/budget`, {
+      method: 'PUT',
+      ...json({ budget_usd })
+    }),
+
+  getUsageSettings: () => request<UsageSettings>('/usage/settings'),
+
+  saveUsageSettings: (body: UsageSettings) =>
+    request<UsageSettings>('/usage/settings', { method: 'PUT', ...json(body) }),
+
+  /** Consulta os provedores na hora; pode demorar alguns segundos. */
+  getProviderBalances: () => request<ProviderBalance[]>('/usage/balances')
 };
 
 /**

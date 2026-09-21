@@ -53,8 +53,9 @@ services:
       PAINKILLER_AGENT_IMAGE: painkiller-agent:latest
 
       # Backend do agente de analise inicial: Antigravity CLI + superpowers + Gemini 3.8 Flash.
-      # Autentica via GEMINI_API_KEY. Variaveis legadas sao mantidas para compatibilidade.
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Autentica via GEMINI_API_KEY, que vem SO do env_file (.env). Nao repetir
+      # aqui como ${GEMINI_API_KEY}: a interpolacao do compose prefere a variavel
+      # do shell/Windows ao .env, e esta secao sobrescreve o env_file.
       PAINKILLER_AGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-gemini-3.8-flash}
       PAINKILLER_AGENT_EFFORT: ${PAINKILLER_AGENT_EFFORT:-medium}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
@@ -71,7 +72,7 @@ services:
 
       # Gitea embutido para versionamento e visualizador de codigo
       PAINKILLER_GITEA_INTERNAL_URL: http://gitea:3000
-      PAINKILLER_GITEA_EXTERNAL_URL: ${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:3000}
+      PAINKILLER_GITEA_EXTERNAL_URL: ${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:3300}
       PAINKILLER_GITEA_USER: ${PAINKILLER_GITEA_USER:-painkiller}
       PAINKILLER_GITEA_PASSWORD: ${PAINKILLER_GITEA_PASSWORD:-painkiller_secret_2026}
       PAINKILLER_GITEA_EMAIL: ${PAINKILLER_GITEA_EMAIL:-bot@painkiller.local}
@@ -121,13 +122,15 @@ services:
       - GITEA__database__PATH=/data/gitea/gitea.db
       - GITEA__security__INSTALL_LOCK=true
       - GITEA__security__SECRET_KEY=painkiller-secret-key-2026
-      - GITEA__server__ROOT_URL=${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:3000/}
+      - GITEA__server__ROOT_URL=${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:3300/}
       - GITEA__server__HTTP_PORT=3000
       - GITEA__server__SSH_PORT=2222
       - GITEA__service__DISABLE_REGISTRATION=true
       - GITEA__service__REQUIRE_SIGNIN_VIEW=false
     ports:
-      - "3000:3000"
+      # So a porta do host muda; dentro da rede do compose continua gitea:3000.
+      # 3300 porque a 3000 costuma estar ocupada por servidores de dev (Vite etc.).
+      - "${PAINKILLER_GITEA_PORT:-3300}:3000"
       - "2222:22"
     volumes:
       - gitea-data:/data

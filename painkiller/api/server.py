@@ -19,6 +19,8 @@ from painkiller.adapters.vcs.gitea_adapter import GiteaAdapter
 from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
 from painkiller.adapters.sandbox.docker_agent_session import DockerAgentSession
 from painkiller.adapters.llm.litellm_adapter import LiteLLMAdapter
+from painkiller.adapters.llm.pricing import litellm_price
+from painkiller.adapters.llm.balance import fetch_balances
 from painkiller.engine.orchestrator import PainkillerOrchestrator
 from painkiller.engine.analysis import AnalysisOrchestrator
 from painkiller.interrogation.wizard import InterrogationWizard
@@ -27,6 +29,8 @@ from painkiller.api.routes.projects import router as projects_router
 from painkiller.api.routes.tasks import router as tasks_router
 from painkiller.api.routes.interrogation import router as interrogation_router
 from painkiller.api.routes.analysis import router as analysis_router
+from painkiller.api.routes.usage import project_router as project_usage_router
+from painkiller.api.routes.usage import router as usage_router
 
 
 def create_app(
@@ -55,12 +59,17 @@ def create_app(
     git = GitCliAdapter()
     vcs = GiteaAdapter()
     sandbox = DockerSandboxRunner(image_name=docker_image)
-    llm = LiteLLMAdapter()
+    # O mesmo SQLite guarda o razão de uso; a porta é separada para que o
+    # tracker possa um dia ir para Redmine/GitHub sem levar os custos junto.
+    usage = tracker
+    llm = LiteLLMAdapter(usage=usage)
     agent = DockerAgentSession(image_name=agent_image)
 
-    orchestrator = PainkillerOrchestrator(tracker=tracker, sandbox=sandbox, git=git, vcs=vcs)
+    orchestrator = PainkillerOrchestrator(
+        tracker=tracker, sandbox=sandbox, git=git, vcs=vcs, usage=usage
+    )
     wizard = InterrogationWizard(llm=llm, tracker=tracker)
-    analysis = AnalysisOrchestrator(agent=agent, tracker=tracker)
+    analysis = AnalysisOrchestrator(agent=agent, tracker=tracker, usage=usage)
 
     # Attach to application state
     app.state.tracker = tracker
@@ -72,6 +81,10 @@ def create_app(
     app.state.wizard = wizard
     app.state.agent = agent
     app.state.analysis = analysis
+    app.state.usage = usage
+    # Injetáveis para os testes não dependerem do catálogo do LiteLLM nem da rede.
+    app.state.price_lookup = litellm_price
+    app.state.balance_lookup = fetch_balances
 
     # Register routers
     app.include_router(auth_router)
@@ -79,6 +92,8 @@ def create_app(
     app.include_router(tasks_router)
     app.include_router(interrogation_router)
     app.include_router(analysis_router)
+    app.include_router(usage_router)
+    app.include_router(project_usage_router)
 
     # SvelteKit SPA. Source lives in web/; `npm run build` emits here.
     static_dir = (Path(__file__).parent / "static").resolve()

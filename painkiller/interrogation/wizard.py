@@ -60,6 +60,7 @@ class InterrogationWizard:
         question = await self.llm.complete(
             prompt=user_msg,
             system_prompt=system_prompt,
+            project_id=project_id,
         )
         session.history.append({"role": "assistant", "content": question})
 
@@ -87,6 +88,7 @@ class InterrogationWizard:
         response = await self.llm.complete(
             prompt=conversation_context,
             system_prompt=system_prompt,
+            project_id=session.project_id,
         )
         session.history.append({"role": "assistant", "content": response})
 
@@ -112,6 +114,7 @@ class InterrogationWizard:
             prompt=prompt,
             response_model=BacklogDraft,
             system_prompt="Decomponha o projeto em tarefas atômicas em JSON.",
+            project_id=session.project_id,
         )
 
         created_tasks: list[Task] = []

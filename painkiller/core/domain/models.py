@@ -150,3 +150,45 @@ class AnalysisSession(BaseModel):
     spec_path: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class UsageSource(str, Enum):
+    """Which part of Painkiller consumed the tokens."""
+    ANALYSIS = "ANALYSIS"
+    TASK = "TASK"
+    LLM = "LLM"
+
+
+class UsageRecord(BaseModel):
+    """Tokens spent by one agent turn, one task run or one direct LLM call."""
+    id: str = ""
+    source: UsageSource
+    model: str = ""
+    project_id: Optional[str] = None
+    task_id: Optional[str] = None
+    session_id: Optional[str] = None
+    # Entrada inclui tokens de cache: superestima um pouco quando o provedor
+    # cobra cache mais barato, mas nunca esconde gasto.
+    input_tokens: int = 0
+    output_tokens: int = 0
+    # Custo que a própria ferramenta reportou (Claude Code, Aider). Vazio
+    # quando só temos tokens e o preço sai da tabela.
+    reported_cost_usd: Optional[float] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ModelPrice(BaseModel):
+    """USD per million tokens."""
+    input_per_mtok: float = 0.0
+    output_per_mtok: float = 0.0
+
+
+class UsageSettings(BaseModel):
+    """Analyst-defined pricing overrides, shared by every project.
+
+    O orçamento não mora aqui: é por projeto (`UsageLedgerPort.get_project_budget`).
+    """
+    # Quantas unidades da moeda local valem 1 USD. Vazio = só mostra USD.
+    exchange_rate: Optional[float] = None
+    local_currency: str = "BRL"
+    prices: dict[str, ModelPrice] = Field(default_factory=dict)

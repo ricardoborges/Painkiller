@@ -14,14 +14,22 @@ from painkiller.core.domain.models import (
     Project,
     Task,
     TaskStatus,
+    UsageRecord,
+    UsageSource,
 )
 from painkiller.core.ports.agent_session import AgentSessionPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
+from painkiller.core.ports.usage_ledger import UsageLedgerPort
+from painkiller.core.usage import parse_agent_usage
 from painkiller.core.attachment_reader import extract_attachment_text
 
 #: Onde o agente deposita o backlog decomposto, lido de volta pela API através
 #: do bind mount assim que o analista aprova a especificação.
 BACKLOG_RELATIVE = ".painkiller/backlog.json"
+
+#: Linguagem do bloco cercado que a UI troca por opções clicáveis. O mesmo nome
+#: está em web/src/lib/choices.ts — mudar aqui exige mudar lá.
+CHOICES_FENCE = "painkiller-choices"
 
 #: Quantos eventos ficam guardados para replay quando o EventSource reconecta.
 REPLAY_LIMIT = 500
@@ -32,6 +40,14 @@ REPLAY_LIMIT = 500
 #: digitação.
 TRANSIENT_EVENTS = frozenset(
     {AgentEventType.ASSISTANT_DELTA, AgentEventType.THINKING_DELTA}
+)
+
+#: Eventos que fecham a fala do agente. Em qualquer um deles o turno montado a
+#: partir dos deltas precisa ser resolvido: ou o canônico já traz o texto, ou
+#: sintetizamos um ASSISTANT com o que foi acumulado. Sem isto, um agente que
+#: não emite o canônico deixa a conversa em branco para quem reconecta.
+TURN_ENDERS = frozenset(
+    {AgentEventType.ASSISTANT, AgentEventType.RESULT, AgentEventType.TOOL_USE}
 )
 
 
@@ -48,19 +64,36 @@ class AnalysisRun:
         # assina depois do fim esperaria para sempre por um evento que não vem
         # — o pump já publicou seu None antes de a fila dele existir.
         self.done = False
+        # Texto do turno em voo, montado a partir dos deltas. Os deltas não vão
+        # ao histórico (são milhares), mas o texto que eles formam precisa
+        # sobreviver a uma reconexão no meio do turno.
+        self.partial = ""
+        # Quantos eventos não-transitórios já estão gravados no banco. Ao
+        # religar o pump relemos o log inteiro do contêiner, então estes
+        # primeiros eventos são reconstruídos em memória mas não regravados.
+        self.persisted = 0
+        # Modelo anunciado no evento de init; o RESULT nem sempre o repete.
+        self.model = os.environ.get("PAINKILLER_AGENT_MODEL", "")
 
 
 class AnalysisOrchestrator:
     """Starts, feeds and harvests interactive analysis sessions.
 
-    Sessions live in an in-process dict, like InterrogationWizard: a uvicorn
-    restart loses them (and orphans the container, which `stop` would have
-    removed). Moving this to the tracker is the natural next step.
+    `self.runs` é só cache: sessão e eventos vão para o tracker, e
+    `get_or_restore` remonta um run a partir do banco. Um restart do uvicorn
+    portanto não perde a conversa — se o contêiner sobreviveu, o pump é religado
+    e relê o log (ver `_rewind`); se não, o histórico persistido ainda responde.
     """
 
-    def __init__(self, agent: AgentSessionPort, tracker: IssueTrackerPort):
+    def __init__(
+        self,
+        agent: AgentSessionPort,
+        tracker: IssueTrackerPort,
+        usage: Optional[UsageLedgerPort] = None,
+    ):
         self.agent = agent
         self.tracker = tracker
+        self.usage = usage
         self.runs: dict[str, AnalysisRun] = {}
 
     # ---- ciclo de vida -------------------------------------------------
@@ -157,28 +190,54 @@ class AnalysisOrchestrator:
 
         if not run.pump or run.pump.done():
             run.done = False
+            if alive:
+                self._rewind(run)
             run.pump = asyncio.create_task(self._pump(run))
 
         return session
 
     async def _pump(self, run: AnalysisRun) -> None:
         """Drain the adapter's event stream and fan it out to SSE subscribers."""
-        try:
-            async for event in self.agent.stream(run.session.id):
-                self._apply_status(run, event)
-                if event.type not in TRANSIENT_EVENTS:
-                    run.events.append(event)
-                    del run.events[:-REPLAY_LIMIT]
+        # O log do contêiner é relido do início a cada religada do pump, então
+        # os primeiros `skip` eventos já estão no banco: reconstruímos o replay
+        # em memória sem duplicá-los no histórico persistido.
+        skip = run.persisted
+        run.persisted = 0
+
+        async def emit(event: AgentEvent) -> None:
+            nonlocal skip
+            self._apply_status(run, event)
+            if event.type not in TRANSIENT_EVENTS:
+                run.events.append(event)
+                del run.events[:-REPLAY_LIMIT]
+                if skip > 0:
+                    skip -= 1
+                else:
                     try:
                         await self.tracker.save_analysis_event(run.session.id, event)
                     except Exception:
                         pass
-                for queue in list(run.subscribers):
-                    queue.put_nowait(event)
-                try:
-                    await self.tracker.save_analysis_session(run.session)
-                except Exception:
-                    pass
+                    # Mesmo critério do histórico: um turno relido após
+                    # `_rewind` já foi contabilizado na primeira passagem.
+                    if event.type == AgentEventType.RESULT:
+                        await self._record_usage(run, event)
+            for queue in list(run.subscribers):
+                queue.put_nowait(event)
+            try:
+                await self.tracker.save_analysis_session(run.session)
+            except Exception:
+                pass
+
+        try:
+            async for event in self.agent.stream(run.session.id):
+                if event.type == AgentEventType.ASSISTANT_DELTA:
+                    run.partial += event.text
+                elif event.type in TURN_ENDERS:
+                    salvaged = self._salvage(run, event)
+                    run.partial = ""
+                    if salvaged is not None:
+                        await emit(salvaged)
+                await emit(event)
         except Exception as e:
             run.session.status = AnalysisStatus.FAILED
             run.session.error = str(e)
@@ -200,9 +259,61 @@ class AnalysisOrchestrator:
             for queue in list(run.subscribers):
                 queue.put_nowait(None)
 
+    async def _record_usage(self, run: AnalysisRun, event: AgentEvent) -> None:
+        if self.usage is None:
+            return
+        parsed = parse_agent_usage(event.raw)
+        if parsed is None:
+            return
+        input_tokens, output_tokens, cost, model = parsed
+        try:
+            await self.usage.record_usage(
+                UsageRecord(
+                    source=UsageSource.ANALYSIS,
+                    model=model or run.model,
+                    project_id=run.session.project_id,
+                    session_id=run.session.id,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    reported_cost_usd=cost,
+                )
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _rewind(run: AnalysisRun) -> None:
+        """Prepare a run whose pump is about to reread the same container log.
+
+        `container.logs(follow=True)` sempre começa do zero, então o replay
+        reconstrói em memória o que já está no banco; marcamos quantos eventos
+        pular na hora de gravar. Só vale quando o contêiner sobreviveu — um
+        contêiner novo tem log novo.
+        """
+        run.persisted = len(run.events)
+        run.events = []
+        run.partial = ""
+
+    @staticmethod
+    def _salvage(run: AnalysisRun, event: AgentEvent) -> Optional[AgentEvent]:
+        """Turn an unclosed delta stream into a canonical ASSISTANT, if needed."""
+        text = run.partial.strip()
+        if not text:
+            return None
+        # TOOL_USE traz o nome da ferramenta, nunca a fala: o que o agente disse
+        # antes de chamá-la só existe no que acumulamos.
+        if event.type is not AgentEventType.TOOL_USE and (event.text or "").strip():
+            return None
+        return AgentEvent(type=AgentEventType.ASSISTANT, text=text)
+
     @staticmethod
     def _apply_status(run: AnalysisRun, event: AgentEvent) -> None:
-        if event.type == AgentEventType.RESULT:
+        if event.type == AgentEventType.SYSTEM:
+            init = event.raw.get("init") if isinstance(event.raw.get("init"), dict) else {}
+            model = init.get("model") or event.raw.get("model")
+            if model:
+                run.model = str(model)
+        elif event.type == AgentEventType.RESULT:
             # O agente terminou o turno: a bola volta para o analista.
             run.session.status = AnalysisStatus.WAITING_ANALYST
         elif event.type == AgentEventType.EXIT:
@@ -267,6 +378,7 @@ class AnalysisOrchestrator:
         alive = await self.agent.is_alive(session_id)
         if alive and (not run.pump or run.pump.done()):
             run.done = False
+            self._rewind(run)
             run.pump = asyncio.create_task(self._pump(run))
         return session
 
@@ -302,6 +414,10 @@ class AnalysisOrchestrator:
         try:
             for event in backlog:
                 yield event
+            # Quem chega no meio de um turno recebe o que já foi dito como um
+            # delta único, em vez de olhar para um vazio até o agente falar de novo.
+            if run.partial:
+                yield AgentEvent(type=AgentEventType.ASSISTANT_DELTA, text=run.partial)
             # O pump já se esgotou: nada mais será publicado nesta fila.
             if run.done:
                 return
@@ -370,6 +486,18 @@ def build_analysis_prompt(project: Project) -> str:
         "- Faça UMA pergunta por vez e espere a resposta do analista.",
         "- Não escreva código de produção nem implemente nada nesta sessão.",
         "- O repositório do projeto está montado em /workspace.",
+        "",
+        "Quando a pergunta tiver alternativas, a plataforma as mostra como opções "
+        "clicáveis. Para isso, escreva a pergunta normalmente e termine a mensagem "
+        f"com um único bloco de código `{CHOICES_FENCE}` contendo JSON, sem repetir "
+        "as alternativas no texto:",
+        f"```{CHOICES_FENCE}",
+        '{"multiple": false, "options": [',
+        '  {"label": "Rótulo curto", "description": "detalhe opcional"}',
+        "]}",
+        "```",
+        "Use \"multiple\": true só quando fizer sentido marcar mais de uma. "
+        "Não inclua uma opção \"Outro\": o analista sempre pode responder livremente.",
         "",
         "Quando o analista aprovar a especificação, faça as duas coisas:",
         "1. Grave a especificação em docs/superpowers/specs/AAAA-MM-DD-<tema>-design.md.",

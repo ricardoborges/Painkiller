@@ -167,8 +167,8 @@
         <div class="side">
           <time class="faint mono date" datetime={p.created_at}>{when(p.created_at)}</time>
           <div class="actions">
-            <a class="btn btn-line btn-sm" href="/projetos/{p.id}/analise-inicial">
-              <Icon name="play" size={11} /> Iniciar
+            <a class="btn btn-line btn-sm" href="/projetos/{p.id}">
+              Abrir <Icon name="arrow-right" size={11} />
             </a>
             <button
               type="button"

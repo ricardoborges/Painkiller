@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Text,
     Integer,
+    Float,
     Enum as SQLEnum,
     select,
     update,
@@ -27,8 +28,12 @@ from painkiller.core.domain.models import (
     AnalysisStatus,
     AgentEvent,
     AgentEventType,
+    UsageRecord,
+    UsageSettings,
+    UsageSource,
 )
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
+from painkiller.core.ports.usage_ledger import UsageLedgerPort
 
 Base = declarative_base()
 
@@ -103,8 +108,38 @@ class AnalysisEventRecord(Base):
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
-class SQLiteIssueTracker(IssueTrackerPort):
-    """Asynchronous SQLite implementation of IssueTrackerPort."""
+class UsageRecordRow(Base):
+    __tablename__ = "usage_records"
+
+    id = Column(String, primary_key=True)
+    source = Column(SQLEnum(UsageSource), nullable=False)
+    model = Column(String, default="")
+    project_id = Column(String, nullable=True, index=True)
+    task_id = Column(String, nullable=True)
+    session_id = Column(String, nullable=True)
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    reported_cost_usd = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class SettingRecord(Base):
+    __tablename__ = "settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, default="{}")
+
+
+#: Chave da linha de `settings` que guarda orçamento e preços.
+USAGE_SETTINGS_KEY = "usage"
+
+
+def _budget_key(project_id: str) -> str:
+    return f"usage:budget:{project_id}"
+
+
+class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort):
+    """Asynchronous SQLite implementation of IssueTrackerPort and UsageLedgerPort."""
 
     def __init__(self, db_url: str = "sqlite+aiosqlite:///painkiller.db"):
         self.engine = create_async_engine(db_url, echo=False)
@@ -224,6 +259,7 @@ class SQLiteIssueTracker(IssueTrackerPort):
                 await session.execute(delete(ClarificationRecord).where(ClarificationRecord.task_id.in_(task_ids)))
                 await session.execute(delete(TaskRecord).where(TaskRecord.project_id == project_id))
             await session.execute(delete(ProjectRecord).where(ProjectRecord.id == project_id))
+            await session.execute(delete(SettingRecord).where(SettingRecord.key == _budget_key(project_id)))
             await session.commit()
 
     def _to_project_domain(self, record: ProjectRecord) -> Project:
@@ -504,3 +540,89 @@ class SQLiteIssueTracker(IssueTrackerPort):
             updated_at=record.updated_at,
         )
 
+    async def record_usage(self, record: UsageRecord) -> UsageRecord:
+        record_id = record.id or f"usage-{uuid.uuid4().hex[:10]}"
+        row = UsageRecordRow(
+            id=record_id,
+            source=record.source,
+            model=record.model,
+            project_id=record.project_id,
+            task_id=record.task_id,
+            session_id=record.session_id,
+            input_tokens=record.input_tokens,
+            output_tokens=record.output_tokens,
+            reported_cost_usd=record.reported_cost_usd,
+            created_at=record.created_at,
+        )
+        async with self.session_factory() as db_session:
+            db_session.add(row)
+            await db_session.commit()
+        return record.model_copy(update={"id": record_id})
+
+    async def list_usage(
+        self,
+        project_id: Optional[str] = None,
+        since: Optional[datetime] = None,
+    ) -> list[UsageRecord]:
+        async with self.session_factory() as db_session:
+            stmt = select(UsageRecordRow)
+            if project_id:
+                stmt = stmt.where(UsageRecordRow.project_id == project_id)
+            if since:
+                stmt = stmt.where(UsageRecordRow.created_at >= since)
+            res = await db_session.execute(stmt.order_by(UsageRecordRow.created_at.asc()))
+            return [
+                UsageRecord(
+                    id=r.id,
+                    source=r.source,
+                    model=r.model or "",
+                    project_id=r.project_id,
+                    task_id=r.task_id,
+                    session_id=r.session_id,
+                    input_tokens=r.input_tokens or 0,
+                    output_tokens=r.output_tokens or 0,
+                    reported_cost_usd=r.reported_cost_usd,
+                    created_at=r.created_at,
+                )
+                for r in res.scalars().all()
+            ]
+
+    async def _read_setting(self, key: str) -> Optional[str]:
+        async with self.session_factory() as db_session:
+            res = await db_session.execute(select(SettingRecord).where(SettingRecord.key == key))
+            row = res.scalar_one_or_none()
+            return row.value if row else None
+
+    async def _write_setting(self, key: str, value: Optional[str]) -> None:
+        """Upsert a setting; None deletes it."""
+        async with self.session_factory() as db_session:
+            res = await db_session.execute(select(SettingRecord).where(SettingRecord.key == key))
+            row = res.scalar_one_or_none()
+            if value is None:
+                if row is not None:
+                    await db_session.delete(row)
+            elif row is None:
+                db_session.add(SettingRecord(key=key, value=value))
+            else:
+                row.value = value
+            await db_session.commit()
+
+    async def get_usage_settings(self) -> UsageSettings:
+        value = await self._read_setting(USAGE_SETTINGS_KEY)
+        if value is None:
+            return UsageSettings()
+        return UsageSettings.model_validate(json.loads(value or "{}"))
+
+    async def save_usage_settings(self, settings: UsageSettings) -> UsageSettings:
+        await self._write_setting(USAGE_SETTINGS_KEY, settings.model_dump_json())
+        return settings
+
+    async def get_project_budget(self, project_id: str) -> Optional[float]:
+        value = await self._read_setting(_budget_key(project_id))
+        if value is None:
+            return None
+        return json.loads(value).get("budget_usd")
+
+    async def save_project_budget(self, project_id: str, budget_usd: Optional[float]) -> None:
+        value = None if budget_usd is None else json.dumps({"budget_usd": budget_usd})
+        await self._write_setting(_budget_key(project_id), value)

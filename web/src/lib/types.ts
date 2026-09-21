@@ -152,3 +152,72 @@ export interface AgentEvent {
   text: string;
   timestamp: string;
 }
+
+/* ---- custos ---- */
+
+export type UsageSource = 'ANALYSIS' | 'TASK' | 'LLM';
+
+export interface ModelPrice {
+  /** USD por 1 milhão de tokens. */
+  input_per_mtok: number;
+  output_per_mtok: number;
+}
+
+/** Vale para todos os projetos; o orçamento é por projeto. */
+export interface UsageSettings {
+  /** Unidades da moeda local por 1 USD. */
+  exchange_rate: number | null;
+  local_currency: string;
+  prices: Record<string, ModelPrice>;
+}
+
+export interface UsageBucket {
+  key: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  calls: number;
+  /** Chamadas com tokens mas sem preço conhecido — fora do custo. */
+  unpriced_calls: number;
+}
+
+export interface UsageSummary {
+  totals: Omit<UsageBucket, 'key'> & { total_tokens: number };
+  budget: {
+    budget_usd: number | null;
+    spent_usd: number;
+    remaining_usd: number | null;
+    used_ratio: number | null;
+  };
+  currency: { local: string; exchange_rate: number | null };
+  by_source: (UsageBucket & { key: UsageSource })[];
+  by_model: (UsageBucket & {
+    price: ModelPrice | null;
+    price_source: 'settings' | 'catalog' | 'none';
+  })[];
+  daily: { date: string; cost_usd: number; tokens: number }[];
+}
+
+export interface UsageEntry {
+  id: string;
+  source: UsageSource;
+  model: string;
+  project_id: string | null;
+  task_id: string | null;
+  session_id: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  reported_cost_usd: number | null;
+  cost_usd: number | null;
+  created_at: string;
+}
+
+export interface ProviderBalance {
+  provider: string;
+  name: string;
+  /** false = o provedor não expõe saldo por API. */
+  supported: boolean;
+  balance: number | null;
+  currency: string | null;
+  error: string | null;
+}

@@ -14,7 +14,7 @@ Code comments, LLM prompts, API error messages and the UI are in **Portuguese (p
 
 ```bash
 pip install -e ".[dev]"           # install package + test deps
-pytest                             # full suite (53 tests, no Docker daemon needed — docker is mocked)
+pytest                             # full suite (84 tests, no Docker daemon needed — docker is mocked)
 pytest tests/unit/test_orchestrator.py::test_dispatch_task_success   # single test
 uvicorn painkiller.api.server:app --reload    # API + built UI at http://localhost:8000/
 docker build -f docker/worker.Dockerfile -t painkiller-worker:latest .   # worker image (required before dispatching tasks)
@@ -52,17 +52,17 @@ There is no linter or formatter configured.
 
 LLM selection resolves through [litellm_adapter.py](painkiller/adapters/llm/litellm_adapter.py) in this order: `PAINKILLER_LLM_MODEL` / `PAINKILLER_LLM_API_BASE` / `PAINKILLER_LLM_API_KEY`, then provider-specific vars (`NVIDIA_API_KEY`, `OPENAI_API_BASE`, `OPENAI_API_KEY`). When the key starts with `nvapi-` or the base URL contains `nvidia.com`, the adapter bypasses LiteLLM entirely and streams SSE against NVIDIA Build NIM via httpx (`_complete_nvidia`) — that path exists because reasoning models there need streaming and long timeouts. Default model is `moonshotai/kimi-k3`.
 
-Two dependencies are imported but **not** declared in `pyproject.toml`: `python-dotenv` (required by the server) and `httpx` (dev-only extra, but used at runtime by the NVIDIA path). `pypdf` and `python-docx` are optional — [attachment_reader.py](painkiller/core/attachment_reader.py) degrades gracefully without them.
+Two dependencies are imported but **not** declared in `pyproject.toml`: `python-dotenv` (required by the server) and `httpx` (dev-only extra, but used at runtime by the NVIDIA path and the provider-balance lookup). `pypdf` and `python-docx` are optional — [attachment_reader.py](painkiller/core/attachment_reader.py) degrades gracefully without them.
 
 ## Architecture
 
 Hexagonal / ports & adapters. The dependency rule is strict: `core/` and `engine/` import only from `core/`; adapters implement the ABCs in [core/ports/](painkiller/core/ports/); wiring happens only in `create_app()`.
 
 - **[core/domain/models.py](painkiller/core/domain/models.py)** — Pydantic entities (`Project`, `Task`, `ClarificationRequest`, `ExecutionResult`) plus the `TaskStatus` lifecycle: `BACKLOG → READY → RUNNING → {AWAITING_ANALYST | IN_REVIEW | FAILED} → COMPLETED`.
-- **[core/ports/](painkiller/core/ports/)** — five ABCs: `IssueTrackerPort`, `SandboxPort`, `AgentSessionPort`, `GitPort`, `LLMPort`. Adding a method here means updating the adapter *and* the `AsyncMock`-based unit tests.
+- **[core/ports/](painkiller/core/ports/)** — six ABCs: `IssueTrackerPort`, `SandboxPort`, `AgentSessionPort`, `GitPort`, `LLMPort`, `UsageLedgerPort`. Adding a method here means updating the adapter *and* the `AsyncMock`-based unit tests.
 - **[adapters/](painkiller/adapters/)** — `sqlite_tracker` (async SQLAlchemy; list fields are stored as JSON text columns and converted in `_to_task_domain`/`_to_project_domain`), `git_adapter` (shells out to `git`), `docker_runner` (docker-py, one-shot), `docker_agent_session` (docker-py, long-lived), `litellm_adapter`. The container-to-host path rewrite both docker adapters need lives in `sandbox/paths.py`.
 - **[engine/orchestrator.py](painkiller/engine/orchestrator.py)** — the state machine. Everything below hangs off it.
-- **[engine/analysis.py](painkiller/engine/analysis.py)** — the interactive initial analysis (see **Initial analysis** below). Also an in-process session dict.
+- **[engine/analysis.py](painkiller/engine/analysis.py)** — the interactive initial analysis (see **Initial analysis** below). `self.runs` is a cache over the tracker, not the source of truth.
 - **[interrogation/wizard.py](painkiller/interrogation/wizard.py)** — the *older* LLM interview + backlog generation, still wired at `/api/interrogation/*` but no longer reachable from the UI. **Sessions live in an in-process dict**, so they are lost on restart and will not survive multiple workers.
 - **[api/](painkiller/api/)** — FastAPI. Adapters are instantiated in `create_app()` and reached from handlers via `request.app.state.<name>`; tests override by passing a temp `db_url` to `create_app()`.
 - **[api/static/](painkiller/api/static/)** — **generated**, never hand-edited. It is the SvelteKit build output, committed so that a clone can run `uvicorn` with no Node toolchain. The source is `web/`.
@@ -95,6 +95,11 @@ The stream-json envelope from `agy` is parsed in `parse_agent_line` into an `Age
 
 `AnalysisOrchestrator` fans events out to SSE subscribers and keeps a replay buffer, so a reconnecting `EventSource` sees the whole conversation. `POST /api/projects/{id}/analysis` returns immediately, streaming events via `/api/analysis/{sid}/stream`.
 
+Sessions and non-transient events are persisted through the tracker, so `get_or_restore` can rebuild a run after a restart. Two things make that replay honest, and both are easy to break:
+
+- **Deltas are never stored** (`TRANSIENT_EVENTS`) — there are thousands per turn. The turn they build up is kept in `AnalysisRun.partial`, which `subscribe` re-emits as one synthetic `ASSISTANT_DELTA` to whoever reconnects mid-turn, and which `_salvage` converts into a canonical `ASSISTANT` when the agent closes a turn without sending one. Without that, an agent whose `step_update` never carries a `response` leaves a blank transcript on reconnect.
+- **`container.logs(follow=True)` always starts from the beginning.** So relighting the pump on a container that is still alive replays the entire log. `_rewind` handles it: it empties the in-memory buffer and records how many events are already in the database, and `_pump` skips persisting exactly that many. It is only called when the container survived — a container restarted by `resume` has a fresh log.
+
 The handoff to the backlog is a file: the agent writes the spec to `docs/superpowers/specs/` and the decomposed tasks to `.painkiller/backlog.json`, and `POST /api/analysis/{sid}/commit` reads that JSON back off the bind mount.
 
 ### Task dispatch
@@ -102,6 +107,22 @@ The handoff to the backlog is a file: the agent writes the spec to `docs/superpo
 `dispatch_task` refuses to run a task whose `dependencies` are not all `COMPLETED`, creates/checks out `feature/{task_id}`, builds the Portuguese instruction prompt (including the clarification protocol block) in `_build_task_instructions`, then runs `painkiller-worker:latest` with the target repo bind-mounted at `/workspace`. API keys are copied from the server's environment into the container, and NVIDIA/custom-base vars are remapped onto `OPENAI_API_KEY`/`OPENAI_API_BASE` because that is what Aider reads.
 
 Dispatch is synchronous inside the HTTP request (the blocking docker-py wait is offloaded with `run_in_executor`), so `POST /api/tasks/{id}/dispatch` blocks for the full agent run.
+
+### Usage and cost tracking
+
+Every token spent lands in the `usage_records` table through `UsageLedgerPort`, which `SQLiteIssueTracker` also implements (same database). There are three sources, all optional dependencies (`usage=None` disables recording, which is why older tests need no change):
+
+- **Initial analysis** — `AnalysisOrchestrator._pump` books a record on each `RESULT`, parsed by `parse_agent_usage` in [core/usage.py](painkiller/core/usage.py), which tolerates both the Antigravity and the Claude Code envelopes. It books in the same branch that persists the event, so the `_rewind` skip also keeps a replayed log from being charged twice. The model comes from the `init` event, falling back to `PAINKILLER_AGENT_MODEL`.
+- **Task dispatch** — `parse_aider_usage` sums the `Tokens: … sent, … received. Cost: $… message` lines in the worker's logs. It records on every exit code: a failed run still costs money.
+- **Direct LLM calls** — `LiteLLMAdapter`; the NVIDIA path requests `stream_options.include_usage` to get counts. `LLMPort.complete`/`structured_output` take an optional `project_id` so the spend is attributed; a call without one is recorded but shows up on no page.
+
+Cost is computed **at read time**, never stored, so changing a price reprices history. The order in `record_cost` is: the analyst's price in `UsageSettings.prices` (matched also without the `provider/` prefix), then the cost the tool reported, then LiteLLM's bundled catalog (`adapters/llm/pricing.py`), then "sem preço" (counted in `unpriced_calls`, excluded from totals). The catalog does not know `gemini-3.8-flash`, so in practice the analyst has to enter that price.
+
+**Everything is per project.** The summary and the records are read at `GET /api/projects/{id}/usage[/records]`, and each project has its own budget (`PUT /api/projects/{id}/usage/budget`, stored in the `settings` table under `usage:budget:{id}` via `get_project_budget`/`save_project_budget`, removed with the project). There is no app-wide summary endpoint. What stays global, at `/api/usage/settings`, is what does not vary by project: model prices, local currency and exchange rate — changing them reprices every project.
+
+"Crédito disponível" is the project's `budget_usd − spent`: Gemini, OpenAI, Anthropic and NVIDIA have no balance API. DeepSeek and OpenRouter do, and `adapters/llm/balance.py` queries them live at `GET /api/usage/balances`. `app.state.price_lookup` and `app.state.balance_lookup` exist so tests can swap the catalog and the network out.
+
+The token counts come from the agents' own output formats, which are not a stable contract: if a new `agy` or Aider version changes them, recording stops silently (nothing breaks, the page just stops growing). The tests in `test_usage.py` pin the formats that are expected.
 
 ## Frontend
 
@@ -114,11 +135,17 @@ Design rules that are load-bearing, not decoration:
 - **Exactly one colour exists.** The whole UI is ink on paper; the vermilion `--accent` is reserved for a single meaning — an agent is blocked waiting for the analyst (`AWAITING_ANALYST`, i.e. exit 42). Task statuses are otherwise distinguished by weight, marker and diagonal hatching (`FAILED`), never by a status-colour palette. Spending the accent anywhere else breaks the signal.
 - Zero border-radius, hairline `1px` rules instead of cards, `Geist` + `Geist Mono`, no emoji (icons are inline SVG in `Icon.svelte`), skeletons instead of spinners.
 
-**Terminology:** the UI calls this step *"análise inicial"* and routes it at `/projetos/[id]/analise-inicial`, and the backend now agrees (`/api/analysis/*`). The older `/api/interrogation/*` endpoints and their `api.ts` wrappers are still there but unused by the UI. UI copy is pt-BR.
+**Terminology:** the UI calls this step *"análise inicial"* and routes it at `/projetos/[id]/analise-inicial`, and the backend now agrees (`/api/analysis/*`). The project tabs are numbered because the first three are a path, not a menu: `1 Contexto → 2 Análise inicial → 3 Backlog`, with `Artefatos` and `Custos` set apart as reference views. That tab (`/projetos/[id]/artefatos`) is the single home for everything the agent wrote — superpowers specs and plans, `.painkiller/backlog.json`, and the per-file Gitea links — which used to be scattered across a sidebar panel inside the analysis and a link in the project subtitle. The older `/api/interrogation/*` endpoints and their `api.ts` wrappers are still there but unused by the UI. UI copy is pt-BR.
 
-**Long-running requests:** `POST /api/tasks/{id}/dispatch` and `POST /api/tasks/{id}/clarification` hold the HTTP connection open for the entire container run. The UI has no timeout and shows an elapsed clock (`Elapsed.svelte`) because that is the only honest progress signal available. The análise-inicial page is the exception: it streams, so the clock there only covers the gap between turns, and `TOOL_USE` events give real progress while the agent works in silence.
+**Long-running requests:** `POST /api/tasks/{id}/dispatch` and `POST /api/tasks/{id}/clarification` hold the HTTP connection open for the entire container run. The UI has no timeout and shows an elapsed clock (`Elapsed.svelte`) because that is the only honest progress signal available. The análise-inicial page is the exception: it streams, so the clock there only covers the gap between turns, and `TOOL_USE` events are deliberately **not** shown in the transcript (the audience is not developers) — they only trigger a refresh of the artifacts, while a generic "Trabalhando." indicator covers the silence.
 
-**Analysis sessions are in-process** (a dict on `AnalysisOrchestrator`), so a uvicorn restart invalidates them, orphans the container and makes `/analysis/{id}/message` return 404. The page detects that 404 specifically and says so. It also stashes the session id in `sessionStorage` so a page reload re-attaches to the running session instead of starting a second container — the SSE replay buffer means re-attaching loses no conversation.
+**The analysis session lives in a module, not in the route component** ([stores/analysis.svelte.ts](web/src/lib/stores/analysis.svelte.ts), keyed by project id). The page is a thin view over it: leaving for the backlog tab and coming back no longer closes the `EventSource` nor rebuilds the transcript, and `ensureBooted()` makes the second visit a no-op instead of a second container. Only `signOut` disposes it. The store still stashes the session id in `sessionStorage`/`localStorage` so a hard reload re-attaches, and still reports a 404 from `/analysis/{id}/message` as a dead session.
+
+**Clickable choices.** `build_analysis_prompt` tells the agent to end a multiple-choice question with a fenced ```` ```painkiller-choices ```` JSON block (`{"multiple": bool, "options": [{"label", "description"}]}`). [lib/choices.ts](web/src/lib/choices.ts) strips it from the markdown and `Choices.svelte` renders it as options plus a free-text field; the answer goes through the same `send()` as the composer, so the backend is unaware of it. The fence name is duplicated in `CHOICES_FENCE` (analysis.py) and `choices.ts`. A missing or malformed block just falls back to plain markdown.
+
+The analysis page sizes itself to the viewport (measured, because the project header height varies) and scrolls **inside** the transcript, so the composer stays anchored and the document itself does not scroll. Auto-scroll only follows the stream while the reader is already at the bottom. Session actions live in a sticky toolbar where exactly one button is solid — `Importar backlog`, the action that ends the step; `Recomeçar do zero` is demoted into the `···` menu.
+
+`/projetos/[id]/custos` is the usage page, scoped to that project (there is no global one): credit left, spend in USD and local currency (via a manually entered exchange rate), tokens, per-day chart and breakdowns by step/model, plus a form that saves the project's budget and the shared price list in one go. Provider balances are shown there too, labelled as shared, since the provider account is not per project. Going over budget is shown by weight and hatching, **not** by the accent — that colour stays reserved for exit 42.
 
 `/pendencias` sweeps every project and lists its tasks client-side (N+1) because the API has no global pending-clarifications endpoint. That is the natural place for a backend addition.
 

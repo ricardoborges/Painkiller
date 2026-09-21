@@ -1,12 +1,92 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
-  import { baseName } from '$lib/api';
+  import { api, baseName } from '$lib/api';
+  import type { AnalysisSession, Task } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
   import ProjectDialog from '$lib/components/ProjectDialog.svelte';
+  import Skeleton from '$lib/components/Skeleton.svelte';
 
   let { data } = $props();
 
   let dialogOpen = $state(false);
+
+  /* Onde o projeto está no caminho Contexto → Análise → Backlog. Deduzido do
+     que existe: tarefas importadas mandam; senão, a sessão de análise ativa;
+     senão, a última sessão que este navegador lembra (o servidor só expõe a
+     ativa). Nada disso → primeira vez. */
+  type Stage =
+    | { kind: 'new' }
+    | { kind: 'analysis'; session: AnalysisSession }
+    | { kind: 'analysis-done'; session: AnalysisSession }
+    | { kind: 'analysis-failed'; session: AnalysisSession }
+    | { kind: 'backlog'; tasks: Task[] };
+
+  let stage = $state<Stage | null>(null);
+
+  function recallSession(projectId: string): string | null {
+    // Mesma chave usada por stores/analysis.svelte.ts.
+    const key = `pk_analysis_${projectId}`;
+    try {
+      return sessionStorage.getItem(key) || localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  async function detect(projectId: string): Promise<Stage> {
+    const [tasks, current] = await Promise.all([
+      api.listTasks(projectId).catch(() => [] as Task[]),
+      api.getCurrentAnalysis(projectId).catch(() => ({ session: null }))
+    ]);
+    if (tasks.length) return { kind: 'backlog', tasks };
+    if (current.session) return { kind: 'analysis', session: current.session };
+
+    const previous = recallSession(projectId);
+    if (previous) {
+      try {
+        const session = await api.getAnalysis(previous);
+        if (session.status === 'FINISHED') return { kind: 'analysis-done', session };
+        if (session.status === 'FAILED') return { kind: 'analysis-failed', session };
+        return { kind: 'analysis', session };
+      } catch {
+        /* sessão esquecida pelo servidor: conta como primeira vez */
+      }
+    }
+    return { kind: 'new' };
+  }
+
+  $effect(() => {
+    const id = data.project.id;
+    stage = null;
+    detect(id).then((s) => {
+      if (data.project.id === id) stage = s;
+    });
+  });
+
+  const base = $derived(`/projetos/${data.project.id}`);
+
+  /* 0 = contexto, 1 = análise, 2 = backlog: o passo em que o projeto está. */
+  const current = $derived(
+    !stage || stage.kind === 'new' ? 0 : stage.kind === 'backlog' ? 2 : 1
+  );
+
+  const tally = $derived.by(() => {
+    if (stage?.kind !== 'backlog') return null;
+    const t = stage.tasks;
+    return {
+      total: t.length,
+      done: t.filter((x) => x.status === 'COMPLETED').length,
+      awaiting: t.filter((x) => x.status === 'AWAITING_ANALYST').length,
+      running: t.filter((x) => x.status === 'RUNNING').length,
+      failed: t.filter((x) => x.status === 'FAILED').length
+    };
+  });
+
+  const ANALYSIS_DETAIL: Record<string, string> = {
+    STARTING: 'Subindo o contêiner do agente.',
+    WAITING_AGENT: 'O agente está trabalhando.',
+    WAITING_ANALYST: 'O agente aguarda a sua resposta.'
+  };
 
   const sections = $derived([
     { label: 'Descrição geral', text: data.project.description },
@@ -32,6 +112,70 @@
   </div>
 
   <aside>
+    <div class="panel">
+      <h2 class="label">Andamento</h2>
+
+      <ol class="trail">
+        {#each ['Contexto', 'Análise inicial', 'Backlog'] as label, i (label)}
+          {@const done = stage !== null && i < current}
+          <li class:done class:here={stage !== null && i === current}>
+            <span class="mark mono" aria-hidden="true">
+              {#if done}<Icon name="check" size={10} />{:else}{i + 1}{/if}
+            </span>
+            {label}
+          </li>
+        {/each}
+      </ol>
+
+      {#if !stage}
+        <Skeleton rows={2} />
+      {:else if stage.kind === 'new'}
+        <p class="state">Primeira vez neste projeto.</p>
+        <p class="help">
+          O agente vai entrevistar você a partir do contexto ao lado e propor o backlog.
+        </p>
+        <a class="btn btn-solid go" href="{base}/analise-inicial">
+          <Icon name="play" size={11} /> Iniciar análise
+        </a>
+      {:else if stage.kind === 'analysis'}
+        <p class="state">Análise inicial em andamento.</p>
+        <p class="help">{ANALYSIS_DETAIL[stage.session.status] ?? ''}</p>
+        <a class="btn btn-solid go" href="{base}/analise-inicial">
+          Continuar análise <Icon name="arrow-right" size={11} />
+        </a>
+      {:else if stage.kind === 'analysis-done'}
+        <p class="state">Análise concluída.</p>
+        <p class="help">O backlog proposto pelo agente ainda não foi importado.</p>
+        <a class="btn btn-solid go" href="{base}/analise-inicial">
+          Importar backlog <Icon name="arrow-right" size={11} />
+        </a>
+      {:else if stage.kind === 'analysis-failed'}
+        <p class="state">A última análise falhou.</p>
+        {#if stage.session.error}
+          <p class="help clamp-2" title={stage.session.error}>{stage.session.error}</p>
+        {/if}
+        <a class="btn btn-solid go" href="{base}/analise-inicial">
+          Retomar análise <Icon name="arrow-right" size={11} />
+        </a>
+      {:else if tally}
+        <p class="state">
+          {tally.done === tally.total ? 'Backlog concluído.' : 'Backlog em execução.'}
+        </p>
+        <p class="help mono counts">
+          {tally.done}/{tally.total} concluídas{#if tally.running}&nbsp;· {tally.running} executando{/if}{#if tally.failed}&nbsp;· {tally.failed} com falha{/if}
+        </p>
+        {#if tally.awaiting}
+          <a class="blocked label" href="{base}/backlog">
+            <span class="dot" aria-hidden="true"></span>
+            {tally.awaiting} aguardando analista
+          </a>
+        {/if}
+        <a class="btn btn-solid go" href="{base}/backlog">
+          Abrir backlog <Icon name="arrow-right" size={11} />
+        </a>
+      {/if}
+    </div>
+
     <div class="panel">
       <h2 class="label">Anexos de contexto</h2>
       {#if data.project.attachments.length}
@@ -60,9 +204,6 @@
     </div>
 
     <div class="acts">
-      <a class="btn btn-solid" href="/projetos/{data.project.id}/analise-inicial">
-        <Icon name="play" size={11} /> Iniciar análise
-      </a>
       <button type="button" class="btn btn-line" onclick={() => (dialogOpen = true)}>
         <Icon name="pencil" size={11} /> Editar
       </button>
@@ -107,6 +248,77 @@
   .panel {
     border-top: 1px solid var(--rule-ink);
     padding-top: var(--s3);
+  }
+
+  /* Mesma régua das abas do cabeçalho: passo atual preenchido. */
+  .trail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2) var(--s4);
+    margin: var(--s3) 0 var(--s4);
+    font-size: var(--t-small);
+    color: var(--ink-4);
+  }
+
+  .trail li {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .trail li.done {
+    color: var(--ink-3);
+  }
+
+  .trail li.here {
+    color: var(--ink);
+  }
+
+  .mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.125rem;
+    height: 1.125rem;
+    font-size: var(--t-label);
+    border: 1px solid var(--rule-2);
+  }
+
+  .here .mark {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+  }
+
+  .state {
+    margin-top: var(--s2);
+    font-size: var(--t-small);
+    color: var(--ink);
+  }
+
+  .counts {
+    font-size: var(--t-micro);
+  }
+
+  .blocked {
+    display: flex;
+    width: fit-content;
+    align-items: center;
+    gap: 0.375rem;
+    margin-top: var(--s3);
+    color: var(--accent);
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    background: currentColor;
+  }
+
+  .go {
+    display: flex;
+    width: fit-content;
+    margin-top: var(--s4);
   }
 
   .files {

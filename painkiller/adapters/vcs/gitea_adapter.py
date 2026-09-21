@@ -31,7 +31,7 @@ class GiteaAdapter:
         ).rstrip("/")
         self.external_base_url = (
             external_base_url
-            or os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL", "http://localhost:3000")
+            or os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL", "http://localhost:3300")
         ).rstrip("/")
         self.username = username or os.environ.get("PAINKILLER_GITEA_USER", "painkiller")
         self.password = password or os.environ.get("PAINKILLER_GITEA_PASSWORD", "painkiller_secret_2026")
@@ -89,20 +89,30 @@ class GiteaAdapter:
                 def _exec_create():
                     try:
                         container = self.docker_client.containers.get(self.container_name)
-                        cmd = (
-                            f'gitea admin user create --admin '
-                            f'--username "{self.username}" '
-                            f'--password "{self.password}" '
-                            f'--email "{self.email}" '
-                            f'--must-change-password=false'
-                        )
+                        # O CLI do Gitea recusa rodar como root, e `su git` já como
+                        # git pede senha: executa direto como git. Lista em vez de
+                        # string para a senha não passar por shell nenhum.
                         exit_code, output = container.exec_run(
-                            f'su git -c \'{cmd}\'',
+                            [
+                                "gitea", "admin", "user", "create", "--admin",
+                                "--username", self.username,
+                                "--password", self.password,
+                                "--email", self.email,
+                                "--must-change-password=false",
+                            ],
                             user="git",
                         )
-                        if exit_code != 0:
-                            # Try without su if container runs as git user directly
-                            exit_code, output = container.exec_run(cmd)
+                        if exit_code != 0 and b"already exists" in (output or b""):
+                            # Usuário existe com outra senha: alinha com a do .env.
+                            exit_code, output = container.exec_run(
+                                [
+                                    "gitea", "admin", "user", "change-password",
+                                    "--username", self.username,
+                                    "--password", self.password,
+                                    "--must-change-password=false",
+                                ],
+                                user="git",
+                            )
                         logger.info(f"Gitea user creation output: code={exit_code}, out={output}")
                         return exit_code == 0
                     except Exception as ex:
