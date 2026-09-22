@@ -51,6 +51,8 @@ services:
       # Precisam bater com as tags dos servicos *-image abaixo.
       PAINKILLER_WORKER_IMAGE: painkiller-worker:latest
       PAINKILLER_AGENT_IMAGE: painkiller-agent:latest
+      PAINKILLER_WORKER_DEEPSEEK_IMAGE: painkiller-worker-deepseek:latest
+      PAINKILLER_AGENT_DEEPSEEK_IMAGE: painkiller-agent-deepseek:latest
 
       # Backend do agente de analise inicial: Antigravity CLI + superpowers + Gemini 3.8 Flash.
       # Autentica via GEMINI_API_KEY, que vem SO do env_file (.env). Nao repetir
@@ -118,6 +120,24 @@ services:
       context: .
       dockerfile: docker/agent.Dockerfile
     image: painkiller-agent:latest
+    profiles: ["build"]
+    command: ["true"]
+    restart: "no"
+
+  worker-deepseek-image:
+    build:
+      context: .
+      dockerfile: docker/deepseek-worker.Dockerfile
+    image: painkiller-worker-deepseek:latest
+    profiles: ["build"]
+    command: ["true"]
+    restart: "no"
+
+  agent-deepseek-image:
+    build:
+      context: .
+      dockerfile: docker/deepseek-agent.Dockerfile
+    image: painkiller-agent-deepseek:latest
     profiles: ["build"]
     command: ["true"]
     restart: "no"
