@@ -143,7 +143,7 @@ async def test_commit_without_backlog_file_is_409(client, tmp_path):
     res = await client.post(f"/api/analysis/{sid}/commit")
 
     assert res.status_code == 409
-    assert "backlog.json" in res.json()["detail"]
+    assert f".painkiller/backlogs/{sid}.json" in res.json()["detail"]
 
 
 async def test_unknown_session_is_404_on_every_verb(client):

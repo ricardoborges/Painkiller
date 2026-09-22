@@ -230,7 +230,7 @@ export const api = {
   finishAnalysis: (sessionId: string) =>
     request<AnalysisSession>(`/analysis/${sessionId}/finish`, { method: 'POST' }),
 
-  /** Importa o .painkiller/backlog.json que o agente gravou no repositório. */
+  /** Importa o backlog que o agente desta análise gravou em .painkiller/backlogs/. */
   commitAnalysisBacklog: (sessionId: string, iterationSessionId?: string) => {
     const qs = iterationSessionId ? `?iteration_session_id=${encodeURIComponent(iterationSessionId)}` : '';
     return request<Task[]>(`/analysis/${sessionId}/commit${qs}`, { method: 'POST' });

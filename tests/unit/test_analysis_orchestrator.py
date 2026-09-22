@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from typing import AsyncIterator, Optional
 from unittest.mock import AsyncMock
 
@@ -17,7 +18,12 @@ from painkiller.core.domain.models import (
     Task,
 )
 from painkiller.core.ports.agent_session import AgentSessionPort
-from painkiller.engine.analysis import AnalysisOrchestrator, build_analysis_prompt
+from painkiller.engine.analysis import (
+    LEGACY_BACKLOG_RELATIVE,
+    AnalysisOrchestrator,
+    backlog_relative,
+    build_analysis_prompt,
+)
 
 
 class FakeAgentSession(AgentSessionPort):
@@ -265,23 +271,38 @@ async def test_unknown_session_is_rejected(tmp_path):
 # ---- colheita do backlog ---------------------------------------------------
 
 
-async def test_commit_backlog_creates_tasks_and_resolves_dependencies(tmp_path):
-    (tmp_path / ".painkiller").mkdir()
-    (tmp_path / ".painkiller" / "backlog.json").write_text(
-        json.dumps(
-            {
-                "spec_path": "docs/superpowers/specs/2026-09-20-x-design.md",
-                "tasks": [
-                    {"title": "Modelo", "description": "d1", "target_files": ["a.py"],
-                     "acceptance_criteria": ["c1"], "dependencies": []},
-                    {"title": "API", "description": "d2", "target_files": ["b.py"],
-                     "acceptance_criteria": ["c2"], "dependencies": ["Modelo"]},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
+BACKLOG_DATA = {
+    "spec_path": "docs/superpowers/specs/2026-09-20-x-design.md",
+    "tasks": [
+        {"title": "Modelo", "description": "d1", "target_files": ["a.py"],
+         "acceptance_criteria": ["c1"], "dependencies": []},
+        {"title": "API", "description": "d2", "target_files": ["b.py"],
+         "acceptance_criteria": ["c2"], "dependencies": ["Modelo"]},
+    ],
+}
 
+
+def _write_backlog(repo, relative, data=BACKLOG_DATA):
+    path = repo.joinpath(*relative.split("/"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+async def _harvest_engine(tmp_path):
+    tracker = AsyncMock()
+    tracker.create_task.side_effect = lambda **kw: Task(id=f"task-{kw['title']}", **kw)
+    tracker.update_task_status.side_effect = lambda tid, status: Task(
+        id=tid, project_id="p", title="t", description="", status=status
+    )
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.EXIT, text="0", raw={"exit_code": 0})])
+    engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
+    session = await engine.start(_project(tmp_path))
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    return engine, session, tracker
+
+
+async def test_commit_backlog_creates_tasks_and_resolves_dependencies(tmp_path):
     created = []
 
     async def create_task(project_id, title, description, target_files, acceptance_criteria, dependencies):
@@ -307,6 +328,7 @@ async def test_commit_backlog_creates_tasks_and_resolves_dependencies(tmp_path):
     engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
     session = await engine.start(_project(tmp_path))
     await asyncio.wait_for(agent.release.wait(), timeout=5)
+    _write_backlog(tmp_path, backlog_relative(session.id))
 
     tasks = await engine.commit_backlog(session.id)
 
@@ -323,8 +345,41 @@ async def test_commit_backlog_without_the_file_is_a_clear_error(tmp_path):
     session = await engine.start(_project(tmp_path))
     await asyncio.wait_for(agent.release.wait(), timeout=5)
 
-    with pytest.raises(FileNotFoundError, match="backlog.json"):
+    with pytest.raises(FileNotFoundError, match=".painkiller/backlogs/"):
         await engine.commit_backlog(session.id)
+
+
+async def test_commit_backlog_ignores_another_sessions_file(tmp_path):
+    engine, session, tracker = await _harvest_engine(tmp_path)
+    _write_backlog(tmp_path, backlog_relative("analysis-outra"))
+
+    with pytest.raises(FileNotFoundError):
+        await engine.commit_backlog(session.id)
+    tracker.create_task.assert_not_called()
+
+
+async def test_commit_backlog_rejects_a_legacy_file_older_than_the_session(tmp_path):
+    engine, session, tracker = await _harvest_engine(tmp_path)
+    legacy = _write_backlog(tmp_path, LEGACY_BACKLOG_RELATIVE)
+    # Escrito por uma sessão anterior: antes do início desta análise.
+    old = session.created_at.timestamp() - 3600
+    os.utime(legacy, (old, old))
+
+    with pytest.raises(FileNotFoundError):
+        await engine.commit_backlog(session.id)
+    tracker.create_task.assert_not_called()
+    assert legacy.exists()
+
+
+async def test_commit_backlog_adopts_a_fresh_legacy_file_so_it_is_not_reimported(tmp_path):
+    engine, session, tracker = await _harvest_engine(tmp_path)
+    legacy = _write_backlog(tmp_path, LEGACY_BACKLOG_RELATIVE)
+
+    await engine.commit_backlog(session.id)
+
+    assert tracker.create_task.call_count == 2
+    assert not legacy.exists()
+    assert tmp_path.joinpath(*backlog_relative(session.id).split("/")).exists()
 
 
 async def test_start_force_new_stops_previous_active_session(tmp_path):

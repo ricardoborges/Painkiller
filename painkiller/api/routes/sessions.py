@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from painkiller.api.security import require_project
 from painkiller.core.domain.models import SessionStatus, TaskStatus
+from painkiller.engine.analysis import backlog_relative
 
 router = APIRouter(
     prefix="/api/projects/{project_id}/sessions",
@@ -155,18 +156,21 @@ async def list_session_artifacts(project_id: str, session_id: str, request: Requ
                     "is_session_spec": bool(is_current_session_spec),
                 })
 
-    # 2. Look for .painkiller/backlog.json
-    backlog_file = repo_dir / ".painkiller" / "backlog.json"
-    if backlog_file.is_file():
-        stat = backlog_file.stat()
-        results.append({
-            "path": ".painkiller/backlog.json",
-            "filename": "backlog.json",
-            "category": "backlog",
-            "size_bytes": stat.st_size,
-            "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-            "is_session_spec": False,
-        })
+    # 2. O backlog desta sessão: o arquivo da análise vinculada a ela. O
+    # .painkiller/backlog.json antigo é do projeto, não de uma sessão.
+    if session.analysis_session_id:
+        backlog_rel = backlog_relative(session.analysis_session_id)
+        backlog_file = repo_dir / backlog_rel
+        if backlog_file.is_file():
+            stat = backlog_file.stat()
+            results.append({
+                "path": backlog_rel,
+                "filename": backlog_file.name,
+                "category": "backlog",
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                "is_session_spec": False,
+            })
 
     return results
 

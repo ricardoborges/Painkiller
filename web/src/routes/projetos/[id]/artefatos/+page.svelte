@@ -121,7 +121,7 @@
       <Placeholder
         kind="empty"
         title={scope === 'session' && activeSession ? `Nenhum artefato vinculado à Sessão ${activeSession.number}` : 'Nenhum artefato ainda'}
-        detail="Ao executar a análise da sessão, o agente grava a especificação em docs/superpowers/specs/ e o backlog em .painkiller/backlog.json."
+        detail="Ao executar a análise da sessão, o agente grava a especificação em docs/superpowers/specs/ e o backlog em .painkiller/backlogs/, um arquivo por sessão."
       >
         {#snippet action()}
           <div class="empty-actions">
@@ -229,8 +229,8 @@
           <dd class="help">Escrito pelo agente de análise ao fechar o brainstorming.</dd>
         </div>
         <div>
-          <dt class="mono">.painkiller/backlog.json</dt>
-          <dd class="help">Lido por “Importar backlog” e convertido em tarefas.</dd>
+          <dt class="mono">.painkiller/backlogs/</dt>
+          <dd class="help">Um arquivo por análise, lido por “Importar backlog” daquela sessão e convertido em tarefas.</dd>
         </div>
         <div>
           <dt class="mono">.painkiller/clarification.json</dt>

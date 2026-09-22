@@ -105,6 +105,9 @@ async def test_start_binds_analysis_to_requested_iteration_session(tmp_path):
     assert s2.analysis_session_id == session.id
     assert s1.analysis_session_id == "analysis-old"
     assert "SESSÃO 2" in agent.start.call_args.kwargs["prompt"]
+    # Cada análise grava o backlog no próprio arquivo, nunca no compartilhado.
+    assert f".painkiller/backlogs/{session.id}.json" in agent.start.call_args.kwargs["prompt"]
+    assert ".painkiller/backlog.json" not in agent.start.call_args.kwargs["prompt"]
 
 
 async def test_start_without_iteration_session_uses_latest_not_first(tmp_path):
@@ -140,4 +143,4 @@ def test_build_analysis_prompt_chat_mode_from_second_session():
     assert "Conduza a elicitação" not in second
     # O formato de opções e a entrega do backlog continuam valendo no chat.
     assert "painkiller-choices" in second
-    assert ".painkiller/backlog.json" in second
+    assert ".painkiller/backlog" in second

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
 from painkiller.core.domain.models import (
@@ -29,9 +30,20 @@ from painkiller.core.attachment_reader import extract_attachment_text
 
 logger = logging.getLogger(__name__)
 
-#: Onde o agente deposita o backlog decomposto, lido de volta pela API através
-#: do bind mount assim que o analista aprova a especificação.
-BACKLOG_RELATIVE = ".painkiller/backlog.json"
+#: Pasta onde cada análise deposita o seu backlog decomposto, lido de volta pela
+#: API através do bind mount assim que o analista aprova a especificação. Um
+#: arquivo por análise: um arquivo único para o projeto fazia a sessão seguinte
+#: reimportar as tarefas da anterior.
+BACKLOGS_RELATIVE = ".painkiller/backlogs"
+
+#: Arquivo único de versões anteriores. Só é aceito na importação se foi escrito
+#: depois do início da análise, e então é movido para o arquivo da sessão.
+LEGACY_BACKLOG_RELATIVE = ".painkiller/backlog.json"
+
+
+def backlog_relative(analysis_session_id: str) -> str:
+    """Repo-relative path of the backlog file owned by one analysis session."""
+    return f"{BACKLOGS_RELATIVE}/{analysis_session_id}.json"
 
 #: Pasta onde a superpowers grava specs e planos; versionada no remoto (Gitea)
 #: ao fim de cada turno do agente e na importação do backlog.
@@ -193,6 +205,7 @@ class AnalysisOrchestrator:
         await self._ensure_default_branch(project)
         prompt = build_analysis_prompt(
             project,
+            backlog_path=backlog_relative(session_id),
             session_number=session_number,
             previous_sessions=previous_sessions,
             previous_completed_tasks=previous_completed_tasks,
@@ -573,18 +586,44 @@ class AnalysisOrchestrator:
 
     # ---- colheita ------------------------------------------------------
 
+    @staticmethod
+    def _backlog_file(run: AnalysisRun) -> Optional[str]:
+        """Locate this session's backlog, adopting a fresh legacy file if needed.
+
+        Uma análise iniciada antes da troca de caminho ainda grava o arquivo
+        único; ele só vale se foi escrito depois do início desta análise (senão
+        é o backlog de outra sessão) e é movido para o caminho desta sessão,
+        para não ser importado de novo pela próxima.
+        """
+        own = os.path.join(run.repo_path, *backlog_relative(run.session.id).split("/"))
+        if os.path.exists(own):
+            return own
+        legacy = os.path.join(run.repo_path, *LEGACY_BACKLOG_RELATIVE.split("/"))
+        if not os.path.exists(legacy):
+            return None
+        started = run.session.created_at
+        if isinstance(started, datetime):
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            written = datetime.fromtimestamp(os.path.getmtime(legacy), timezone.utc)
+            if written < started:
+                return None
+        os.makedirs(os.path.dirname(own), exist_ok=True)
+        os.replace(legacy, own)
+        return own
+
     async def commit_backlog(
         self,
         session_id: str,
         iteration_session_id: Optional[str] = None,
     ) -> list[Task]:
-        """Turn the backlog.json the agent wrote into real tasks."""
+        """Turn the backlog file this analysis wrote into real tasks."""
         run = self._require(session_id)
-        path = os.path.join(run.repo_path, ".painkiller", "backlog.json")
-        if not os.path.exists(path):
+        path = self._backlog_file(run)
+        if path is None:
             raise FileNotFoundError(
-                "O agente ainda não gravou .painkiller/backlog.json. Conclua a análise e peça "
-                "a ele para registrar o backlog antes de importar."
+                f"O agente ainda não gravou {backlog_relative(session_id)}. Conclua a análise e "
+                "peça a ele para registrar o backlog antes de importar."
             )
 
         with open(path, "r", encoding="utf-8") as f:
@@ -662,6 +701,7 @@ class AnalysisOrchestrator:
 
 def build_analysis_prompt(
     project: Project,
+    backlog_path: str = LEGACY_BACKLOG_RELATIVE,
     session_number: int = 1,
     previous_sessions: Optional[list[IterationSession]] = None,
     previous_completed_tasks: Optional[list[Task]] = None,
@@ -718,7 +758,8 @@ def build_analysis_prompt(
         "",
         "Quando o analista aprovar uma especificação, faça as seguintes coisas:",
         "1. Grave a especificação em docs/superpowers/specs/AAAA-MM-DD-<tema>-design.md.",
-        f"2. Grave o backlog decomposto em {BACKLOG_RELATIVE}, exatamente neste formato:",
+        f"2. Grave o backlog decomposto em {backlog_path} (arquivo exclusivo desta sessão; "
+        "não leia nem reaproveite backlogs de outras sessões), exatamente neste formato:",
         '   {"spec_path": "<caminho do spec>", "tasks": [',
         '     {"title": "...", "description": "...", "target_files": ["..."],',
         '      "acceptance_criteria": ["..."], "dependencies": ["<title de outra task>"]}',

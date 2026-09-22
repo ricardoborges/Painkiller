@@ -277,13 +277,19 @@ async def list_project_docs(project_id: str, request: Request):
                     "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
                 })
 
-    # 2. Look for .painkiller/backlog.json
-    backlog_file = repo_dir / ".painkiller" / "backlog.json"
-    if backlog_file.is_file():
+    # 2. Backlogs: um por análise em .painkiller/backlogs/, mais o arquivo
+    # único de versões anteriores, se ainda existir.
+    backlog_files = sorted((repo_dir / ".painkiller" / "backlogs").glob("*.json"))
+    legacy = repo_dir / ".painkiller" / "backlog.json"
+    if legacy.is_file():
+        backlog_files.append(legacy)
+    for backlog_file in backlog_files:
+        if not backlog_file.is_file():
+            continue
         stat = backlog_file.stat()
         results.append({
-            "path": ".painkiller/backlog.json",
-            "filename": "backlog.json",
+            "path": backlog_file.relative_to(repo_dir).as_posix(),
+            "filename": backlog_file.name,
             "category": "backlog",
             "size_bytes": stat.st_size,
             "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),

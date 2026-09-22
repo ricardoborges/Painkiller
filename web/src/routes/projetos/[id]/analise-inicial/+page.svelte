@@ -170,6 +170,7 @@
     const lower = text.toLowerCase();
     return (
       lower.includes('backlog.json') ||
+      lower.includes('.painkiller/backlogs/') ||
       (lower.includes('backlog') && lower.includes('tarefas planejadas')) ||
       (lower.includes('backlog') && lower.includes('critérios de aceitação'))
     );
@@ -522,7 +523,7 @@
         <Placeholder
           kind="empty"
           title="Nenhum artefato gravado ainda"
-          detail="O agente grava arquivos de especificação em docs/superpowers/specs/, planos em docs/superpowers/plans/ e tarefas em .painkiller/backlog.json durante a conversa."
+          detail="O agente grava arquivos de especificação em docs/superpowers/specs/, planos em docs/superpowers/plans/ e tarefas em .painkiller/backlogs/, um arquivo por sessão, durante a conversa."
         />
       </div>
     {:else}
