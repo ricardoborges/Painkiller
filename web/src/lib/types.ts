@@ -14,6 +14,8 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export type ClarificationStatus = 'PENDING' | 'ANSWERED';
 
+export type HarnessType = 'agy_superpowers' | 'deepseek_superpowers';
+
 export interface Project {
   id: string;
   name: string;
@@ -27,6 +29,9 @@ export interface Project {
   coolify_project_uuid?: string | null;
   test_url?: string | null;
   production_url?: string | null;
+  harness?: HarnessType;
+  has_api_key?: boolean;
+  masked_api_key?: string | null;
   created_at: string;
 }
 

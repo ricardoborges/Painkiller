@@ -88,6 +88,8 @@
         <span>{data.project.id}</span>
         <span class="sep" aria-hidden="true">·</span>
         <span>branch base {data.project.default_branch}</span>
+        <span class="sep" aria-hidden="true">·</span>
+        <span>{data.project.harness === 'deepseek_superpowers' ? 'deepseek + superpowers' : 'agy + superpowers'}</span>
       </div>
 
       <nav aria-label="Seções do projeto">

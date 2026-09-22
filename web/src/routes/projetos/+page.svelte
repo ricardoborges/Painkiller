@@ -134,6 +134,11 @@
         <div class="body">
           <div class="name-line">
             <a class="title name" href="/projetos/{p.id}">{p.name}</a>
+            {#if p.harness === 'deepseek_superpowers'}
+              <span class="harness-badge label mono" title="DeepSeek Harness">dsh</span>
+            {:else}
+              <span class="harness-badge label mono" title="Antigravity CLI">agy</span>
+            {/if}
             {#if auth.isAdmin && blocked > 0}
               <a class="blocked-tag label" href="/pendencias">
                 <span class="dot" aria-hidden="true"></span>
@@ -261,6 +266,15 @@
 
   .name:hover {
     text-decoration-color: currentColor;
+  }
+
+  .harness-badge {
+    padding: 0.0625rem 0.375rem;
+    border: 1px solid var(--rule-2);
+    font-size: var(--t-micro);
+    color: var(--ink-2);
+    background: var(--paper-sunk);
+    line-height: 1.4;
   }
 
   .blocked-tag {

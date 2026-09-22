@@ -108,6 +108,8 @@ export const api = {
     description?: string;
     purpose?: string;
     solution_description?: string;
+    harness?: string;
+    api_key?: string;
   }) => request<Project>('/projects', { method: 'POST', ...json(body) }),
 
   updateProject: (
@@ -117,6 +119,8 @@ export const api = {
       description?: string;
       purpose?: string;
       solution_description?: string;
+      harness?: string;
+      api_key?: string;
     }
   ) => request<Project>(`/projects/${id}`, { method: 'PUT', ...json(body) }),
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, baseName } from '$lib/api';
-  import type { Project } from '$lib/types';
+  import type { HarnessType, Project } from '$lib/types';
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
 
@@ -19,6 +19,8 @@
   let description = $state('');
   let purpose = $state('');
   let solution = $state('');
+  let harness = $state<HarnessType>('agy_superpowers');
+  let apiKey = $state('');
   let files = $state<File[]>([]);
   let dragging = $state(false);
   let busy = $state(false);
@@ -36,6 +38,8 @@
     description = project?.description ?? '';
     purpose = project?.purpose ?? '';
     solution = project?.solution_description ?? '';
+    harness = project?.harness ?? 'agy_superpowers';
+    apiKey = '';
     files = [];
     error = null;
     touched = false;
@@ -74,12 +78,23 @@
     busy = true;
     error = null;
     try {
-      const body = {
+      const body: {
+        name: string;
+        description: string;
+        purpose: string;
+        solution_description: string;
+        harness: HarnessType;
+        api_key?: string;
+      } = {
         name: name.trim(),
         description: description.trim(),
         purpose: purpose.trim(),
-        solution_description: solution.trim()
+        solution_description: solution.trim(),
+        harness: harness
       };
+      if (apiKey.trim()) {
+        body.api_key = apiKey.trim();
+      }
 
       let saved = editing
         ? await api.updateProject(project!.id, body)
@@ -149,6 +164,72 @@
           ></textarea>
           {#if touched && missing.solution}<p class="field-error">Descreva a solução.</p>{/if}
         </div>
+      </div>
+
+      <div class="field">
+        <label for="pharness-options">Harness do Agente</label>
+        <p class="help">
+          Escolha o motor de execução que rodará a análise e as tarefas de desenvolvimento.
+        </p>
+        <div id="pharness-options" class="harness-options">
+          <label class="radio-card" class:active={harness === 'agy_superpowers'}>
+            <input
+              type="radio"
+              name="harness"
+              value="agy_superpowers"
+              bind:group={harness}
+            />
+            <div class="radio-info">
+              <span class="radio-title">Antigravity CLI (agy) + Superpowers</span>
+              <span class="radio-desc">Google Gemini (3.8 Flash / Thinking) via agy CLI oficial</span>
+            </div>
+          </label>
+          <label class="radio-card" class:active={harness === 'deepseek_superpowers'}>
+            <input
+              type="radio"
+              name="harness"
+              value="deepseek_superpowers"
+              bind:group={harness}
+            />
+            <div class="radio-info">
+              <span class="radio-title">DeepSeek Harness (dsh) + Superpowers</span>
+              <span class="radio-desc">DeepSeek V3 / R1 via @deepseek-ai/dsh oficial</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="papikey">
+          {#if harness === 'deepseek_superpowers'}
+            Chave de API DeepSeek <span class="opt">(Opcional)</span>
+          {:else}
+            Chave de API Google Gemini <span class="opt">(Opcional)</span>
+          {/if}
+        </label>
+        <p class="help">
+          {#if harness === 'deepseek_superpowers'}
+            {#if project?.has_api_key && project?.harness === 'deepseek_superpowers'}
+              Chave configurada ({project.masked_api_key}). Deixe em branco para mantê-la ou para fallback no .env do servidor.
+            {:else}
+              Deixe em branco para usar a chave padrão do servidor (DEEPSEEK_API_KEY).
+            {/if}
+          {:else}
+            {#if project?.has_api_key && (!project?.harness || project?.harness === 'agy_superpowers')}
+              Chave configurada ({project.masked_api_key}). Deixe em branco para mantê-la ou para fallback no .env do servidor.
+            {:else}
+              Deixe em branco para usar a chave padrão do servidor (GEMINI_API_KEY).
+            {/if}
+          {/if}
+        </p>
+        <input
+          id="papikey"
+          type="password"
+          class="input mono"
+          bind:value={apiKey}
+          placeholder={harness === 'deepseek_superpowers' ? 'sk-...' : 'AIzaSy...'}
+          autocomplete="off"
+        />
       </div>
 
       <div class="field">
@@ -323,6 +404,57 @@
 
   .chip-x:hover {
     color: var(--accent);
+  }
+
+  .harness-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+
+  .radio-card {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s3);
+    padding: var(--s3);
+    border: 1px solid var(--rule-2);
+    background: var(--paper);
+    cursor: pointer;
+    transition:
+      border-color var(--fast) var(--ease),
+      background var(--fast) var(--ease);
+  }
+
+  .radio-card:hover {
+    border-color: var(--rule);
+  }
+
+  .radio-card.active {
+    border-color: var(--ink);
+    background: var(--paper-sunk);
+  }
+
+  .radio-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .radio-title {
+    font-size: var(--t-small);
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  .radio-desc {
+    font-size: var(--t-micro);
+    color: var(--ink-2);
+  }
+
+  .opt {
+    color: var(--ink-3);
+    font-weight: normal;
+    font-size: var(--t-micro);
   }
 
   @media (max-width: 640px) {
