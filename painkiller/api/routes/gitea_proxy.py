@@ -128,7 +128,7 @@ async def gitea_reverse_proxy(request: Request, path: str = ""):
             if upstream_resp.is_stream_consumed:
                 yield upstream_resp.content
             else:
-                async for chunk in upstream_resp.aiter_raw():
+                async for chunk in upstream_resp.aiter_bytes():
                     yield chunk
         finally:
             await upstream_resp.aclose()

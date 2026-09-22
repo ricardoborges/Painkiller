@@ -6,6 +6,8 @@
   import { pending } from '$lib/stores/pending.svelte';
   import { disposeAnalyses } from '$lib/stores/analysis.svelte';
 
+  import Icon from '$lib/components/Icon.svelte';
+
   let { children } = $props();
 
   const isLogin = $derived(page.url.pathname === '/login');
@@ -38,8 +40,9 @@
   }
 
   const nav = $derived([
-    { href: '/projetos', label: 'Projetos' },
-    ...(auth.isAdmin ? [{ href: '/pendencias', label: 'Pendências' }] : [])
+    { href: '/projetos', label: 'Projetos', external: false },
+    { href: '/gitea/', label: 'Repositórios', external: true },
+    ...(auth.isAdmin ? [{ href: '/pendencias', label: 'Pendências', external: false }] : [])
   ]);
   const isFluid = $derived(page.url.pathname.includes('/analise-inicial'));
 </script>
@@ -62,13 +65,26 @@
 
       <nav aria-label="Principal">
         {#each nav as item (item.href)}
-          {@const active = page.url.pathname.startsWith(item.href)}
-          <a href={item.href} class="nav-link" class:active aria-current={active ? 'page' : undefined}>
-            {item.label}
-            {#if item.href === '/pendencias' && pending.count > 0}
-              <span class="count mono">{pending.count}</span>
-            {/if}
-          </a>
+          {@const active = !item.external && page.url.pathname.startsWith(item.href)}
+          {#if item.external}
+            <a
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="nav-link"
+              title="Acessar repositórios no Gitea"
+            >
+              <span>{item.label}</span>
+              <Icon name="external" size={11} />
+            </a>
+          {:else}
+            <a href={item.href} class="nav-link" class:active aria-current={active ? 'page' : undefined}>
+              {item.label}
+              {#if item.href === '/pendencias' && pending.count > 0}
+                <span class="count mono">{pending.count}</span>
+              {/if}
+            </a>
+          {/if}
         {/each}
       </nav>
 

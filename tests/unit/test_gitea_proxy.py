@@ -125,3 +125,26 @@ async def test_gitea_proxy_preserves_basic_auth_for_git_cli(app, client):
         assert len(captured) == 1
         forwarded_req = captured[0]
         assert forwarded_req.headers["authorization"] == "Basic dXNlcjpwYXNz"
+
+
+async def test_gitea_proxy_decompresses_gzipped_response(app, client):
+    import gzip
+
+    compressed = gzip.compress(b"body { color: red; }")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code=200,
+            content=compressed,
+            headers={"content-type": "text/css; charset=utf-8", "content-encoding": "gzip"},
+        )
+
+    upstream = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch("painkiller.api.routes.gitea_proxy._get_http_client", return_value=upstream):
+        res = await client.get("/gitea/assets/css/index.css")
+        assert res.status_code == 200
+        assert res.content == b"body { color: red; }"
+        assert "content-encoding" not in res.headers
+
+
+
