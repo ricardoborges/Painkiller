@@ -221,7 +221,6 @@ async def test_start_runs_dsh_for_deepseek_harness(tmp_path, client):
     command = run_kwargs["command"]
     assert command[:4] == ["painkiller", "agent-run", "--agent-bin", "dsh"]
     assert "--profile" in command and command[command.index("--profile") + 1] == "headless"
-    assert "--json" in command
     assert run_kwargs["environment"]["DEEPSEEK_API_KEY"] == "sk-ds-project-key"
 
 

@@ -62,6 +62,53 @@ def agent_run(stdin_file: str, agent_bin: str, idle_timeout: int, agent_args: tu
     except Exception:
         pass
 
+    if agent_bin == "dsh":
+        offset = 0
+        pending = ""
+        deadline = time.monotonic() + idle_timeout if idle_timeout > 0 else 0
+
+        try:
+            while True:
+                if idle_timeout > 0 and time.monotonic() > deadline:
+                    return sys.exit(124)
+
+                try:
+                    size = os.path.getsize(stdin_file)
+                except OSError:
+                    size = offset
+
+                if size > offset:
+                    if idle_timeout > 0:
+                        deadline = time.monotonic() + idle_timeout
+                    with open(stdin_file, "r", encoding="utf-8", errors="replace") as f:
+                        f.seek(offset)
+                        chunk = f.read()
+                        offset = f.tell()
+                    pending += chunk
+
+                    while "\n" in pending:
+                        line, pending = pending.split("\n", 1)
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if _is_eof(line):
+                            return sys.exit(0)
+                        prompt_text = _extract_prompt(line)
+                        proc = subprocess.Popen(
+                            [agent_bin, *agent_args, prompt_text],
+                            stdout=None,
+                            stderr=None,
+                        )
+                        code = proc.wait()
+                        if code != 0:
+                            return sys.exit(code)
+                        if idle_timeout > 0:
+                            deadline = time.monotonic() + idle_timeout
+
+                time.sleep(POLL_INTERVAL_SECONDS)
+        except KeyboardInterrupt:
+            return sys.exit(130)
+
     proc = subprocess.Popen(
         [agent_bin, *agent_args],
         stdin=subprocess.PIPE,
@@ -119,6 +166,21 @@ def agent_run(stdin_file: str, agent_bin: str, idle_timeout: int, agent_args: tu
     except KeyboardInterrupt:
         proc.kill()
         return sys.exit(130)
+
+
+def _extract_prompt(line: str) -> str:
+    try:
+        data = json.loads(line)
+        if isinstance(data, dict):
+            msg = data.get("message")
+            if isinstance(msg, dict) and "content" in msg:
+                return str(msg["content"])
+            for key in ("prompt", "content", "text"):
+                if key in data:
+                    return str(data[key])
+    except Exception:
+        pass
+    return line
 
 
 def _is_eof(line: str) -> bool:

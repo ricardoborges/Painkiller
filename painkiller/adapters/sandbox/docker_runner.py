@@ -99,7 +99,6 @@ class DockerSandboxRunner(SandboxPort):
                 "dsh",
                 "--profile",
                 "headless",
-                "--json",
                 task_instructions,
             ]
         else:

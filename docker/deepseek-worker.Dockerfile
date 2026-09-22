@@ -15,6 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Instala o DeepSeek Harness nativo (dsh)
 RUN npm install -g @deepseek-ai/dsh || true
 
+# Corrige conflito de tipo duplicado no koffi do dsh-win32-process (bug de colisão FFI em ambientes Linux)
+COPY docker/patch_dsh.py /tmp/patch_dsh.py
+RUN python3 /tmp/patch_dsh.py && rm -f /tmp/patch_dsh.py
+
 # Clona o repositório superpowers
 RUN git clone --depth 1 --branch "${SUPERPOWERS_REF}" "${SUPERPOWERS_REPO}" /opt/superpowers \
     && rm -rf /opt/superpowers/.git
@@ -34,4 +38,4 @@ RUN git config --global user.name "Painkiller Agent" \
     && git config --global user.email "agent@painkiller.local" \
     && git config --global --add safe.directory /workspace
 
-CMD ["dsh", "--profile", "headless", "--json"]
+CMD ["dsh", "--profile", "headless"]

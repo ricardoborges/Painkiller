@@ -132,7 +132,7 @@ class DockerAgentSession(AgentSessionPort):
                 "--agent-bin", "dsh",
                 "--stdin-file", "/workspace/" + STDIN_RELATIVE,
                 "--idle-timeout", str(timeout_seconds),
-                "--", "--profile", "headless", "--json",
+                "--", "--profile", "headless",
             ]
             volumes = {
                 daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
@@ -396,6 +396,11 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
     try:
         data = json.loads(line)
     except ValueError:
+        if line.startswith("dsh: reasoning:"):
+            text = line[len("dsh: reasoning:"):].strip()
+            return AgentEvent(type=AgentEventType.THINKING_DELTA, text=(text + "\n") if text else "", raw={"line": line})
+        if line.startswith("dsh:") and not line.startswith("dsh: AUTH:") and not line.startswith("dsh: fatal"):
+            return AgentEvent(type=AgentEventType.SYSTEM, text=line, raw={"line": line})
         # Ruído de stderr não é fatal.
         return AgentEvent(type=AgentEventType.ERROR, text=line, raw={"line": line})
 
