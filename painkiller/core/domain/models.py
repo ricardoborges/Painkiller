@@ -82,6 +82,12 @@ class Task(BaseModel):
         self.updated_at = datetime.now(timezone.utc)
 
 
+class HarnessType(str, Enum):
+    """Supported agent harnesses."""
+    AGY_SUPERPOWERS = "agy_superpowers"
+    DEEPSEEK_SUPERPOWERS = "deepseek_superpowers"
+
+
 class Project(BaseModel):
     """Target software project managed by Painkiller."""
     id: str
@@ -99,7 +105,17 @@ class Project(BaseModel):
     coolify_project_uuid: Optional[str] = None
     test_url: Optional[str] = None
     production_url: Optional[str] = None
+    harness: HarnessType = HarnessType.AGY_SUPERPOWERS
+    api_key: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def masked_api_key(self) -> Optional[str]:
+        if not self.api_key:
+            return None
+        if len(self.api_key) <= 8:
+            return "******"
+        return f"{self.api_key[:3]}***{self.api_key[-4:]}"
 
 
 class EnvironmentType(str, Enum):

@@ -20,6 +20,7 @@ from sqlalchemy.orm import declarative_base
 
 from painkiller.core.domain.models import (
     Project,
+    HarnessType,
     Task,
     TaskStatus,
     ClarificationRequest,
@@ -62,6 +63,8 @@ class ProjectRecord(Base):
     coolify_project_uuid = Column(String, nullable=True)
     test_url = Column(String, nullable=True)
     production_url = Column(String, nullable=True)
+    harness = Column(String, default="agy_superpowers", nullable=False)
+    api_key = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -249,8 +252,11 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
         default_branch: str = "main",
         repo_url: Optional[str] = None,
         owner_id: Optional[str] = None,
+        harness: Optional[HarnessType] = None,
+        api_key: Optional[str] = None,
     ) -> Project:
         proj_id = f"proj-{uuid.uuid4().hex[:8]}"
+        harness_val = (harness.value if isinstance(harness, HarnessType) else harness) or HarnessType.AGY_SUPERPOWERS.value
         record = ProjectRecord(
             id=proj_id,
             name=name,
@@ -262,6 +268,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             default_branch=default_branch,
             repo_url=repo_url or "",
             owner_id=owner_id,
+            harness=harness_val,
+            api_key=api_key or None,
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
@@ -295,6 +303,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
         solution_description: Optional[str] = None,
         attachments: Optional[Sequence[str]] = None,
         repo_url: Optional[str] = None,
+        harness: Optional[HarnessType] = None,
+        api_key: Optional[str] = None,
     ) -> Project:
         values: dict[str, Any] = {}
         if name is not None:
@@ -309,6 +319,10 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             values["attachments"] = json.dumps(list(attachments))
         if repo_url is not None:
             values["repo_url"] = repo_url
+        if harness is not None:
+            values["harness"] = harness.value if isinstance(harness, HarnessType) else harness
+        if api_key is not None:
+            values["api_key"] = api_key or None
 
         async with self.session_factory() as session:
             if values:
@@ -353,6 +367,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             coolify_project_uuid=getattr(record, "coolify_project_uuid", None) or None,
             test_url=getattr(record, "test_url", None) or None,
             production_url=getattr(record, "production_url", None) or None,
+            harness=HarnessType(getattr(record, "harness", None) or "agy_superpowers") if getattr(record, "harness", None) in [h.value for h in HarnessType] else HarnessType.AGY_SUPERPOWERS,
+            api_key=getattr(record, "api_key", None) or None,
             created_at=record.created_at,
         )
 

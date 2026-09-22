@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence
 from painkiller.core.domain.models import (
     Project,
+    HarnessType,
     Task,
     TaskStatus,
     ClarificationRequest,
@@ -31,6 +32,8 @@ class IssueTrackerPort(ABC):
         default_branch: str = "main",
         repo_url: Optional[str] = None,
         owner_id: Optional[str] = None,
+        harness: Optional[HarnessType] = None,
+        api_key: Optional[str] = None,
     ) -> Project:
         """Create or register a project."""
         pass
@@ -50,6 +53,8 @@ class IssueTrackerPort(ABC):
         solution_description: Optional[str] = None,
         attachments: Optional[Sequence[str]] = None,
         repo_url: Optional[str] = None,
+        harness: Optional[HarnessType] = None,
+        api_key: Optional[str] = None,
     ) -> Project:
         """Update an existing project."""
         pass
