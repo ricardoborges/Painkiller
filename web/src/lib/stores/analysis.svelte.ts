@@ -18,6 +18,8 @@ export interface Turn {
  */
 export class AnalysisStore {
   readonly projectId: string;
+  /** Sessão iterativa dona desta conversa; sem ela o backend cai na mais recente. */
+  readonly iterationSessionId: string | undefined;
 
   session = $state<AnalysisSession | null>(null);
   turns = $state<Turn[]>([]);
@@ -51,12 +53,13 @@ export class AnalysisStore {
   #booting: Promise<void> | null = null;
   #booted = false;
 
-  constructor(projectId: string) {
+  constructor(projectId: string, iterationSessionId?: string) {
     this.projectId = projectId;
+    this.iterationSessionId = iterationSessionId;
   }
 
   get storageKey() {
-    return `pk_analysis_${this.projectId}`;
+    return analysisStorageKey(this.projectId, this.iterationSessionId);
   }
 
   /** Sobe a sessão na primeira visita; nas seguintes é no-op. */
@@ -105,7 +108,7 @@ export class AnalysisStore {
 
     if (!forceNew) {
       try {
-        const current = await api.getCurrentAnalysis(this.projectId);
+        const current = await api.getCurrentAnalysis(this.projectId, this.iterationSessionId);
         if (current?.session) {
           this.session = current.session;
           this.remember(this.session.session_id);
@@ -133,7 +136,7 @@ export class AnalysisStore {
     }
 
     try {
-      this.session = await api.startAnalysis(this.projectId, forceNew);
+      this.session = await api.startAnalysis(this.projectId, forceNew, this.iterationSessionId);
       this.remember(this.session.session_id);
       this.attach(this.session.session_id);
     } catch (e) {
@@ -268,7 +271,7 @@ export class AnalysisStore {
     this.committing = true;
     this.sendError = null;
     try {
-      const tasks = await api.commitAnalysisBacklog(this.session.session_id);
+      const tasks = await api.commitAnalysisBacklog(this.session.session_id, this.iterationSessionId);
       this.remember(null);
       return tasks;
     } catch (e) {
@@ -313,13 +316,21 @@ export class AnalysisStore {
   }
 }
 
+export function analysisStorageKey(projectId: string, iterationSessionId?: string) {
+  return iterationSessionId
+    ? `pk_analysis_${projectId}_${iterationSessionId}`
+    : `pk_analysis_${projectId}`;
+}
+
 const stores = new Map<string, AnalysisStore>();
 
-export function analysisFor(projectId: string): AnalysisStore {
-  let store = stores.get(projectId);
+/** Uma conversa por sessão iterativa: a Sessão 2 não herda a da Sessão 1. */
+export function analysisFor(projectId: string, iterationSessionId?: string): AnalysisStore {
+  const key = `${projectId}:${iterationSessionId ?? ''}`;
+  let store = stores.get(key);
   if (!store) {
-    store = new AnalysisStore(projectId);
-    stores.set(projectId, store);
+    store = new AnalysisStore(projectId, iterationSessionId);
+    stores.set(key, store);
   }
   return store;
 }

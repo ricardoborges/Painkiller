@@ -48,29 +48,16 @@ async def test_coolify_deploy_environment_creates_app_and_triggers_deploy():
 
     # Mocking httpx responses
     mock_get_projects = MagicMock(is_success=True, json=lambda: [{"name": "painkiller-store-api", "uuid": "proj-uuid-1"}])
+    mock_get_envs = MagicMock(is_success=True, json=lambda: [{"name": "production"}])
     mock_get_servers = MagicMock(is_success=True, json=lambda: [{"uuid": "srv-1"}])
     mock_get_apps = MagicMock(is_success=True, json=lambda: [])
     mock_post_app = MagicMock(is_success=True, json=lambda: {"uuid": "app-uuid-99"})
     mock_post_deploy = MagicMock(is_success=True, json=lambda: {"deployment_uuid": "dep-uuid-88"})
 
-    async def mock_handler(request):
-        url = str(request.url)
-        if "/api/v1/projects" in url and request.method == "GET":
-            return mock_get_projects
-        if "/api/v1/servers" in url and request.method == "GET":
-            return mock_get_servers
-        if "/api/v1/applications" in url and request.method == "GET":
-            return mock_get_apps
-        if "/api/v1/applications/public" in url and request.method == "POST":
-            return mock_post_app
-        if "/api/v1/deploy" in url and request.method == "POST":
-            return mock_post_deploy
-        return MagicMock(is_success=False, status_code=404)
-
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get, \
          patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         
-        mock_get.side_effect = [mock_get_projects, mock_get_servers, mock_get_apps]
+        mock_get.side_effect = [mock_get_projects, mock_get_envs, mock_get_apps]
         mock_post.side_effect = [mock_post_app, mock_post_deploy]
 
         record = await adapter.deploy_environment(

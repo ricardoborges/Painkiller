@@ -5,9 +5,12 @@
   import Icon from '$lib/components/Icon.svelte';
   import ProjectDialog from '$lib/components/ProjectDialog.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
-  import { analysisFor } from '$lib/stores/analysis.svelte';
+  import { analysisFor, analysisStorageKey } from '$lib/stores/analysis.svelte';
+  import { getProjectSessionStore } from '$lib/stores/session.svelte';
 
   let { data } = $props();
+
+  const sessionStore = $derived(getProjectSessionStore(data.project.id));
 
   let dialogOpen = $state(false);
   let restarting = $state(false);
@@ -18,7 +21,7 @@
     }
     restarting = true;
     try {
-      const a = analysisFor(data.project.id);
+      const a = analysisFor(data.project.id, sessionStore.activeSession?.id);
       await a.restart();
       await goto(`${base}/analise-inicial`);
     } catch (e) {
@@ -42,8 +45,7 @@
   let stage = $state<Stage | null>(null);
 
   function recallSession(projectId: string): string | null {
-    // Mesma chave usada por stores/analysis.svelte.ts.
-    const key = `pk_analysis_${projectId}`;
+    const key = analysisStorageKey(projectId, sessionStore.activeSession?.id);
     try {
       return sessionStorage.getItem(key) || localStorage.getItem(key);
     } catch {

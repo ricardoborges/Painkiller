@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { composeAnswer, pickedFrom, type Choices } from '$lib/choices';
+  import { composeAnswer, pickedFrom, OTHER_LABEL, type Choices } from '$lib/choices';
   import Icon from '$lib/components/Icon.svelte';
 
   let {
@@ -18,9 +18,19 @@
 
   let selected = $state<string[]>([]);
   let note = $state('');
+  let otherInput = $state<HTMLInputElement | null>(null);
 
+  /* "Outro" existe sempre, venha ou não do agente: é a saída para quem não se
+     vê em nenhuma alternativa. Marcado, abre o campo de texto livre. */
+  const options = $derived([
+    ...choices.options,
+    { label: OTHER_LABEL, description: 'Responder com as minhas palavras' }
+  ]);
+  const otherOn = $derived(selected.includes(OTHER_LABEL));
   const shown = $derived(active ? new Set(selected) : pickedFrom(answer, choices));
-  const ready = $derived(selected.length > 0 || note.trim().length > 0);
+  const ready = $derived(
+    selected.length > 0 && (!otherOn || note.trim().length > 0)
+  );
 
   function toggle(label: string) {
     if (!active) return;
@@ -31,13 +41,16 @@
     } else {
       selected = selected[0] === label ? [] : [label];
     }
+    if (label === OTHER_LABEL && selected.includes(OTHER_LABEL)) {
+      queueMicrotask(() => otherInput?.focus());
+    }
   }
 
   function submit() {
     if (!active || !ready) return;
     /* Mantém a ordem em que o agente listou, não a ordem dos cliques. */
     const ordered = choices.options.map((o) => o.label).filter((l) => selected.includes(l));
-    onsubmit(composeAnswer(ordered, note));
+    onsubmit(composeAnswer(ordered, otherOn ? note : ''));
     selected = [];
     note = '';
   }
@@ -56,7 +69,7 @@
   </p>
 
   <ul role={choices.multiple ? 'group' : 'radiogroup'}>
-    {#each choices.options as o (o.label)}
+    {#each options as o (o.label)}
       <li>
         <button
           type="button"
@@ -79,13 +92,19 @@
 
   {#if active}
     <div class="foot">
-      <input
-        class="input"
-        type="text"
-        bind:value={note}
-        placeholder={selected.length ? 'Observação (opcional)' : 'Ou responda com suas palavras'}
-        onkeydown={onKeydown}
-      />
+      {#if otherOn}
+        <input
+          class="input"
+          type="text"
+          bind:this={otherInput}
+          bind:value={note}
+          placeholder="Escreva a sua resposta"
+          aria-label="Resposta livre (Outro)"
+          onkeydown={onKeydown}
+        />
+      {:else}
+        <span class="spacer" aria-hidden="true"></span>
+      {/if}
       <button type="button" class="btn btn-solid btn-sm" onclick={submit} disabled={!ready}>
         Responder <Icon name="send" size={12} />
       </button>
@@ -193,7 +212,8 @@
     margin-top: var(--s3);
   }
 
-  .foot .input {
+  .foot .input,
+  .spacer {
     flex: 1;
     min-width: 0;
   }

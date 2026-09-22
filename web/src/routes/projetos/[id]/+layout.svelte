@@ -14,9 +14,11 @@
   });
 
   /* O ciclo ágil iterativo da sessão: Análise → Backlog → Artefatos.
-     Contexto e Custos são visões de referência do projeto. */
+     Contexto e Custos são visões de referência do projeto. Da segunda sessão em
+     diante o primeiro passo é uma conversa livre com o agente, não uma entrevista. */
+  const chatMode = $derived((sessionStore.activeSession?.number ?? 1) > 1);
   const steps = $derived([
-    { href: `${base}/analise-inicial`, label: 'Análise', exact: false },
+    { href: `${base}/analise-inicial`, label: chatMode ? 'Chat' : 'Análise', exact: false },
     { href: `${base}/backlog`, label: 'Backlog', exact: false },
     { href: `${base}/artefatos`, label: 'Artefatos', exact: false }
   ]);

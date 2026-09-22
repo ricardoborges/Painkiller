@@ -77,3 +77,67 @@ def test_build_analysis_prompt_cumulative_context():
     assert "CICLO ÁGIL ITERATIVO: SESSÃO 2" in prompt
     assert "Sessão 1" in prompt
     assert "Setup de banco de dados" in prompt
+
+
+def _start_fixture(tmp_path):
+    tracker = AsyncMock()
+    agent = AsyncMock()
+    agent.start.return_value = "pk-agent"
+    orchestrator = AnalysisOrchestrator(agent=agent, tracker=tracker)
+    project = Project(id="p1", name="App", repo_path=str(tmp_path))
+    s1 = IterationSession(
+        id="s1", project_id="p1", number=1, title="Sessão 1",
+        status=SessionStatus.IN_SPRINT, analysis_session_id="analysis-old",
+    )
+    s2 = IterationSession(id="s2", project_id="p1", number=2, title="Sessão 2")
+    tracker.list_sessions.return_value = [s1, s2]
+    tracker.get_session.side_effect = lambda sid: {"s1": s1, "s2": s2}.get(sid)
+    tracker.get_active_analysis_session.return_value = None
+    tracker.list_tasks.return_value = []
+    return orchestrator, project, agent, s1, s2
+
+
+async def test_start_binds_analysis_to_requested_iteration_session(tmp_path):
+    orchestrator, project, agent, s1, s2 = _start_fixture(tmp_path)
+
+    session = await orchestrator.start(project, iteration_session_id="s2")
+
+    assert s2.analysis_session_id == session.id
+    assert s1.analysis_session_id == "analysis-old"
+    assert "SESSÃO 2" in agent.start.call_args.kwargs["prompt"]
+
+
+async def test_start_without_iteration_session_uses_latest_not_first(tmp_path):
+    orchestrator, project, agent, s1, s2 = _start_fixture(tmp_path)
+
+    session = await orchestrator.start(project)
+
+    assert s2.analysis_session_id == session.id
+    assert s1.analysis_session_id == "analysis-old"
+
+
+async def test_start_does_not_reuse_active_analysis_of_another_session(tmp_path):
+    orchestrator, project, agent, s1, s2 = _start_fixture(tmp_path)
+    first = await orchestrator.start(project, iteration_session_id="s1")
+    agent.is_alive.return_value = True
+
+    second = await orchestrator.start(project, iteration_session_id="s2")
+
+    assert second.id != first.id
+    assert s1.analysis_session_id == first.id
+    assert s2.analysis_session_id == second.id
+
+
+def test_build_analysis_prompt_chat_mode_from_second_session():
+    project = Project(id="p1", name="App", repo_path="/repo")
+
+    first = build_analysis_prompt(project, session_number=1)
+    second = build_analysis_prompt(project, session_number=2)
+
+    assert "Conduza a elicitação" in first
+    assert "modo conversa" not in first
+    assert "modo conversa" in second
+    assert "Conduza a elicitação" not in second
+    # O formato de opções e a entrega do backlog continuam valendo no chat.
+    assert "painkiller-choices" in second
+    assert ".painkiller/backlog.json" in second

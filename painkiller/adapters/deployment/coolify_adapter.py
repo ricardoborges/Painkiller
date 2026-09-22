@@ -29,8 +29,8 @@ class CoolifyAdapter(DeploymentPort):
         wildcard_domain: Optional[str] = None,
         gitea_internal_url: Optional[str] = None,
     ):
-        self.api_url = (api_url or os.environ.get("COOLIFY_API_URL", "http://localhost:8000")).rstrip("/")
-        self.api_token = api_token or os.environ.get("COOLIFY_API_TOKEN", "")
+        self.api_url = (api_url if api_url is not None else os.environ.get("COOLIFY_API_URL", "http://localhost:8000")).rstrip("/")
+        self.api_token = os.environ.get("COOLIFY_API_TOKEN", "") if api_token is None else api_token
         self.server_uuid = server_uuid or os.environ.get("COOLIFY_SERVER_UUID", "")
         self.wildcard_domain = (
             wildcard_domain
@@ -96,6 +96,23 @@ class CoolifyAdapter(DeploymentPort):
             return created.get("uuid", "")
         return ""
 
+    async def _ensure_environment(self, client: httpx.AsyncClient, project_uuid: str, env_name: str) -> None:
+        """Ensure the specified environment (e.g. test, production) exists in Coolify project."""
+        if not project_uuid:
+            return
+        resp = await client.get(f"{self.api_url}/api/v1/projects/{project_uuid}/environments", headers=self._headers())
+        if resp.is_success:
+            envs = resp.json()
+            items = envs if isinstance(envs, list) else []
+            for e in items:
+                if e.get("name") == env_name:
+                    return
+        await client.post(
+            f"{self.api_url}/api/v1/projects/{project_uuid}/environments",
+            headers=self._headers(),
+            json={"name": env_name},
+        )
+
     async def _get_server_uuid(self, client: httpx.AsyncClient) -> str:
         if self.server_uuid:
             return self.server_uuid
@@ -105,6 +122,22 @@ class CoolifyAdapter(DeploymentPort):
             if isinstance(servers, list) and servers:
                 return servers[0].get("uuid", "0")
         return "0"
+
+    def _detect_build_pack(self, project: Project) -> tuple[str, bool]:
+        """Detect the build pack and whether it's static."""
+        repo_path = project.repo_path
+        if repo_path and os.path.isdir(repo_path):
+            if os.path.exists(os.path.join(repo_path, "Dockerfile")):
+                return "dockerfile", False
+            if os.path.exists(os.path.join(repo_path, "docker-compose.yml")) or os.path.exists(os.path.join(repo_path, "docker-compose.yaml")):
+                return "dockercompose", False
+            if os.path.exists(os.path.join(repo_path, "package.json")):
+                return "nixpacks", False
+            if os.path.exists(os.path.join(repo_path, "requirements.txt")) or os.path.exists(os.path.join(repo_path, "pyproject.toml")):
+                return "nixpacks", False
+            if os.path.exists(os.path.join(repo_path, "index.html")):
+                return "static", True
+        return "nixpacks", False
 
     async def deploy_environment(
         self,
@@ -139,8 +172,9 @@ class CoolifyAdapter(DeploymentPort):
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                # 1. Obter ou criar Projeto no Coolify
+                # 1. Obter ou criar Projeto no Coolify e garantir o ambiente
                 coolify_proj_uuid = await self._get_or_create_project(client, project)
+                await self._ensure_environment(client, coolify_proj_uuid, environment.value)
                 server_uuid = await self._get_server_uuid(client)
                 repo_url = self._resolve_repo_url(project)
 
@@ -157,6 +191,8 @@ class CoolifyAdapter(DeploymentPort):
                             app_uuid = a.get("uuid")
                             break
 
+                build_pack, is_static = self._detect_build_pack(project)
+
                 # 3. Criar aplicação se não existir
                 if not app_uuid:
                     payload = {
@@ -166,9 +202,10 @@ class CoolifyAdapter(DeploymentPort):
                         "name": app_name,
                         "git_repository": repo_url,
                         "git_branch": branch,
-                        "build_pack": "nixpacks",
-                        "ports_exposes": "80,3000,5173,8000",
-                        "fqdn": fqdn,
+                        "build_pack": build_pack,
+                        "is_static": is_static,
+                        "ports_exposes": "80",
+                        "domains": fqdn,
                     }
                     create_app_resp = await client.post(
                         f"{self.api_url}/api/v1/applications/public",
@@ -195,11 +232,16 @@ class CoolifyAdapter(DeploymentPort):
                             updated_at=now,
                         )
                 else:
-                    # Atualiza a branch caso a aplicação já existisse
+                    # Atualiza a branch e configurações caso a aplicação já existisse
                     await client.patch(
                         f"{self.api_url}/api/v1/applications/{app_uuid}",
                         headers=self._headers(),
-                        json={"git_branch": branch, "fqdn": fqdn},
+                        json={
+                            "git_branch": branch,
+                            "domains": fqdn,
+                            "build_pack": build_pack,
+                            "is_static": is_static,
+                        },
                     )
 
                 # 4. Disparar Deploy no Coolify

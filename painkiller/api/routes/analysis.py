@@ -1,6 +1,7 @@
 """Interactive initial-analysis routes (Claude Code + superpowers, streamed)."""
 
 import json
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -28,28 +29,53 @@ def _session_payload(session) -> dict:
     }
 
 
+async def _require_iteration(request: Request, project_id: str, iteration_session_id: str):
+    iter_sess = await request.app.state.tracker.get_session(iteration_session_id)
+    if not iter_sess or iter_sess.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    return iter_sess
+
+
 @router.get("/projects/{project_id}/analysis/current")
-async def get_current_analysis(project_id: str, request: Request):
-    """Retrieve the current active analysis session for a project, if any."""
+async def get_current_analysis(
+    project_id: str, request: Request, iteration_session_id: Optional[str] = None
+):
+    """Retrieve the current active analysis session for a project, if any.
+
+    With `iteration_session_id`, only an analysis bound to that iteration session counts.
+    """
     analysis = request.app.state.analysis
 
     await visible_project(request, project_id)
 
-    session = await analysis.get_active(project_id)
+    if iteration_session_id:
+        await _require_iteration(request, project_id, iteration_session_id)
+        session = await analysis.get_active_for(project_id, iteration_session_id)
+    else:
+        session = await analysis.get_active(project_id)
     if not session:
         return {"session": None}
     return {"session": _session_payload(session)}
 
 
 @router.post("/projects/{project_id}/analysis")
-async def start_analysis(project_id: str, request: Request, force_new: bool = False):
+async def start_analysis(
+    project_id: str,
+    request: Request,
+    force_new: bool = False,
+    iteration_session_id: Optional[str] = None,
+):
     """Boot or resume the agent container and return immediately — the UI then opens the stream."""
     analysis = request.app.state.analysis
 
     project = await visible_project(request, project_id)
+    if iteration_session_id:
+        await _require_iteration(request, project_id, iteration_session_id)
 
     try:
-        session = await analysis.start(project, force_new=force_new)
+        session = await analysis.start(
+            project, force_new=force_new, iteration_session_id=iteration_session_id
+        )
     except RuntimeError as e:
         # Credencial ausente ou imagem não construída: a mensagem já é pt-BR.
         raise HTTPException(status_code=503, detail=str(e))
@@ -125,10 +151,16 @@ async def finish_analysis(session_id: str, request: Request):
 
 
 @router.post("/analysis/{session_id}/commit", dependencies=[Depends(require_analysis)])
-async def commit_analysis_backlog(session_id: str, request: Request):
+async def commit_analysis_backlog(
+    session_id: str, request: Request, iteration_session_id: Optional[str] = None
+):
     analysis = request.app.state.analysis
+    if iteration_session_id:
+        run = analysis.runs.get(session_id)
+        if run:
+            await _require_iteration(request, run.session.project_id, iteration_session_id)
     try:
-        return await analysis.commit_backlog(session_id)
+        return await analysis.commit_backlog(session_id, iteration_session_id=iteration_session_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except FileNotFoundError as e:

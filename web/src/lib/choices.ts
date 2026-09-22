@@ -40,8 +40,17 @@ function normalize(raw: unknown): Choices | null {
       });
     }
   }
-  if (!options.length) return null;
-  return { multiple: data.multiple === true, options };
+  // "Outro" é da plataforma (Choices.svelte sempre acrescenta): o do agente sairia duplicado.
+  const own = options.filter((o) => !isOther(o.label));
+  if (!own.length) return null;
+  return { multiple: data.multiple === true, options: own };
+}
+
+/** Rótulo da opção de resposta livre que o formulário sempre oferece. */
+export const OTHER_LABEL = 'Outro';
+
+function isOther(label: string): boolean {
+  return /^outr[oa]s?(\s*\(.*\))?\s*[.:…]*$/i.test(label.trim());
 }
 
 /** Separa o bloco de opções do texto da mensagem. */
@@ -65,21 +74,24 @@ export function hidePartialBlock(text: string): string {
   return i < 0 ? text : text.slice(0, i).trimEnd();
 }
 
-/** Recupera quais rótulos uma resposta já enviada escolheu. */
+/** Recupera quais rótulos uma resposta já enviada escolheu; texto que não é
+    rótulo de nenhuma opção conta como "Outro". */
 export function pickedFrom(answer: string | undefined, choices: Choices): Set<string> {
   const picked = new Set<string>();
   if (!answer) return picked;
-  const lines = answer.split('\n').map((l) => l.replace(/^[-*]\s*/, '').trim());
-  for (const o of choices.options) {
-    if (lines.includes(o.label)) picked.add(o.label);
-  }
+  const lines = answer
+    .split('\n')
+    .map((l) => l.replace(/^[-*]\s*/, '').trim())
+    .filter(Boolean);
+  const labels = new Set(choices.options.map((o) => o.label));
+  for (const line of lines) picked.add(labels.has(line) ? line : OTHER_LABEL);
   return picked;
 }
 
-/** Monta o texto que vai ao agente a partir das opções marcadas. */
-export function composeAnswer(labels: string[], note: string): string {
-  const n = note.trim();
-  if (!labels.length) return n;
+/** Monta o texto que vai ao agente a partir das opções marcadas e do "Outro". */
+export function composeAnswer(labels: string[], other: string): string {
+  const o = other.trim();
+  if (!labels.length) return o;
   const base = labels.length === 1 ? labels[0] : labels.map((l) => `- ${l}`).join('\n');
-  return n ? `${base}\n\nObservação: ${n}` : base;
+  return o ? `${base}\n\n${OTHER_LABEL}: ${o}` : base;
 }

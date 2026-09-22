@@ -76,7 +76,7 @@ services:
       PAINKILLER_GITEA_EMAIL: ${PAINKILLER_GITEA_EMAIL:-bot@painkiller.local}
 
       # Integracao com Coolify on-premise
-      COOLIFY_API_URL: ${COOLIFY_API_URL:-http://coolify:8000}
+      COOLIFY_API_URL: ${COOLIFY_API_URL:-http://coolify:8080}
       COOLIFY_API_TOKEN: ${COOLIFY_API_TOKEN:-}
       COOLIFY_SERVER_UUID: ${COOLIFY_SERVER_UUID:-}
       COOLIFY_WILDCARD_DOMAIN: ${COOLIFY_WILDCARD_DOMAIN:-127.0.0.1.nip.io}
@@ -92,6 +92,9 @@ services:
 
       # Frontend estático da SPA servido pelo FastAPI
       - ./painkiller/api/static:/app/painkiller/api/static
+
+      # Codigo python em hot-reload
+      - ./painkiller:/app/painkiller
 
       - painkiller-db:/data
 
@@ -161,7 +164,7 @@ services:
       - coolify-db
       - coolify-redis
     ports:
-      - "${COOLIFY_PORT:-8008}:8000"
+      - "${COOLIFY_PORT:-8008}:8080"
     environment:
       - APP_ENV=production
       - APP_ID=painkiller-coolify
@@ -195,6 +198,16 @@ services:
     restart: unless-stopped
     volumes:
       - coolify-redis-data:/data
+
+  # SSH Bridge para o Coolify interagir com o daemon Docker do host
+  coolify-host:
+    build:
+      context: .
+      dockerfile: docker/coolify-host.Dockerfile
+    container_name: painkiller-coolify-host
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   painkiller-db:

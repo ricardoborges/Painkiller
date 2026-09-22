@@ -202,8 +202,10 @@ export const api = {
   /* ---- análise inicial (agente conteinerizado, streaming) ---- */
 
   /** Obtém a análise ativa do projeto, caso exista. */
-  getCurrentAnalysis: (projectId: string) =>
-    request<{ session: AnalysisSession | null }>(`/projects/${projectId}/analysis/current`),
+  getCurrentAnalysis: (projectId: string, iterationSessionId?: string) => {
+    const qs = iterationSessionId ? `?iteration_session_id=${encodeURIComponent(iterationSessionId)}` : '';
+    return request<{ session: AnalysisSession | null }>(`/projects/${projectId}/analysis/current${qs}`);
+  },
 
   /** Sobe ou retoma o contêiner e retorna na hora; o acompanhamento é pelo stream. */
   startAnalysis: (projectId: string, forceNew: boolean = false, iterationSessionId?: string) => {

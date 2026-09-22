@@ -117,16 +117,21 @@ class AnalysisOrchestrator:
         force_new: bool = False,
         iteration_session_id: Optional[str] = None,
     ) -> AnalysisSession:
+        active = await self.get_active(project.id)
+        if not isinstance(active, AnalysisSession):
+            active = None
+        # Uma análise ativa de outra sessão iterativa não pode ser reaproveitada:
+        # a conversa (e o backlog que ela gera) pertence àquela sessão.
+        if active and iteration_session_id and not await self._bound_to(active.id, iteration_session_id):
+            force_new = True
         if not force_new:
-            active = await self.get_active(project.id)
-            if isinstance(active, AnalysisSession):
+            if active:
                 run = self.runs.get(active.id)
                 if run and await self.agent.is_alive(active.id):
                     return active
                 return await self.resume(project, active.id)
         else:
-            active = await self.get_active(project.id)
-            if isinstance(active, AnalysisSession):
+            if active:
                 try:
                     await self.stop(active.id)
                 except Exception as e:
@@ -168,7 +173,13 @@ class AnalysisOrchestrator:
                 pass
         else:
             try:
-                iter_sess = await self.tracker.ensure_initial_session(project.id)
+                # Sem sessão explícita, a análise vai para a mais recente — nunca
+                # para a primeira, que já pode estar em execução.
+                all_sessions = await self.tracker.list_sessions(project.id)
+                if isinstance(all_sessions, (list, tuple)) and all_sessions:
+                    iter_sess = all_sessions[-1]
+                else:
+                    iter_sess = await self.tracker.ensure_initial_session(project.id)
                 if iter_sess:
                     iteration_session_id = getattr(iter_sess, "id", None)
                     num = getattr(iter_sess, "number", 1)
@@ -509,6 +520,22 @@ class AnalysisOrchestrator:
             return active
         return None
 
+    async def get_active_for(
+        self, project_id: str, iteration_session_id: str
+    ) -> Optional[AnalysisSession]:
+        """The project's active analysis, only if it belongs to that iteration session."""
+        active = await self.get_active(project_id)
+        if active and await self._bound_to(active.id, iteration_session_id):
+            return active
+        return None
+
+    async def _bound_to(self, analysis_id: str, iteration_session_id: str) -> bool:
+        try:
+            iter_sess = await self.tracker.get_session(iteration_session_id)
+        except Exception:
+            return False
+        return getattr(iter_sess, "analysis_session_id", None) == analysis_id
+
     def _require(self, session_id: str) -> AnalysisRun:
         run = self.runs.get(session_id)
         if not run:
@@ -639,17 +666,43 @@ def build_analysis_prompt(
     previous_sessions: Optional[list[IterationSession]] = None,
     previous_completed_tasks: Optional[list[Task]] = None,
 ) -> str:
-    """Compose the pt-BR kickoff prompt handed to the containerized agent."""
-    parts = [
-        "Você é o agente de análise do Painkiller.",
-        "",
-        "Conduza a elicitação de requisitos com o analista usando a skill "
-        "superpowers:brainstorming. Regras desta sessão:",
-        "- Escreva sempre em português do Brasil.",
-        "- Faça UMA pergunta por vez e espere a resposta do analista.",
-        "- Não escreva código de produção nem implemente nada nesta sessão.",
-        "- O repositório do projeto está montado em /workspace.",
-        "",
+    """Compose the pt-BR kickoff prompt handed to the containerized agent.
+
+    Session 1 is a guided elicitation (superpowers:brainstorming from the first
+    message). From session 2 on the agent starts in chat mode: it greets and
+    follows the analyst, reaching for superpowers skills only when they fit.
+    """
+    chat_mode = isinstance(session_number, int) and session_number > 1
+    if chat_mode:
+        parts = [
+            "Você é o agente do Painkiller, em modo conversa com o analista.",
+            "",
+            "Nesta sessão é o analista quem conduz: ele pode tirar dúvidas sobre o projeto "
+            "e o código, pedir ajustes, relatar problemas ou propor novas funcionalidades. "
+            "Regras desta sessão:",
+            "- Escreva sempre em português do Brasil.",
+            "- Responda diretamente ao que o analista pedir, de forma objetiva.",
+            "- Use as skills do superpowers quando fizerem sentido (por exemplo, "
+            "superpowers:brainstorming quando ele quiser especificar algo novo). "
+            "Ao conduzir as perguntas de uma skill, faça UMA pergunta por vez.",
+            "- Não escreva código de produção nem implemente nada nesta sessão: "
+            "o que for construído vira tarefa no backlog.",
+            "- O repositório do projeto está montado em /workspace.",
+            "",
+        ]
+    else:
+        parts = [
+            "Você é o agente de análise do Painkiller.",
+            "",
+            "Conduza a elicitação de requisitos com o analista usando a skill "
+            "superpowers:brainstorming. Regras desta sessão:",
+            "- Escreva sempre em português do Brasil.",
+            "- Faça UMA pergunta por vez e espere a resposta do analista.",
+            "- Não escreva código de produção nem implemente nada nesta sessão.",
+            "- O repositório do projeto está montado em /workspace.",
+            "",
+        ]
+    parts += [
         "Quando a pergunta tiver alternativas, a plataforma as mostra como opções "
         "clicáveis. Para isso, escreva a pergunta normalmente e termine a mensagem "
         f"com um único bloco de código `{CHOICES_FENCE}` contendo JSON, sem repetir "
@@ -660,9 +713,10 @@ def build_analysis_prompt(
         "]}",
         "```",
         "Use \"multiple\": true só quando fizer sentido marcar mais de uma. "
-        "Não inclua uma opção \"Outro\": o analista sempre pode responder livremente.",
+        "Não inclua uma opção \"Outro\": a plataforma sempre acrescenta uma, para o "
+        "analista responder livremente.",
         "",
-        "Quando o analista aprovar a especificação, faça as seguintes coisas:",
+        "Quando o analista aprovar uma especificação, faça as seguintes coisas:",
         "1. Grave a especificação em docs/superpowers/specs/AAAA-MM-DD-<tema>-design.md.",
         f"2. Grave o backlog decomposto em {BACKLOG_RELATIVE}, exatamente neste formato:",
         '   {"spec_path": "<caminho do spec>", "tasks": [',
@@ -696,8 +750,7 @@ def build_analysis_prompt(
         parts.append(
             f"Esta é a iteração/sessão de número {session_number} deste projeto. "
             "O software já possui entregas anteriores consolidadas no repositório. "
-            "Seu objetivo nesta sessão é elicitar os novos requisitos, melhorias ou "
-            "próximas funcionalidades a serem construídas neste ciclo."
+            "Use esse histórico para responder com contexto ao que o analista trouxer."
         )
         if previous_sessions:
             parts.append("\nHistórico de sessões anteriores:")
@@ -710,5 +763,12 @@ def build_analysis_prompt(
                 parts.append(f"- [{pt.id}] {pt.title}: {pt.description}")
 
     parts.append("")
-    parts.append("Comece cumprimentando o analista e fazendo a primeira pergunta.")
+    if chat_mode:
+        parts.append(
+            "Comece com uma saudação curta (uma ou duas frases) dizendo que está pronto e "
+            "pergunte o que o analista quer fazer nesta sessão. Não inicie uma elicitação "
+            "por conta própria nem ofereça alternativas nesta primeira mensagem."
+        )
+    else:
+        parts.append("Comece cumprimentando o analista e fazendo a primeira pergunta.")
     return "\n".join(parts)

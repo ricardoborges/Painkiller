@@ -1,8 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { marked } from 'marked';
+  import { api } from '$lib/api';
   import { analysisFor } from '$lib/stores/analysis.svelte';
-  import type { ProjectDoc } from '$lib/types';
+  import { getProjectSessionStore } from '$lib/stores/session.svelte';
+  import type { ProjectDoc, ProjectDocContent } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
@@ -15,14 +17,25 @@
   let { data } = $props();
 
   /* A sessão vive num módulo, não neste componente: trocar de aba e voltar
-     não fecha o stream nem remonta a conversa. Ver stores/analysis.svelte.ts. */
-  const a = $derived(analysisFor(data.project.id));
+     não fecha o stream nem remonta a conversa. Ver stores/analysis.svelte.ts.
+     Cada sessão iterativa tem a sua conversa. */
+  const sessionStore = $derived(getProjectSessionStore(data.project.id));
+  const iterationId = $derived(sessionStore.activeSession?.id);
+  const a = $derived(analysisFor(data.project.id, iterationId));
 
   let composer = $state<HTMLTextAreaElement | null>(null);
   let scroller = $state<HTMLElement | null>(null);
   let host = $state<HTMLElement | null>(null);
   let menuOpen = $state(false);
-  let artifactsOpen = $state(false);
+  let artifactsModalOpen = $state(false);
+  let modalSelectedDoc = $state<ProjectDoc | null>(null);
+  let modalDocContent = $state<ProjectDocContent | null>(null);
+  let modalDocLoading = $state(false);
+  let modalDocError = $state<string | null>(null);
+  let modalViewMode = $state<'rendered' | 'raw'>('rendered');
+  let modalDocCopied = $state(false);
+  let modalSearch = $state('');
+  let modalCategory = $state<'all' | 'spec' | 'plan' | 'backlog' | 'doc'>('all');
   let sessionModalOpen = $state(false);
   let copiedField = $state<string | null>(null);
 
@@ -56,8 +69,10 @@
     return () => window.removeEventListener('resize', recompute);
   });
 
+  /* Só sobe depois que a lista de sessões chegou: sem o id, o backend não sabe
+     a qual sessão a análise pertence. */
   $effect(() => {
-    a.ensureBooted();
+    if (iterationId) a.ensureBooted();
   });
 
   async function copyToClipboard(text: string, field: string) {
@@ -74,16 +89,14 @@
 
   /* Menus sem biblioteca: fecham no clique fora e no Esc, como se espera. */
   $effect(() => {
-    if (!menuOpen && !artifactsOpen) return;
+    if (!menuOpen) return;
     const away = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       if (menuOpen && !target?.closest('.menu')) menuOpen = false;
-      if (artifactsOpen && !target?.closest('.artifacts-menu')) artifactsOpen = false;
     };
     const esc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         menuOpen = false;
-        artifactsOpen = false;
       }
     };
     window.addEventListener('click', away, true);
@@ -164,14 +177,81 @@
 
   function confirmRestart() {
     menuOpen = false;
-    if (a.finished || confirm('Descartar a sessão atual e iniciar uma nova análise do zero?')) {
+    if (a.finished || confirm('Descartar a conversa atual e recomeçar do zero?')) {
       a.restart();
     }
   }
 
+  const categoryLabels: Record<string, string> = {
+    spec: 'Especificação',
+    plan: 'Plano',
+    backlog: 'Backlog',
+    doc: 'Documento'
+  };
+
+  const modalFilteredDocs = $derived.by(() => {
+    let list = a.docs;
+    if (modalCategory !== 'all') {
+      list = list.filter((d) => d.category === modalCategory);
+    }
+    if (modalSearch.trim()) {
+      const q = modalSearch.toLowerCase();
+      list = list.filter((d) => d.filename.toLowerCase().includes(q) || d.path.toLowerCase().includes(q));
+    }
+    return list;
+  });
+
+  const modalGiteaFileUrl = $derived.by(() => {
+    if (!data.project.repo_url || !modalSelectedDoc) return null;
+    return `${data.project.repo_url.replace(/\/$/, '')}/src/branch/${data.project.default_branch || 'main'}/${modalSelectedDoc.path}`;
+  });
+
+  const modalRenderedHtml = $derived.by(() => {
+    if (!modalDocContent?.content) return '';
+    try {
+      return marked.parse(modalDocContent.content, { gfm: true, breaks: true }) as string;
+    } catch {
+      return `<pre class="mono">${modalDocContent.content}</pre>`;
+    }
+  });
+
+  function openArtifactsModal(initialDoc?: ProjectDoc) {
+    artifactsModalOpen = true;
+    a.refreshDocs();
+    const docToSelect = initialDoc || modalSelectedDoc || a.docs[0];
+    if (docToSelect) {
+      selectDocInModal(docToSelect);
+    }
+  }
+
+  async function selectDocInModal(d: ProjectDoc) {
+    modalSelectedDoc = d;
+    modalDocLoading = true;
+    modalDocError = null;
+    modalDocCopied = false;
+    modalDocContent = null;
+    try {
+      modalDocContent = await api.getProjectDocContent(data.project.id, d.path);
+    } catch (e) {
+      modalDocError = e instanceof Error ? e.message : 'Falha ao carregar conteúdo do artefato.';
+    } finally {
+      modalDocLoading = false;
+    }
+  }
+
+  async function copyModalDocText() {
+    if (!modalDocContent?.content) return;
+    try {
+      await navigator.clipboard.writeText(modalDocContent.content);
+      modalDocCopied = true;
+      setTimeout(() => (modalDocCopied = false), 2000);
+    } catch {
+      // ignore
+    }
+  }
+
   function openDoc(d: ProjectDoc) {
-    selectedDoc = d;
-    viewerOpen = true;
+    openArtifactsModal(d);
   }
 
   /** Um rótulo só para o estado da sessão — é o que a toolbar precisa dizer. */
@@ -202,67 +282,20 @@
     </div>
 
     <div class="acts">
-      <!-- Artefatos Dropdown -->
-      <div class="artifacts-menu">
-        <button
-          type="button"
-          class="btn btn-line btn-sm artifacts-btn"
-          class:open={artifactsOpen}
-          aria-haspopup="menu"
-          aria-expanded={artifactsOpen}
-          onclick={() => (artifactsOpen = !artifactsOpen)}
-          title="Ver documentos e especificações gerados"
-        >
-          <Icon name="file-text" size={13} />
-          <span>Artefatos</span>
-          {#if a.docs.length > 0}
-            <span class="badge mono">{a.docs.length}</span>
-          {/if}
-          <span class="chevron" aria-hidden="true">{artifactsOpen ? '▴' : '▾'}</span>
-        </button>
-
-        {#if artifactsOpen}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="sheet artifacts-sheet" role="menu">
-            <div class="sheet-head">
-              <span class="label">Artefatos do Projeto</span>
-              <a href="/projetos/{data.project.id}/artefatos" class="label view-all" onclick={() => (artifactsOpen = false)}>
-                Ver todos ↗
-              </a>
-            </div>
-
-            {#if a.loadingDocs && !a.docs.length}
-              <p class="sheet-status faint mono">
-                <span class="pulse" aria-hidden="true"></span> Buscando…
-              </p>
-            {:else if !a.docs.length}
-              <p class="sheet-empty faint">
-                Nenhum artefato gravado ainda.<br />
-                O agente gera arquivos em <span class="mono">docs/superpowers/</span> durante a conversa.
-              </p>
-            {:else}
-              <ul class="sheet-list">
-                {#each a.docs as d (d.path)}
-                  <li>
-                    <button
-                      type="button"
-                      class="sheet-doc-btn"
-                      onclick={() => {
-                        artifactsOpen = false;
-                        openDoc(d);
-                      }}
-                    >
-                      <span class="cat mono {d.category}">{d.category}</span>
-                      <span class="sheet-doc-title mono truncate" title={d.filename}>{d.filename}</span>
-                      <span class="doc-arrow" aria-hidden="true">→</span>
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
+      <!-- Botão de Artefatos (abre janela modal) -->
+      <button
+        type="button"
+        class="btn btn-line btn-sm artifacts-btn"
+        class:active={artifactsModalOpen}
+        onclick={() => openArtifactsModal()}
+        title="Exibir artefatos do projeto em uma janela modal"
+      >
+        <Icon name="file-text" size={13} />
+        <span>Artefatos</span>
+        {#if a.docs.length > 0}
+          <span class="badge mono">{a.docs.length}</span>
         {/if}
-      </div>
+      </button>
 
       {#if data.project.repo_url}
         <a
@@ -478,6 +511,180 @@
   </div>
 </div>
 
+<Modal bind:open={artifactsModalOpen} title="Artefatos do Projeto" width="64rem">
+  {#snippet body()}
+    {#if a.loadingDocs && !a.docs.length}
+      <div class="artifacts-modal-loading">
+        <Skeleton variant="lines" rows={6} />
+      </div>
+    {:else if !a.docs.length}
+      <div class="artifacts-modal-empty">
+        <Placeholder
+          kind="empty"
+          title="Nenhum artefato gravado ainda"
+          detail="O agente grava arquivos de especificação em docs/superpowers/specs/, planos em docs/superpowers/plans/ e tarefas em .painkiller/backlog.json durante a conversa."
+        />
+      </div>
+    {:else}
+      <div class="artifacts-explorer">
+        <!-- Sidebar: lista de arquivos com busca e categorias -->
+        <aside class="artifacts-sidebar">
+          <div class="sidebar-search">
+            <input
+              type="search"
+              placeholder="Filtrar artefatos..."
+              bind:value={modalSearch}
+              class="search-input mono"
+            />
+          </div>
+
+          <div class="category-filters">
+            <button
+              type="button"
+              class="cat-filter-btn"
+              class:active={modalCategory === 'all'}
+              onclick={() => (modalCategory = 'all')}
+            >
+              Todos <span class="mono count">({a.docs.length})</span>
+            </button>
+            {#each ['spec', 'plan', 'backlog', 'doc'] as cat}
+              {@const count = a.docs.filter((d) => d.category === cat).length}
+              {#if count > 0}
+                <button
+                  type="button"
+                  class="cat-filter-btn"
+                  class:active={modalCategory === cat}
+                  onclick={() => (modalCategory = cat as any)}
+                >
+                  {categoryLabels[cat] ?? cat} <span class="mono count">({count})</span>
+                </button>
+              {/if}
+            {/each}
+          </div>
+
+          <ul class="modal-doc-list">
+            {#each modalFilteredDocs as d (d.path)}
+              <li>
+                <button
+                  type="button"
+                  class="modal-doc-item"
+                  class:active={modalSelectedDoc?.path === d.path}
+                  onclick={() => selectDocInModal(d)}
+                >
+                  <div class="doc-item-main">
+                    <span class="cat mono {d.category}">{categoryLabels[d.category] ?? d.category}</span>
+                    <span class="modal-doc-filename mono truncate" title={d.filename}>{d.filename}</span>
+                  </div>
+                  <span class="modal-doc-path mono faint truncate" title={d.path}>{d.path}</span>
+                </button>
+              </li>
+            {:else}
+              <li class="faint mono empty-filter">Nenhum artefato encontrado.</li>
+            {/each}
+          </ul>
+        </aside>
+
+        <!-- Painel de Leitura / Conteúdo -->
+        <main class="artifacts-preview">
+          {#if modalSelectedDoc}
+            <div class="preview-toolbar">
+              <div class="preview-meta">
+                <span class="cat mono {modalSelectedDoc.category}">
+                  {categoryLabels[modalSelectedDoc.category] ?? modalSelectedDoc.category}
+                </span>
+                <span class="preview-path mono faint truncate" title={modalSelectedDoc.path}>
+                  {modalSelectedDoc.path}
+                </span>
+              </div>
+
+              <div class="preview-actions">
+                {#if modalGiteaFileUrl}
+                  <a
+                    href={modalGiteaFileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="btn btn-quiet btn-sm"
+                    title="Ver no Gitea"
+                  >
+                    <Icon name="external" size={11} /> Gitea
+                  </a>
+                {/if}
+
+                <div class="seg-control" role="group" aria-label="Modo de visualização">
+                  <button
+                    type="button"
+                    class="seg-btn"
+                    class:active={modalViewMode === 'rendered'}
+                    onclick={() => (modalViewMode = 'rendered')}
+                  >
+                    Renderizado
+                  </button>
+                  <button
+                    type="button"
+                    class="seg-btn"
+                    class:active={modalViewMode === 'raw'}
+                    onclick={() => (modalViewMode = 'raw')}
+                  >
+                    Código
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  class="btn btn-quiet btn-sm copy-btn"
+                  onclick={copyModalDocText}
+                  disabled={!modalDocContent?.content}
+                  title="Copiar conteúdo do artefato"
+                >
+                  <Icon name={modalDocCopied ? 'check' : 'copy'} size={12} />
+                  <span>{modalDocCopied ? 'Copiado!' : 'Copiar'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="preview-body">
+              {#if modalDocLoading}
+                <div class="loading-box">
+                  <Skeleton variant="lines" rows={8} />
+                </div>
+              {:else if modalDocError}
+                <div class="error-box faint">
+                  <Icon name="alert" size={14} />
+                  <span>{modalDocError}</span>
+                </div>
+              {:else if modalViewMode === 'rendered'}
+                <div class="markdown-body">
+                  {@html modalRenderedHtml}
+                </div>
+              {:else}
+                <pre class="raw-content mono"><code>{modalDocContent?.content ?? ''}</code></pre>
+              {/if}
+            </div>
+          {:else}
+            <div class="preview-empty faint">
+              Selecione um artefato à esquerda para visualizar seu conteúdo.
+            </div>
+          {/if}
+        </main>
+      </div>
+    {/if}
+  {/snippet}
+  {#snippet footer()}
+    <div class="modal-footer-spread">
+      <a
+        href="/projetos/{data.project.id}/artefatos"
+        class="btn btn-quiet btn-sm"
+        onclick={() => (artifactsModalOpen = false)}
+      >
+        <Icon name="external" size={11} /> Ver página completa de artefatos
+      </a>
+      <button type="button" class="btn btn-solid btn-sm" onclick={() => (artifactsModalOpen = false)}>
+        Fechar
+      </button>
+    </div>
+  {/snippet}
+</Modal>
+
 <DocViewer
   bind:open={viewerOpen}
   doc={selectedDoc}
@@ -600,18 +807,15 @@
     flex-wrap: wrap;
   }
 
-  /* Dropdown de Artefatos no Topo */
-  .artifacts-menu {
-    position: relative;
-  }
-
+  /* Botão de Artefatos na Toolbar */
   .artifacts-btn {
     display: inline-flex;
     align-items: center;
     gap: var(--s2);
   }
 
-  .artifacts-btn.open {
+  .artifacts-btn.active,
+  .artifacts-btn:hover {
     background: var(--paper-sunk);
     border-color: var(--ink);
   }
@@ -628,81 +832,283 @@
     color: var(--ink);
   }
 
-  .artifacts-btn .chevron {
-    font-size: 0.65rem;
-    color: var(--ink-3);
+  /* Modal de Artefatos - Explorer */
+  .artifacts-modal-loading,
+  .artifacts-modal-empty {
+    padding: var(--s6) var(--s4);
   }
 
-  .artifacts-sheet {
-    width: 22rem;
-    max-width: calc(100vw - 2rem);
-  }
-
-  .sheet-head {
+  .artifacts-explorer {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--s2) var(--s3);
-    border-bottom: 1px solid var(--rule-ink);
+    height: min(65vh, 38rem);
+    margin: calc(-1 * var(--s4)) calc(-1 * var(--s5));
+    border-top: 1px solid var(--rule);
+    overflow: hidden;
+  }
+
+  .artifacts-sidebar {
+    width: 19rem;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--rule-ink);
     background: var(--paper-sunk);
   }
 
-  .view-all {
-    color: var(--ink-3);
+  .sidebar-search {
+    padding: var(--s3);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 0.35rem 0.6rem;
     font-size: var(--t-micro);
-    transition: color var(--fast) var(--ease);
-  }
-
-  .view-all:hover {
+    border: 1px solid var(--rule-ink);
+    background: var(--paper);
     color: var(--ink);
+    border-radius: 2px;
   }
 
-  .sheet-status,
-  .sheet-empty {
-    padding: var(--s3) var(--s4);
-    font-size: var(--t-small);
-    line-height: 1.5;
-    margin: 0;
+  .category-filters {
+    display: flex;
+    gap: 0.25rem;
+    padding: var(--s2) var(--s3);
+    border-bottom: 1px solid var(--rule);
+    overflow-x: auto;
+    flex-shrink: 0;
   }
 
-  .sheet-list {
-    max-height: 18rem;
+  .cat-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.45rem;
+    font-size: var(--t-nano, 0.68rem);
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--ink-3);
+    cursor: pointer;
+    border-radius: 2px;
+    white-space: nowrap;
+    transition: all var(--fast) var(--ease);
+  }
+
+  .cat-filter-btn:hover {
+    color: var(--ink);
+    border-color: var(--rule-ink);
+  }
+
+  .cat-filter-btn.active {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+
+  .cat-filter-btn .count {
+    font-size: 0.9em;
+    opacity: 0.8;
+  }
+
+  .modal-doc-list {
+    flex: 1;
     overflow-y: auto;
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
 
-  .sheet-doc-btn {
+  .modal-doc-item {
     width: 100%;
     display: flex;
-    align-items: center;
-    gap: var(--s2);
+    flex-direction: column;
+    gap: 0.2rem;
     padding: var(--s2) var(--s3);
-    border: 0;
+    border: none;
     border-bottom: 1px solid var(--rule);
     background: transparent;
     text-align: left;
     cursor: pointer;
-    font-size: var(--t-micro);
-    color: var(--ink);
     transition: background var(--fast) var(--ease);
   }
 
-  .sheet-doc-btn:hover {
-    background: var(--paper-sunk);
+  .modal-doc-item:hover {
+    background: var(--paper-2);
   }
 
-  .sheet-doc-title {
-    flex: 1;
+  .modal-doc-item.active {
+    background: var(--paper);
+    border-left: 3px solid var(--ink);
+    padding-left: calc(var(--s3) - 3px);
+  }
+
+  .doc-item-main {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
     min-width: 0;
   }
 
-  .doc-arrow {
-    color: var(--ink-4);
-    transition: transform var(--fast) var(--ease), color var(--fast) var(--ease);
+  .modal-doc-filename {
+    font-size: var(--t-micro);
+    font-weight: 500;
+    color: var(--ink);
+    flex: 1;
   }
 
-  .sheet-doc-btn:hover .doc-arrow {
+  .modal-doc-path {
+    font-size: var(--t-nano, 0.68rem);
+    color: var(--ink-3);
+  }
+
+  .empty-filter {
+    padding: var(--s4) var(--s3);
+    font-size: var(--t-micro);
+    text-align: center;
+  }
+
+  /* Preview do Artefato */
+  .artifacts-preview {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--paper);
+  }
+
+  .preview-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    padding: var(--s2) var(--s4);
+    border-bottom: 1px solid var(--rule-ink);
+    background: var(--paper-sunk);
+    flex-shrink: 0;
+  }
+
+  .preview-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    flex: 1;
+  }
+
+  .preview-path {
+    font-size: var(--t-nano, 0.68rem);
+    color: var(--ink-3);
+  }
+
+  .preview-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex-shrink: 0;
+  }
+
+  .preview-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--s5) var(--s6);
+  }
+
+  .preview-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: var(--s6);
+    font-size: var(--t-small);
+  }
+
+  .raw-content {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: var(--t-small);
+    line-height: 1.6;
     color: var(--ink);
-    transform: translateX(2px);
+    margin: 0;
+  }
+
+  .cat {
+    display: inline-block;
+    padding: 0.1rem 0.35rem;
+    font-size: var(--t-nano, 0.65rem);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--rule-2);
+    background: var(--paper-sunk);
+    color: var(--ink-2);
+    flex-shrink: 0;
+    border-radius: 2px;
+  }
+
+  .cat.spec {
+    border-color: var(--ink-3);
+    color: var(--ink);
+  }
+
+  .cat.plan {
+    border-color: var(--ink-3);
+    color: var(--ink);
+  }
+
+  .cat.backlog {
+    border-color: var(--ink-3);
+    color: var(--ink);
+  }
+
+  .cat.doc {
+    border-color: var(--rule-2);
+    color: var(--ink-3);
+  }
+
+  .modal-footer-spread {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .seg-control {
+    display: inline-flex;
+    border: 1px solid var(--rule-ink);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .seg-btn {
+    padding: 0.2rem 0.55rem;
+    font-size: var(--t-micro);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--ink-3);
+    transition: all var(--fast) var(--ease);
+  }
+
+  .seg-btn:hover {
+    color: var(--ink);
+  }
+
+  .seg-btn.active {
+    background: var(--ink);
+    color: var(--paper);
+    font-weight: 500;
+  }
+
+  @media (max-width: 768px) {
+    .artifacts-explorer {
+      flex-direction: column;
+      height: 75vh;
+    }
+    .artifacts-sidebar {
+      width: 100%;
+      height: 40%;
+      border-right: none;
+      border-bottom: 1px solid var(--rule-ink);
+    }
   }
 
   .repo-link {
