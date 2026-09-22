@@ -1,7 +1,7 @@
 """Sandbox Port contract for isolated agent execution."""
 
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 from painkiller.core.domain.models import AgentEvent, Task, ExecutionResult
 
 # Chamado a cada evento do agente enquanto o contêiner roda. Pode ser invocado
@@ -20,6 +20,8 @@ class SandboxPort(ABC):
         task_instructions: str,
         timeout_seconds: int = 600,
         on_event: Optional[AgentEventCallback] = None,
+        harness: Optional[Any] = None,
+        api_key: Optional[str] = None,
     ) -> ExecutionResult:
         """Run an isolated worker on a task and return the execution result.
 

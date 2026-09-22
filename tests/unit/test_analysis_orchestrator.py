@@ -45,10 +45,15 @@ class FakeAgentSession(AgentSessionPort):
         timeout_seconds=3600,
         resume=False,
         claude_session_id=None,
+        harness=None,
+        api_key=None,
+        **kwargs,
     ) -> str:
         self.prompt = prompt
         self.resume = resume
         self.claude_session_id = claude_session_id
+        self.harness = harness
+        self.api_key = api_key
         return "pk-analysis-fake"
 
     async def is_alive(self, session_id) -> bool:

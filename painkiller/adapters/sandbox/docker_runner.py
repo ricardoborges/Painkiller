@@ -46,6 +46,8 @@ class DockerSandboxRunner(SandboxPort):
         task_instructions: str,
         timeout_seconds: int = 600,
         on_event: Optional[AgentEventCallback] = None,
+        harness: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> ExecutionResult:
         """Run the task in a detached Docker container, waiting for completion or clarification."""
         loop = asyncio.get_running_loop()
@@ -57,6 +59,8 @@ class DockerSandboxRunner(SandboxPort):
             task_instructions,
             timeout_seconds,
             on_event,
+            harness,
+            api_key,
         )
 
     def _run_task_sync(
@@ -66,6 +70,8 @@ class DockerSandboxRunner(SandboxPort):
         task_instructions: str,
         timeout_seconds: int,
         on_event: Optional[AgentEventCallback] = None,
+        harness: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> ExecutionResult:
         container_name = f"pk-task-{task.id}-{uuid.uuid4().hex[:6]}"
 
@@ -74,6 +80,7 @@ class DockerSandboxRunner(SandboxPort):
         for key in [
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
+            "DEEPSEEK_API_KEY",
             "PAINKILLER_AGENT_MODEL",
             "PAINKILLER_AGENT_EFFORT",
             "PAINKILLER_LLM_MODEL",
@@ -83,29 +90,47 @@ class DockerSandboxRunner(SandboxPort):
                 env_vars[key] = os.environ[key]
         env_vars["PAINKILLER_WORKSPACE"] = "/workspace"
 
-        model = (
-            env_vars.get("PAINKILLER_AGENT_MODEL")
-            or env_vars.get("PAINKILLER_LLM_MODEL")
-            or "gemini-3.8-flash"
-        )
-        effort = env_vars.get("PAINKILLER_AGENT_EFFORT") or "medium"
+        harness_type = harness or "agy_superpowers"
+        if harness_type == "deepseek_superpowers":
+            image = os.environ.get("PAINKILLER_WORKER_DEEPSEEK_IMAGE") or "painkiller-worker-deepseek:latest"
+            if api_key:
+                env_vars["DEEPSEEK_API_KEY"] = api_key
+            command = [
+                "dsh",
+                "--profile",
+                "headless",
+                "--json",
+                task_instructions,
+            ]
+        else:
+            image = self.image_name
+            if api_key:
+                env_vars["GEMINI_API_KEY"] = api_key
+                env_vars["GOOGLE_API_KEY"] = api_key
 
-        command = [
-            "agy",
-            "--model",
-            model,
-            "--effort",
-            effort,
-            "--dangerously-skip-permissions",
-            "--output-format",
-            "stream-json",
-            "--print",
-            task_instructions,
-        ]
+            model = (
+                env_vars.get("PAINKILLER_AGENT_MODEL")
+                or env_vars.get("PAINKILLER_LLM_MODEL")
+                or "gemini-3.8-flash"
+            )
+            effort = env_vars.get("PAINKILLER_AGENT_EFFORT") or "medium"
+
+            command = [
+                "agy",
+                "--model",
+                model,
+                "--effort",
+                effort,
+                "--dangerously-skip-permissions",
+                "--output-format",
+                "stream-json",
+                "--print",
+                task_instructions,
+            ]
 
         try:
             container = self.client.containers.run(
-                self.image_name,
+                image,
                 command=command,
                 name=container_name,
                 volumes={self._daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"}},

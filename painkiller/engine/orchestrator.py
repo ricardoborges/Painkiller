@@ -93,6 +93,8 @@ class PainkillerOrchestrator:
             project.repo_path,
             instructions,
             on_event=self.activity.publisher(task.id, asyncio.get_running_loop()),
+            harness=project.harness,
+            api_key=project.api_key,
         )
         self._note(task.id, f"Agente encerrou com código {result.exit_code}")
         await self._record_usage(task, result)

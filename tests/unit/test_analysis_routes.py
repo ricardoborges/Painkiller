@@ -33,6 +33,9 @@ class ScriptedAgent(AgentSessionPort):
         timeout_seconds=3600,
         resume=False,
         claude_session_id=None,
+        harness=None,
+        api_key=None,
+        **kwargs,
     ) -> str:
         return "pk-analysis-fake"
 

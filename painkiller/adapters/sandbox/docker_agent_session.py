@@ -24,6 +24,7 @@ EOF_SENTINEL = "__painkiller_eof__"
 FORWARDED_ENV = [
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
+    "DEEPSEEK_API_KEY",
     "PAINKILLER_AGENT_MODEL",
     "PAINKILLER_AGENT_EFFORT",
     "ANTHROPIC_API_KEY",
@@ -81,30 +82,39 @@ class DockerAgentSession(AgentSessionPort):
         timeout_seconds: int = 3600,
         resume: bool = False,
         claude_session_id: Optional[str] = None,
+        harness: Optional[Any] = "agy_superpowers",
+        api_key: Optional[str] = None,
     ) -> str:
+        harness_type = getattr(harness, "value", harness) or "agy_superpowers"
         env_vars = {k: os.environ[k] for k in FORWARDED_ENV if k in os.environ}
         env_vars.update(env or {})
-        self._require_credentials(env_vars)
+        if api_key:
+            if harness_type == "deepseek_superpowers":
+                env_vars["DEEPSEEK_API_KEY"] = api_key
+            else:
+                env_vars["GEMINI_API_KEY"] = api_key
+        self._require_credentials(env_vars, harness=harness_type)
 
         # Pasta para persistir configurações e memória do Antigravity CLI
         gemini_home = os.path.join(repo_path, ".painkiller", "gemini_home")
-        os.makedirs(gemini_home, exist_ok=True)
-        settings_file = os.path.join(gemini_home, "antigravity-cli", "settings.json")
-        try:
-            os.makedirs(os.path.dirname(settings_file), exist_ok=True)
-            settings_data = {}
-            if os.path.exists(settings_file):
-                try:
-                    with open(settings_file, "r", encoding="utf-8") as f:
-                        settings_data = json.load(f)
-                except Exception:
-                    settings_data = {}
-            if settings_data.get("modelProvider") != "gemini":
-                settings_data["modelProvider"] = "gemini"
-                with open(settings_file, "w", encoding="utf-8") as f:
-                    json.dump(settings_data, f, indent=2)
-        except Exception:
-            pass
+        if harness_type != "deepseek_superpowers":
+            os.makedirs(gemini_home, exist_ok=True)
+            settings_file = os.path.join(gemini_home, "antigravity-cli", "settings.json")
+            try:
+                os.makedirs(os.path.dirname(settings_file), exist_ok=True)
+                settings_data = {}
+                if os.path.exists(settings_file):
+                    try:
+                        with open(settings_file, "r", encoding="utf-8") as f:
+                            settings_data = json.load(f)
+                    except Exception:
+                        settings_data = {}
+                if settings_data.get("modelProvider") != "gemini":
+                    settings_data["modelProvider"] = "gemini"
+                    with open(settings_file, "w", encoding="utf-8") as f:
+                        json.dump(settings_data, f, indent=2)
+            except Exception:
+                pass
 
         # A fila é criada no lado da API, pelo caminho local; o contêiner a
         # enxerga através do bind mount, que o daemon resolve por outro caminho.
@@ -115,38 +125,52 @@ class DockerAgentSession(AgentSessionPort):
                 pass
         self._stdin_files[session_id] = stdin_path
 
-        agent_args = [
-            "--model", self.model,
-            "--effort", self.effort,
-            "--dangerously-skip-permissions",
-            "--input-format", "stream-json",
-            "--output-format", "stream-json",
-        ]
+        if harness_type == "deepseek_superpowers":
+            image = os.environ.get("PAINKILLER_AGENT_DEEPSEEK_IMAGE") or "painkiller-agent-deepseek:latest"
+            command = [
+                "painkiller", "agent-run",
+                "--agent-bin", "dsh",
+                "--stdin-file", "/workspace/" + STDIN_RELATIVE,
+                "--idle-timeout", str(timeout_seconds),
+                "--", "--profile", "headless", "--json",
+            ]
+            volumes = {
+                daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
+            }
+        else:
+            image = self.image_name
+            agent_args = [
+                "--model", self.model,
+                "--effort", self.effort,
+                "--dangerously-skip-permissions",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
+            ]
 
-        if resume:
-            if claude_session_id:
-                agent_args.extend(["--conversation", claude_session_id])
-            else:
-                agent_args.append("--continue")
+            if resume:
+                if claude_session_id:
+                    agent_args.extend(["--conversation", claude_session_id])
+                else:
+                    agent_args.append("--continue")
 
-        command = [
-            "painkiller", "agent-run",
-            "--agent-bin", "agy",
-            "--stdin-file", "/workspace/" + STDIN_RELATIVE,
-            "--idle-timeout", str(timeout_seconds),
-            "--", *agent_args,
-        ]
+            command = [
+                "painkiller", "agent-run",
+                "--agent-bin", "agy",
+                "--stdin-file", "/workspace/" + STDIN_RELATIVE,
+                "--idle-timeout", str(timeout_seconds),
+                "--", *agent_args,
+            ]
+            volumes = {
+                daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
+                daemon_path(gemini_home): {"bind": "/root/.gemini", "mode": "rw"},
+            }
 
         container_name = f"pk-analysis-{session_id}-{uuid.uuid4().hex[:6]}"
         loop = asyncio.get_running_loop()
-        volumes = {
-            daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
-            daemon_path(gemini_home): {"bind": "/root/.gemini", "mode": "rw"},
-        }
         container = await loop.run_in_executor(
             None,
             lambda: self.client.containers.run(
-                self.image_name,
+                image=image,
                 command=command,
                 name=container_name,
                 volumes=volumes,
@@ -166,8 +190,16 @@ class DockerAgentSession(AgentSessionPort):
         return container_name
 
     @staticmethod
-    def _require_credentials(env_vars: dict[str, str]) -> None:
+    def _require_credentials(env_vars: dict[str, str], harness: str = "agy_superpowers") -> None:
         """Fail early and in pt-BR rather than letting the container die silently."""
+        if harness == "deepseek_superpowers":
+            if not env_vars.get("DEEPSEEK_API_KEY"):
+                raise RuntimeError(
+                    "DEEPSEEK_API_KEY não está definida para este projeto e nem no arquivo .env. "
+                    "Configure a chave de API da DeepSeek antes de iniciar a análise."
+                )
+            return
+
         has_gemini = any(env_vars.get(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY"))
         has_anthropic = any(env_vars.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
         has_cloud = any(env_vars.get(k) for k in ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"))
@@ -396,7 +428,7 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
             text = res.get("response") or ""
             return AgentEvent(type=AgentEventType.RESULT, text=text, raw=data)
 
-    # Eventos legados do Claude Code (retrocompatibilidade)
+    # Eventos legados do Claude Code e DeepSeek Harness (`dsh`)
     kind = data.get("type")
     if kind == "stream_event":
         return _from_stream_event(data)
@@ -404,10 +436,23 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
         return _from_assistant(data)
     if kind == "user":
         return _from_tool_result(data)
-    if kind == "result":
-        return AgentEvent(type=AgentEventType.RESULT, text=data.get("result") or "", raw=data)
+    if kind in ("result", "done"):
+        text = data.get("result") or data.get("response") or data.get("text") or data.get("content") or ""
+        return AgentEvent(type=AgentEventType.RESULT, text=text, raw=data)
     if kind == "system":
-        return AgentEvent(type=AgentEventType.SYSTEM, text=data.get("subtype", ""), raw=data)
+        return AgentEvent(type=AgentEventType.SYSTEM, text=data.get("subtype", "") or data.get("message", ""), raw=data)
+    if kind in ("delta", "text_delta"):
+        text = data.get("text") or data.get("delta") or data.get("content") or ""
+        return AgentEvent(type=AgentEventType.ASSISTANT_DELTA, text=text, raw=data) if text else None
+    if kind in ("thought", "thinking", "thinking_delta"):
+        text = data.get("thinking") or data.get("thought") or data.get("text") or ""
+        return AgentEvent(type=AgentEventType.THINKING_DELTA, text=text, raw=data) if text else None
+    if kind in ("tool_call", "tool_use"):
+        tool_name = data.get("name") or data.get("tool") or (data.get("tool_call") or {}).get("name") or ""
+        return AgentEvent(type=AgentEventType.TOOL_USE, text=tool_name, raw=data)
+    if kind == "tool_result":
+        tool_name = data.get("name") or data.get("tool") or ""
+        return AgentEvent(type=AgentEventType.TOOL_RESULT, text=tool_name, raw=data)
     return None
 
 

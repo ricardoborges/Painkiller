@@ -6,7 +6,7 @@ accepts analyst answers in, until the agent decides it is done.
 """
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Any
 
 from painkiller.core.domain.models import AgentEvent
 
@@ -24,6 +24,8 @@ class AgentSessionPort(ABC):
         timeout_seconds: int = 3600,
         resume: bool = False,
         claude_session_id: Optional[str] = None,
+        harness: Optional[Any] = None,
+        api_key: Optional[str] = None,
     ) -> str:
         """Start or resume the session and return the container (or process) name."""
 

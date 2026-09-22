@@ -203,3 +203,59 @@ async def test_cleanup_orphaned_containers_removes_untracked_and_dead_containers
     c1.remove.assert_called_once_with(force=True)
     c3.remove.assert_called_once_with(force=True)
     c2.remove.assert_not_called()
+
+
+async def test_start_runs_dsh_for_deepseek_harness(tmp_path, client):
+    session = DockerAgentSession(client=client)
+
+    await session.start(
+        "analysis-dsh",
+        str(tmp_path),
+        "Comece a entrevista",
+        harness="deepseek_superpowers",
+        api_key="sk-ds-project-key",
+    )
+
+    run_kwargs = client.containers.run.call_args.kwargs
+    assert run_kwargs["image"] == "painkiller-agent-deepseek:latest"
+    command = run_kwargs["command"]
+    assert command[:4] == ["painkiller", "agent-run", "--agent-bin", "dsh"]
+    assert "--profile" in command and command[command.index("--profile") + 1] == "headless"
+    assert "--json" in command
+    assert run_kwargs["environment"]["DEEPSEEK_API_KEY"] == "sk-ds-project-key"
+
+
+async def test_missing_deepseek_credentials_fail_with_clear_error(tmp_path, client, monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    session = DockerAgentSession(client=client)
+
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        await session.start(
+            "analysis-dsh",
+            str(tmp_path),
+            "prompt",
+            harness="deepseek_superpowers",
+        )
+
+    client.containers.run.assert_not_called()
+
+
+def test_parse_dsh_json_lines():
+    # Delta
+    ev_delta = parse_agent_line(json.dumps({"type": "delta", "text": "Olá"}))
+    assert ev_delta is not None
+    assert ev_delta.type == AgentEventType.ASSISTANT_DELTA
+    assert ev_delta.text == "Olá"
+
+    # Tool use
+    ev_tool = parse_agent_line(json.dumps({"type": "tool_call", "name": "run_command"}))
+    assert ev_tool is not None
+    assert ev_tool.type == AgentEventType.TOOL_USE
+    assert ev_tool.text == "run_command"
+
+    # Result
+    ev_res = parse_agent_line(json.dumps({"type": "result", "content": "Concluído com sucesso"}))
+    assert ev_res is not None
+    assert ev_res.type == AgentEventType.RESULT
+    assert ev_res.text == "Concluído com sucesso"
+

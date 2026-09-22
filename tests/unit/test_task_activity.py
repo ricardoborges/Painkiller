@@ -104,7 +104,7 @@ async def test_dispatch_publishes_and_finishes_activity():
     git.merge_branch.return_value = (0, "ok")
     sandbox = AsyncMock()
 
-    async def run_task(task, repo_path, instructions, on_event=None):
+    async def run_task(task, repo_path, instructions, on_event=None, **kwargs):
         on_event(_event(AgentEventType.TOOL_USE, "write_file"))
         return ExecutionResult(exit_code=0, logs="")
 
