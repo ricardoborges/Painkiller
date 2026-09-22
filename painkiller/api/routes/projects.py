@@ -25,6 +25,8 @@ class CreateProjectRequest(BaseModel):
     purpose: Optional[str] = ""
     solution_description: Optional[str] = ""
     default_branch: Optional[str] = "main"
+    harness: Optional[str] = "agy_superpowers"
+    api_key: Optional[str] = None
 
 
 class UpdateProjectRequest(BaseModel):
@@ -32,6 +34,8 @@ class UpdateProjectRequest(BaseModel):
     description: Optional[str] = None
     purpose: Optional[str] = None
     solution_description: Optional[str] = None
+    harness: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 class CreateTaskRequest(BaseModel):
@@ -47,11 +51,20 @@ def _get_storage_dir() -> str:
     return os.environ.get("PAINKILLER_STORAGE_DIR") or os.path.join(os.getcwd(), "storage")
 
 
+def _format_project(p) -> dict:
+    data = p.model_dump(mode="json")
+    data.pop("api_key", None)
+    data["has_api_key"] = bool(p.api_key)
+    data["masked_api_key"] = p.masked_api_key
+    return data
+
+
 @router.get("")
 async def list_projects(request: Request, user: User = Depends(current_user)):
     tracker = request.app.state.tracker
     # O admin break-glass vê tudo; os demais, só os próprios projetos.
-    return await tracker.list_projects(owner_id=None if user.is_admin else user.id)
+    projects = await tracker.list_projects(owner_id=None if user.is_admin else user.id)
+    return [_format_project(p) for p in projects]
 
 
 @router.post("")
@@ -103,8 +116,10 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         default_branch=default_branch,
         repo_url=repo_url,
         owner_id=None if user.is_admin else user.id,
+        harness=req.harness,
+        api_key=req.api_key,
     )
-    return project
+    return _format_project(project)
 
 
 @router.get("/{project_id}", dependencies=[Depends(require_project)])
@@ -113,7 +128,7 @@ async def get_project(project_id: str, request: Request):
     project = await tracker.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
-    return project
+    return _format_project(project)
 
 
 @router.put("/{project_id}", dependencies=[Depends(require_project)])
@@ -126,8 +141,10 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
             description=req.description,
             purpose=req.purpose,
             solution_description=req.solution_description,
+            harness=req.harness,
+            api_key=req.api_key,
         )
-        return updated
+        return _format_project(updated)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
