@@ -14,6 +14,10 @@ class AuthStore {
     return this.user !== null;
   }
 
+  get isAdmin() {
+    return this.user?.role === 'admin';
+  }
+
   /** Revalida o token guardado na sessão. Chamado uma vez no layout raiz. */
   async restore() {
     if (this.ready) return;

@@ -219,3 +219,32 @@ async def test_google_domain_allowlist_and_verified_email(app, client, monkeypat
 async def test_google_login_404_when_not_configured(client):
     assert (await client.get("/api/auth/google/login", follow_redirects=False)).status_code == 404
     assert (await client.get("/api/auth/config")).json()["google"] is False
+
+
+async def test_cookie_authentication_and_lifecycle(app, client):
+    # 1. Break-glass login sets the cookie
+    login_res = await client.post("/api/auth/login", json={"username": "admin", "password": "test-admin-password"})
+    assert login_res.status_code == 200
+    token = login_res.json()["token"]
+    assert "painkiller_token" in login_res.cookies
+    assert login_res.cookies["painkiller_token"] == token
+
+    # 2. Authenticated request using cookie only
+    authed_res = await client.get("/api/projects", cookies={"painkiller_token": token})
+    assert authed_res.status_code == 200
+
+    # 3. /me syncs cookie if passed via bearer header
+    fresh_client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    me_res = await fresh_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_res.status_code == 200
+    assert "painkiller_token" in me_res.cookies
+
+    # 4. /logout clears the cookie
+    logout_res = await client.post("/api/auth/logout")
+    assert logout_res.status_code == 200
+    assert logout_res.cookies.get("painkiller_token") is None or "painkiller_token" in logout_res.headers.get("set-cookie", "")
+
+    # 5. Google callback sets the cookie
+    app.state.google_oauth = FakeGoogle({"sub": "cookie-sub", "email": "cookie@test.com", "email_verified": True})
+    cb_res = await _google_round_trip(client)
+    assert "painkiller_token" in cb_res.cookies

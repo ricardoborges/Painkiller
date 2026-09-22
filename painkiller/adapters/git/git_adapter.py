@@ -1,21 +1,45 @@
 """Git CLI Adapter implementing GitPort."""
 
 import asyncio
+import base64
 import os
+import urllib.parse
 from typing import Optional
 from painkiller.core.ports.git import GitPort
 
 
-class GitCliAdapter(GitPort):
-    """Asynchronous Git operations executing git CLI commands."""
+def strip_userinfo(url: str) -> str:
+    """Drop ``user:password@`` from an http(s) URL; other URLs pass through."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ("http", "https") or "@" not in parsed.netloc:
+        return url
+    return urllib.parse.urlunsplit(parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1]))
 
-    async def _run_git(self, repo_path: str, *args: str) -> tuple[int, str, str]:
+
+class GitCliAdapter(GitPort):
+    """Asynchronous Git operations executing git CLI commands.
+
+    ``http_credentials`` maps a remote URL prefix to ``(user, password)``. The
+    credential reaches git only through the environment of the push process,
+    never ``.git/config``: the repo is bind-mounted into the agent containers,
+    so anything stored there is readable by the agent.
+    """
+
+    def __init__(self, http_credentials: Optional[dict[str, tuple[str, str]]] = None):
+        self.http_credentials = {
+            prefix.rstrip("/"): cred
+            for prefix, cred in (http_credentials or {}).items()
+            if prefix and cred and cred[1]
+        }
+
+    async def _run_git(self, repo_path: str, *args: str, env: Optional[dict[str, str]] = None) -> tuple[int, str, str]:
         proc = await asyncio.create_subprocess_exec(
             "git",
             *args,
             cwd=repo_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         stdout, stderr = await proc.communicate()
         return (
@@ -138,13 +162,46 @@ class GitCliAdapter(GitPort):
         remote_name: str = "origin",
         set_upstream: bool = True,
     ) -> tuple[int, str]:
+        remote_url = await self.scrub_remote_credentials(repo_path, remote_name)
         args = ["push"]
         if set_upstream:
             args.extend(["-u", remote_name, branch_name])
         else:
             args.extend([remote_name, branch_name])
-        code, out, err = await self._run_git(repo_path, *args)
+        code, out, err = await self._run_git(repo_path, *args, env=self._auth_env(remote_url))
         return code, (out + "\n" + err).strip()
+
+    async def scrub_remote_credentials(self, repo_path: str, remote_name: str = "origin") -> Optional[str]:
+        """Rewrite a remote that still carries ``user:password@``; return the clean URL.
+
+        Repositórios criados antes desta mudança guardavam a senha da conta de
+        serviço no `.git/config`, legível pelo agente dentro do contêiner.
+        """
+        code, out, _ = await self._run_git(repo_path, "remote", "get-url", remote_name)
+        if code != 0:
+            return None
+        url = out.strip()
+        clean = strip_userinfo(url)
+        if clean != url:
+            await self._run_git(repo_path, "remote", "set-url", remote_name, clean)
+        return clean
+
+    def _auth_env(self, remote_url: Optional[str]) -> Optional[dict[str, str]]:
+        if not remote_url:
+            return None
+        for prefix, (user, password) in self.http_credentials.items():
+            if remote_url.startswith(prefix + "/"):
+                token = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
+                # GIT_CONFIG_* (git >= 2.31) vale só para este processo e não
+                # aparece na linha de comando.
+                return {
+                    **os.environ,
+                    "GIT_TERMINAL_PROMPT": "0",
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "http.extraHeader",
+                    "GIT_CONFIG_VALUE_0": f"Authorization: Basic {token}",
+                }
+        return None
 
     async def commit_paths(self, repo_path: str, paths: list[str], message: str) -> Optional[str]:
         existing = [p for p in paths if os.path.exists(os.path.join(repo_path, p))]

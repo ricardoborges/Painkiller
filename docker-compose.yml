@@ -70,9 +70,10 @@ services:
 
       # Gitea embutido para versionamento e visualizador de codigo
       PAINKILLER_GITEA_INTERNAL_URL: http://gitea:3000
-      PAINKILLER_GITEA_EXTERNAL_URL: ${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:3300}
+      PAINKILLER_GITEA_EXTERNAL_URL: ${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:8000/gitea}
       PAINKILLER_GITEA_USER: ${PAINKILLER_GITEA_USER:-painkiller}
-      PAINKILLER_GITEA_PASSWORD: ${PAINKILLER_GITEA_PASSWORD:-painkiller_secret_2026}
+      # Sem padrao de proposito: a conta de servico e admin do Gitea inteiro.
+      PAINKILLER_GITEA_PASSWORD: ${PAINKILLER_GITEA_PASSWORD:?defina PAINKILLER_GITEA_PASSWORD no .env}
       PAINKILLER_GITEA_EMAIL: ${PAINKILLER_GITEA_EMAIL:-bot@painkiller.local}
 
       # Integracao com Coolify on-premise
@@ -133,11 +134,16 @@ services:
       - GITEA__database__PATH=/data/gitea/gitea.db
       - GITEA__security__INSTALL_LOCK=true
       - GITEA__security__SECRET_KEY=painkiller-secret-key-2026
-      - GITEA__server__ROOT_URL=${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:3300/}
+      - GITEA__server__ROOT_URL=${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:8000/gitea/}
       - GITEA__server__HTTP_PORT=3000
       - GITEA__server__SSH_PORT=2222
       - GITEA__service__DISABLE_REGISTRATION=true
       - GITEA__service__REQUIRE_SIGNIN_VIEW=false
+      - GITEA__service__ENABLE_REVERSE_PROXY_AUTHENTICATION=true
+      - GITEA__service__ENABLE_REVERSE_PROXY_AUTO_REGISTRATION=true
+      - GITEA__security__REVERSE_PROXY_AUTHENTICATION_USER=X-WEBAUTH-USER
+      - GITEA__security__REVERSE_PROXY_AUTHENTICATION_EMAIL=X-WEBAUTH-EMAIL
+      - GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES=painkiller-api,127.0.0.1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
       # Cada usuario do Painkiller tem uma conta aqui (criada pela api) e so ele
       # ve os proprios repositorios: repo e perfil nascem privados, sem excecao.
       - GITEA__repository__FORCE_PRIVATE=true

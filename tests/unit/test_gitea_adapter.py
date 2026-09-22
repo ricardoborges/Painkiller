@@ -10,6 +10,9 @@ def test_slugify_name():
     assert GiteaAdapter.slugify_name("My New Project 2026!") == "my-new-project-2026"
     assert GiteaAdapter.slugify_name("Painkiller Engine") == "painkiller-engine"
     assert GiteaAdapter.slugify_name("Projeto_Teste") == "projeto_teste"
+    # O Gitea recusa nomes fora de [A-Za-z0-9_.-].
+    assert GiteaAdapter.slugify_name("Gestão de Ações") == "gestao-de-acoes"
+    assert GiteaAdapter.slugify_name("日本") == "project"
 
 
 def test_url_helpers():
@@ -46,7 +49,7 @@ async def test_create_repository_success():
         res = await adapter.create_repository("App", "My app description")
 
         assert res["name"] == "app"
-        assert res["clone_url_internal"] == "http://painkiller:secretpassword@gitea:3000/painkiller/app.git"
+        assert res["clone_url_internal"] == "http://gitea:3000/painkiller/app.git"
         assert res["web_url_external"] == "http://localhost:3000/painkiller/app"
 
 
@@ -85,7 +88,50 @@ async def test_create_repository_for_owner_is_private_under_their_account():
     assert url == "http://gitea:3000/api/v1/admin/users/alice/repos"
     assert mock_post.call_args.kwargs["json"]["private"] is True
     assert res["web_url_external"] == "http://localhost:3300/alice/loja"
-    assert res["clone_url_internal"] == "http://painkiller:pw@gitea:3000/alice/loja.git"
+    # Sem credencial: a URL vai para o .git/config, que o agente lê.
+    assert res["clone_url_internal"] == "http://gitea:3000/alice/loja.git"
+
+
+@pytest.mark.asyncio
+async def test_create_repository_never_reuses_a_taken_name():
+    adapter = GiteaAdapter(
+        internal_base_url="http://gitea:3000",
+        external_base_url="http://localhost:3300",
+        username="painkiller",
+        password="pw",
+    )
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = [_response(409), _response(409), _response(201)]
+        res = await adapter.create_repository("Loja", owner="alice")
+
+    names = [c.kwargs["json"]["name"] for c in mock_post.call_args_list]
+    assert names == ["loja", "loja-2", "loja-3"]
+    assert res["name"] == "loja-3"
+    assert res["web_url_external"] == "http://localhost:3300/alice/loja-3"
+
+
+@pytest.mark.asyncio
+async def test_archive_repository_parses_web_url():
+    adapter = GiteaAdapter(
+        internal_base_url="http://gitea:3000",
+        external_base_url="http://localhost:3300",
+        username="painkiller",
+        password="pw",
+    )
+    with patch("httpx.AsyncClient.patch", new_callable=AsyncMock) as mock_patch:
+        mock_patch.return_value = _response(200)
+        assert await adapter.archive_repository("http://localhost:3300/alice/loja-2") is True
+        # Repositório fora deste Gitea não é tocado.
+        assert await adapter.archive_repository("https://github.com/alice/loja") is False
+
+    assert mock_patch.call_count == 1
+    assert mock_patch.call_args.args[0] == "http://gitea:3000/api/v1/repos/alice/loja-2"
+    assert mock_patch.call_args.kwargs["json"] == {"archived": True}
+
+
+def test_push_credentials_are_keyed_by_internal_url():
+    adapter = GiteaAdapter(internal_base_url="http://gitea:3000/", username="painkiller", password="pw")
+    assert adapter.push_credentials() == {"http://gitea:3000": ("painkiller", "pw")}
 
 
 @pytest.mark.asyncio

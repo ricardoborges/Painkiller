@@ -80,3 +80,49 @@ async def test_git_painkiller_excluded():
         code, out = await adapter.merge_branch(tmpdir, source_branch="feature/test-pk", target_branch="main")
         assert code == 0
 
+
+
+@pytest.mark.asyncio
+async def test_push_keeps_credentials_out_of_git_config():
+    import base64
+    from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = GitCliAdapter(http_credentials={"http://gitea:3000/": ("painkiller", "s3cret")})
+        await adapter.init_repo(tmpdir, default_branch="main", initial_commit=True)
+        # Remote no formato antigo, com a senha embutida.
+        await adapter.set_remote(tmpdir, "http://painkiller:s3cret@gitea:3000/alice/loja.git")
+
+        calls = []
+        real_run = adapter._run_git
+
+        async def spy(repo_path, *args, env=None):
+            if args and args[0] == "push":
+                calls.append((args, env))
+                return 0, "", ""
+            return await real_run(repo_path, *args, env=env)
+
+        with patch.object(adapter, "_run_git", side_effect=spy):
+            code, _ = await adapter.push(tmpdir, "main")
+
+        assert code == 0
+        with open(os.path.join(tmpdir, ".git", "config"), encoding="utf-8") as f:
+            assert "s3cret" not in f.read()
+
+        (args, env), = calls
+        assert "s3cret" not in " ".join(args)
+        token = base64.b64encode(b"painkiller:s3cret").decode("ascii")
+        assert env["GIT_CONFIG_KEY_0"] == "http.extraHeader"
+        assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {token}"
+
+
+@pytest.mark.asyncio
+async def test_push_to_unknown_remote_gets_no_credentials():
+    from painkiller.adapters.git.git_adapter import strip_userinfo
+
+    adapter = GitCliAdapter(http_credentials={"http://gitea:3000": ("painkiller", "s3cret")})
+    assert adapter._auth_env("https://github.com/alice/loja.git") is None
+    # Prefixo precisa terminar em fronteira de caminho.
+    assert adapter._auth_env("http://gitea:30001/alice/loja.git") is None
+    assert strip_userinfo("http://u:p@gitea:3000/a/b.git") == "http://gitea:3000/a/b.git"
+    assert strip_userinfo("git@github.com:a/b.git") == "git@github.com:a/b.git"

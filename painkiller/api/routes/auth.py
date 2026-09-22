@@ -4,14 +4,17 @@ import logging
 import os
 import secrets
 import urllib.parse
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from painkiller.api.security import (
+    AUTH_COOKIE_NAME,
     BREAK_GLASS_ID,
     OAUTH_STATE_KIND,
+    _bearer,
     break_glass_credentials,
     break_glass_fingerprint,
     break_glass_user,
@@ -78,18 +81,42 @@ async def auth_config(request: Request):
 
 
 @router.post("/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, response: Response):
     """Break-glass admin login, configured in the .env."""
     if not check_break_glass(req.username, req.password):
         raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
     user = break_glass_user()
     token = issue_token(BREAK_GLASS_ID, pw=break_glass_fingerprint())
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        max_age=7 * 86400,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
     return {"token": token, "user": user_payload(user)}
 
 
 @router.get("/me")
-async def get_current_user(user: User = Depends(current_user)):
+async def get_current_user(request: Request, response: Response, user: User = Depends(current_user)):
+    token = _bearer(request)
+    if token and request.cookies.get(AUTH_COOKIE_NAME) != token:
+        response.set_cookie(
+            AUTH_COOKIE_NAME,
+            token,
+            max_age=7 * 86400,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
     return user_payload(user)
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
+    return {"status": "ok"}
 
 
 @router.get("/google/login")
@@ -113,10 +140,19 @@ async def google_login(request: Request):
     return response
 
 
-def _back_to_login(fragment: dict) -> RedirectResponse:
+def _back_to_login(fragment: dict, token: Optional[str] = None) -> RedirectResponse:
     # Fragmento, e não query: não vai para logs de servidor nem proxies.
     response = RedirectResponse(f"/login#{urllib.parse.urlencode(fragment)}", status_code=302)
     response.delete_cookie(STATE_COOKIE, path="/api/auth/google")
+    if token:
+        response.set_cookie(
+            AUTH_COOKIE_NAME,
+            token,
+            max_age=7 * 86400,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
     return response
 
 
@@ -165,4 +201,5 @@ async def google_callback(
         user = await tracker.update_user(user.id, email=email, name=name)
 
     user = await ensure_gitea_account(request.app, user)
-    return _back_to_login({"token": issue_token(user.id)})
+    token = issue_token(user.id)
+    return _back_to_login({"token": token}, token=token)

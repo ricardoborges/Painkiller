@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import secrets
+import unicodedata
 import urllib.parse
 from typing import Optional, Any
 import httpx
@@ -36,10 +37,12 @@ class GiteaAdapter:
         ).rstrip("/")
         self.external_base_url = (
             external_base_url
-            or os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL", "http://localhost:3300")
+            or os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL", "http://localhost:8000/gitea")
         ).rstrip("/")
         self.username = username or os.environ.get("PAINKILLER_GITEA_USER", "painkiller")
-        self.password = password or os.environ.get("PAINKILLER_GITEA_PASSWORD", "painkiller_secret_2026")
+        # Sem valor padrão: a conta de serviço é admin do site e o Gitea fica
+        # exposto no host, então uma senha conhecida abriria todos os repos.
+        self.password = password or os.environ.get("PAINKILLER_GITEA_PASSWORD", "")
         self.email = email or os.environ.get("PAINKILLER_GITEA_EMAIL", "bot@painkiller.local")
         self.container_name = container_name or os.environ.get("PAINKILLER_GITEA_CONTAINER_NAME", "painkiller-gitea")
         self._docker_client = docker_client
@@ -59,10 +62,16 @@ class GiteaAdapter:
     def _auth(self) -> tuple[str, str]:
         return (self.username, self.password)
 
+    def push_credentials(self) -> dict[str, tuple[str, str]]:
+        """Credentials for pushing to this Gitea, keyed by the internal URL prefix."""
+        return {self.internal_base_url: self._auth()}
+
     @staticmethod
     def slugify_name(name: str) -> str:
         """Convert a project name to a valid Gitea repository name."""
-        cleaned = re.sub(r"[^\w\s-]", "", name, flags=re.UNICODE).strip().lower()
+        # O Gitea só aceita [A-Za-z0-9_.-]: "Gestão" precisa virar "gestao".
+        ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+        cleaned = re.sub(r"[^\w\s-]", "", ascii_name).strip().lower()
         slug = re.sub(r"[-\s]+", "-", cleaned)
         return slug or "project"
 
@@ -274,48 +283,51 @@ class GiteaAdapter:
         private: bool = True,
         owner: Optional[str] = None,
     ) -> dict[str, str]:
-        """Create a Gitea repository or return existing repository URLs.
+        """Create a new Gitea repository and return its URLs.
 
         Com `owner`, o repositório nasce na conta daquele usuário (sempre
         privado), criado pela conta de serviço via API de admin. Sem ele, fica
         na conta de serviço — é o caso do admin break-glass.
+
+        Nome ocupado (409) nunca reaproveita o repositório existente, que é de
+        outro projeto: tenta `nome-2`, `nome-3`...
         """
-        repo_name = self.slugify_name(name)
+        base_name = self.slugify_name(name)
         repo_owner = owner or self.username
         if owner:
             private = True
             endpoint = f"{self.internal_base_url}/api/v1/admin/users/{owner}/repos"
         else:
             endpoint = f"{self.internal_base_url}/api/v1/user/repos"
-        payload = {
-            "name": repo_name,
-            "description": description or f"Painkiller project: {name}",
-            "private": private,
-            "auto_init": False,
-        }
 
+        repo_name = None
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.post(endpoint, json=payload, auth=self._auth())
-            if res.status_code not in (201, 409):
-                # If unauthorized, try ensuring the user once and retry
+            for attempt in range(20):
+                candidate = base_name if attempt == 0 else f"{base_name}-{attempt + 1}"
+                payload = {
+                    "name": candidate,
+                    "description": description or f"Painkiller project: {name}",
+                    "private": private,
+                    "auto_init": False,
+                }
+                res = await client.post(endpoint, json=payload, auth=self._auth())
                 if res.status_code == 401:
                     await self.ensure_admin_user()
                     res = await client.post(endpoint, json=payload, auth=self._auth())
+                if res.status_code == 201:
+                    repo_name = candidate
+                    break
+                if res.status_code != 409:
+                    logger.error(f"Gitea create_repository failed [{res.status_code}]: {res.text}")
+                    raise RuntimeError(f"Gitea repository creation failed: {res.status_code} - {res.text}")
+        if repo_name is None:
+            raise RuntimeError(f"No free Gitea repository name for {name}")
 
-            if res.status_code not in (201, 409):
-                logger.error(f"Gitea create_repository failed [{res.status_code}]: {res.text}")
-                raise RuntimeError(f"Gitea repository creation failed: {res.status_code} - {res.text}")
-
-        # Parse internal host for git clone/push
+        # Sem credencial na URL: ela iria para o .git/config do repositório, que
+        # o agente lê dentro do contêiner. O push autentica pelo GitCliAdapter.
         parsed_internal = urllib.parse.urlparse(self.internal_base_url)
-        netloc = parsed_internal.netloc
-        safe_user = urllib.parse.quote(self.username)
-        safe_pass = urllib.parse.quote(self.password)
         scheme = parsed_internal.scheme or "http"
-
-        # A conta de serviço é admin do site, então empurra também nos
-        # repositórios privados dos usuários.
-        internal_clone_url = f"{scheme}://{safe_user}:{safe_pass}@{netloc}/{repo_owner}/{repo_name}.git"
+        internal_clone_url = f"{scheme}://{parsed_internal.netloc}/{repo_owner}/{repo_name}.git"
         external_web_url = f"{self.external_base_url}/{repo_owner}/{repo_name}"
 
         return {
@@ -323,6 +335,31 @@ class GiteaAdapter:
             "clone_url_internal": internal_clone_url,
             "web_url_external": external_web_url,
         }
+
+    async def archive_repository(self, web_url: str) -> bool:
+        """Archive the repository behind a project's `repo_url`; False if it is not ours.
+
+        Arquivar, e não apagar: o repositório some do uso mas continua
+        recuperável pelo admin do Gitea.
+        """
+        prefix = self.external_base_url + "/"
+        if not web_url or not web_url.startswith(prefix):
+            return False
+        parts = web_url[len(prefix):].strip("/").split("/")
+        if len(parts) != 2:
+            return False
+        owner, repo = parts
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.patch(
+                f"{self.internal_base_url}/api/v1/repos/{owner}/{repo}",
+                json={"archived": True},
+                auth=self._auth(),
+            )
+            if res.status_code == 404:
+                return False
+            if res.status_code != 200:
+                raise RuntimeError(f"Gitea archive failed: {res.status_code} - {res.text}")
+        return True
 
     def get_branch_url(self, repo_name: str, branch_name: str) -> str:
         """Return web URL to inspect a specific branch in Gitea."""

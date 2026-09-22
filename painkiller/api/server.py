@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import asyncio
+import logging
 from typing import Optional, Any
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 from painkiller.adapters.git.git_adapter import GitCliAdapter
@@ -38,6 +39,42 @@ from painkiller.api.routes.usage import project_router as project_usage_router
 from painkiller.api.routes.usage import router as usage_router
 from painkiller.api.routes.sessions import router as sessions_router
 from painkiller.api.routes.deployments import router as deployments_router
+from painkiller.api.routes.gitea_proxy import router as gitea_proxy_router
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _align_project_repo_urls(tracker: SQLiteIssueTracker, vcs: GiteaAdapter) -> None:
+    """Update repo_url on existing projects if pointing to legacy localhost:3300."""
+    try:
+        projects = await tracker.list_projects()
+        target_base = vcs.external_base_url.rstrip("/")
+        for p in projects:
+            if p.repo_url and ("localhost:3300" in p.repo_url or "gitea:3000" in p.repo_url):
+                import re
+                new_url = re.sub(r"^https?://[^/]+", target_base, p.repo_url)
+                if new_url != p.repo_url:
+                    await tracker.update_project(p.id, repo_url=new_url)
+                    logger.info(f"Updated repo_url for project {p.id}: {new_url}")
+    except Exception as e:
+        logger.debug(f"Could not align project repo URLs: {e}")
+
+
+async def _scrub_remote_credentials(tracker: SQLiteIssueTracker, git: GitCliAdapter) -> None:
+    """Remove the service-account password from remotes written by older versions."""
+    try:
+        projects = await tracker.list_projects()
+    except Exception as e:
+        logger.warning(f"Could not list projects to scrub git remotes: {e}")
+        return
+    for project in projects:
+        if not project.repo_path or not os.path.isdir(os.path.join(project.repo_path, ".git")):
+            continue
+        try:
+            await git.scrub_remote_credentials(project.repo_path)
+        except Exception as e:
+            logger.warning(f"Could not scrub git remote of {project.id}: {e}")
 
 
 def create_app(
@@ -56,6 +93,8 @@ def create_app(
         # Initialize Gitea admin user in background if service is reachable
         vcs: GiteaAdapter = app.state.vcs
         asyncio.create_task(vcs.ensure_admin_user())
+        asyncio.create_task(_align_project_repo_urls(tracker, vcs))
+        asyncio.create_task(_scrub_remote_credentials(tracker, app.state.git))
 
         # Limpeza de contêineres órfãos deixados por execuções anteriores
         agent = getattr(app.state, "agent", None)
@@ -81,8 +120,9 @@ def create_app(
 
     # Instantiate adapters
     tracker = SQLiteIssueTracker(db_url=db_url)
-    git = GitCliAdapter()
     vcs = GiteaAdapter()
+    # A senha da conta de serviço vai só para o ambiente do `git push`.
+    git = GitCliAdapter(http_credentials=vcs.push_credentials())
     sandbox = DockerSandboxRunner(image_name=docker_image)
     # O mesmo SQLite guarda o razão de uso; a porta é separada para que o
     # tracker possa um dia ir para Redmine/GitHub sem levar os custos junto.
@@ -120,6 +160,7 @@ def create_app(
     # Register routers. Só /api/auth é público; o resto exige sessão, e cada
     # router ainda confere se o projeto/tarefa/sessão é do usuário.
     app.include_router(auth_router)
+    app.include_router(gitea_proxy_router)
     signed_in = [Depends(current_user)]
     app.include_router(projects_router, dependencies=signed_in)
     app.include_router(tasks_router, dependencies=signed_in)
@@ -148,7 +189,12 @@ def create_app(
         # else is a client-side route and falls back to the SPA shell.
         @app.get("/{resource:path}", include_in_schema=False)
         async def serve_spa(resource: str):
-            if resource == "api" or resource.startswith("api/"):
+            if (
+                resource == "api"
+                or resource.startswith("api/")
+                or resource == "gitea"
+                or resource.startswith("gitea/")
+            ):
                 raise HTTPException(status_code=404, detail="Not Found")
 
             if resource:

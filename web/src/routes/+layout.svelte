@@ -19,10 +19,13 @@
     if (!auth.ready) return;
     if (!auth.signedIn && !isLogin) goto('/login', { replaceState: true });
     if (auth.signedIn && isLogin) goto('/projetos', { replaceState: true });
+    if (auth.signedIn && !auth.isAdmin && page.url.pathname.startsWith('/pendencias')) {
+      goto('/projetos', { replaceState: true });
+    }
   });
 
   $effect(() => {
-    if (auth.signedIn) pending.ensure();
+    if (auth.signedIn && auth.isAdmin) pending.ensure();
   });
 
   function signOut() {
@@ -34,10 +37,10 @@
     goto('/login', { replaceState: true });
   }
 
-  const nav = [
+  const nav = $derived([
     { href: '/projetos', label: 'Projetos' },
-    { href: '/pendencias', label: 'Pendências' }
-  ];
+    ...(auth.isAdmin ? [{ href: '/pendencias', label: 'Pendências' }] : [])
+  ]);
   const isFluid = $derived(page.url.pathname.includes('/analise-inicial'));
 </script>
 

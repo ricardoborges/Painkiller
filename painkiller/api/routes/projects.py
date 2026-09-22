@@ -135,6 +135,15 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
 @router.delete("/{project_id}", dependencies=[Depends(require_project)])
 async def delete_project(project_id: str, request: Request):
     tracker = request.app.state.tracker
+    vcs = getattr(request.app.state, "vcs", None)
+    project = await tracker.get_project(project_id)
+    if vcs and project and project.repo_url:
+        try:
+            # Arquivado, não apagado: recuperável pelo admin do Gitea.
+            await vcs.archive_repository(project.repo_url)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Could not archive Gitea repo of {project_id}: {e}")
     await tracker.delete_project(project_id)
     return {"status": "deleted", "project_id": project_id}
 

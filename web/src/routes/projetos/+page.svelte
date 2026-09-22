@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, baseName } from '$lib/api';
   import type { Project } from '$lib/types';
+  import { auth } from '$lib/stores/auth.svelte';
   import { pending } from '$lib/stores/pending.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
@@ -95,7 +96,7 @@
   {:else}
     {projects.length}
     {projects.length === 1 ? 'projeto' : 'projetos'}
-    {#if pending.count > 0}
+    {#if auth.isAdmin && pending.count > 0}
       <span class="sep" aria-hidden="true">·</span>
       <span class="blocked">{pending.count} aguardando analista</span>
     {/if}
@@ -133,7 +134,7 @@
         <div class="body">
           <div class="name-line">
             <a class="title name" href="/projetos/{p.id}">{p.name}</a>
-            {#if blocked > 0}
+            {#if auth.isAdmin && blocked > 0}
               <a class="blocked-tag label" href="/pendencias">
                 <span class="dot" aria-hidden="true"></span>
                 {blocked} aguardando

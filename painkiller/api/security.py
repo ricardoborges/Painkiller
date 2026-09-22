@@ -122,10 +122,16 @@ def user_payload(user: User) -> dict:
     }
 
 
+AUTH_COOKIE_NAME = "painkiller_token"
+
+
 def _bearer(request: Request) -> Optional[str]:
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
         return header[7:].strip()
+    cookie_val = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_val:
+        return cookie_val
     # EventSource não manda cabeçalhos: os streams SSE levam o token na query.
     return request.query_params.get("token")
 
