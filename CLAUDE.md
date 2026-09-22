@@ -4,9 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Painkiller is a platform that automates software development by orchestrating coding agents inside Docker containers. An analyst is interviewed by a containerized Antigravity CLI (`agy`) agent running the superpowers `brainstorming` skill, the resulting spec is decomposed into atomic tasks, and each task is dispatched to a sandboxed Antigravity CLI (`agy`) agent running superpowers skills on a feature branch.
+Painkiller is a platform that automates software development by orchestrating coding agents inside Docker containers. An analyst is interviewed by a containerized agent running the superpowers `brainstorming` skill, the resulting spec is decomposed into atomic tasks, and each task is dispatched to a sandboxed agent running superpowers skills on a feature branch.
 
-**Unified Agent Ecosystem.** Both initial analysis and task execution run native **Antigravity CLI (`agy`)** powered by Google's **Gemini 3.8 Flash** with the **Superpowers** plugin. The analysis runs interactive streaming; the task execution runs headless one-shot with stream-json logging. See **Initial analysis** and **Task dispatch**.
+**Multi-Harness Agent Ecosystem.** Each project can be configured with its preferred harness:
+1. **Antigravity CLI (`agy`) + Superpowers**: Powered by Google's **Gemini 3.8 Flash** with the **Superpowers** plugin.
+2. **DeepSeek Harness (`dsh`) + Superpowers**: Powered by **DeepSeek V3 / R1** using the official `@deepseek-ai/dsh` harness.
+Users can optionally configure project-specific API keys (`api_key`), falling back to global server credentials (`GEMINI_API_KEY` or `DEEPSEEK_API_KEY`).
 
 Code comments, LLM prompts, API error messages and the UI are in **Portuguese (pt-BR)**; code identifiers and docstrings are in English. Follow that split.
 
@@ -14,11 +17,15 @@ Code comments, LLM prompts, API error messages and the UI are in **Portuguese (p
 
 ```bash
 pip install -e ".[dev]"           # install package + test deps
-pytest                             # full suite (129 tests, no Docker daemon needed — docker is mocked)
+pytest                             # full suite (no Docker daemon needed — docker is mocked)
 pytest tests/unit/test_orchestrator.py::test_dispatch_task_success   # single test
 uvicorn painkiller.api.server:app --reload    # API + built UI at http://localhost:8000/
-docker build -f docker/worker.Dockerfile -t painkiller-worker:latest .   # worker image (required before dispatching tasks)
-docker build -f docker/agent.Dockerfile -t painkiller-agent:latest .     # analysis agent image (required before "Iniciar análise")
+# AGY Images:
+docker build -f docker/worker.Dockerfile -t painkiller-worker:latest .
+docker build -f docker/agent.Dockerfile -t painkiller-agent:latest .
+# DeepSeek Harness Images:
+docker build -f docker/deepseek-worker.Dockerfile -t painkiller-worker-deepseek:latest .
+docker build -f docker/deepseek-agent.Dockerfile -t painkiller-agent-deepseek:latest .
 ```
 
 Frontend (`web/`, SvelteKit — see **Frontend** below):
