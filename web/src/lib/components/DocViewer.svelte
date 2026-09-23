@@ -425,6 +425,14 @@
       border: none !important;
       box-shadow: none !important;
       background: #fff !important;
+      display: block !important;
+      overflow: visible !important;
+    }
+
+    :global(dialog[open] .panel),
+    :global(dialog[open] .body) {
+      display: block !important;
+      overflow: visible !important;
     }
 
     :global(dialog header),

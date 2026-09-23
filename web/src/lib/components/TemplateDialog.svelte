@@ -426,7 +426,6 @@
     flex-direction: column;
     gap: var(--s5);
     padding: var(--s5);
-    overflow-y: auto;
   }
 
   .field {

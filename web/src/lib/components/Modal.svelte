@@ -38,7 +38,7 @@
         <Icon name="close" />
       </button>
     </header>
-    {@render body()}
+    <div class="body">{@render body()}</div>
     {#if footer}
       <footer>{@render footer()}</footer>
     {/if}
@@ -55,8 +55,14 @@
     background: var(--paper);
     color: var(--ink);
     box-shadow: 0 24px 48px -24px rgba(20, 20, 22, 0.24);
-    /* Conteúdo largo rola dentro de si; a janela nunca ganha barra lateral. */
-    overflow-x: hidden;
+    /* A janela nunca rola: só o corpo tem barra, cabeçalho e rodapé ficam fixos. */
+    overflow: hidden;
+  }
+
+  /* Só aberto: `display` no <dialog> fechado anularia o `display: none` nativo. */
+  dialog[open] {
+    display: flex;
+    flex-direction: column;
   }
 
   dialog::backdrop {
@@ -70,7 +76,22 @@
   .panel {
     display: flex;
     flex-direction: column;
-    max-height: inherit;
+    /* Ocupa a altura útil do dialog (já descontada a borda) e deixa o corpo encolher. */
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  header,
+  footer {
+    flex-shrink: 0;
+  }
+
+  /* O único contêiner que rola: uma só barra, qualquer que seja o conteúdo. */
+  .body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   header {
