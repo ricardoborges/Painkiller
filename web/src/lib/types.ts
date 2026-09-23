@@ -14,10 +14,14 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export type ClarificationStatus = 'PENDING' | 'ANSWERED';
 
-export type HarnessType = 'agy_superpowers' | 'deepseek_superpowers' | 'maki_superpowers';
+export type HarnessType = 'agy_superpowers' | 'deepseek_superpowers' | 'maki_superpowers' | 'unreal_superpowers';
 
-/** Harnesses que autenticam com a chave DeepSeek (dsh e maki compartilham a mesma). */
-export const DEEPSEEK_KEY_HARNESSES: readonly HarnessType[] = ['deepseek_superpowers', 'maki_superpowers'];
+/** Harnesses que autenticam com a chave DeepSeek (dsh, maki e unreal compartilham a mesma). */
+export const DEEPSEEK_KEY_HARNESSES: readonly HarnessType[] = [
+  'deepseek_superpowers',
+  'maki_superpowers',
+  'unreal_superpowers'
+];
 
 export const PROJECT_TYPES = [
   'api',

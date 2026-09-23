@@ -54,6 +54,11 @@
     deepseek_superpowers: [
       { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (Recomendado)' },
       { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash' }
+    ],
+    unreal_superpowers: [
+      { id: 'deepseek/deepseek-v4-pro', label: 'deepseek/deepseek-v4-pro (Padrão / Recomendado)' },
+      { id: 'deepseek/deepseek-v4-flash', label: 'deepseek/deepseek-v4-flash' },
+      { id: 'deepseek/deepseek-flash', label: 'deepseek/deepseek-flash' }
     ]
   };
 
@@ -330,13 +335,25 @@
               <span class="radio-desc">DeepSeek V4 via maki.sh, com a mesma chave DeepSeek</span>
             </div>
           </label>
+          <label class="radio-card" class:active={harness === 'unreal_superpowers'}>
+            <input
+              type="radio"
+              name="harness"
+              value="unreal_superpowers"
+              bind:group={harness}
+            />
+            <div class="radio-info">
+              <span class="radio-title">Unreal Agent + Superpowers</span>
+              <span class="radio-desc">DeepSeek V4 via Unreal Agent runner em Go, com chave DeepSeek</span>
+            </div>
+          </label>
         </div>
       </div>
 
       <div class="field">
         <label for="pmodel">Modelo de IA</label>
         <p class="help">
-          Modelo que o harness executará. Para o Maki, o padrão selecionado é <span class="mono">deepseek/deepseek-v4-pro</span>.
+          Modelo que o harness executará. Para Maki e Unreal Agent, o padrão selecionado é <span class="mono">deepseek/deepseek-v4-pro</span>.
         </p>
         <div class="model-select-wrap">
           <select
@@ -356,7 +373,7 @@
             <input
               type="text"
               class="input mono custom-model-input"
-              placeholder={harness === 'maki_superpowers' ? 'deepseek/deepseek-v4-pro' : 'nome-do-modelo'}
+              placeholder={harness === 'maki_superpowers' || harness === 'unreal_superpowers' ? 'deepseek/deepseek-v4-pro' : 'nome-do-modelo'}
               bind:value={customModelText}
             />
           {/if}

@@ -8,7 +8,8 @@
   const HARNESS_LABELS: Record<HarnessType, string> = {
     agy_superpowers: 'agy + superpowers',
     deepseek_superpowers: 'deepseek + superpowers',
-    maki_superpowers: 'maki + superpowers'
+    maki_superpowers: 'maki + superpowers',
+    unreal_superpowers: 'unreal agent + superpowers'
   };
 
   let { data, children } = $props();

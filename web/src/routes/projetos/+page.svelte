@@ -138,6 +138,8 @@
               <span class="harness-badge label mono" title="DeepSeek Harness">dsh</span>
             {:else if p.harness === 'maki_superpowers'}
               <span class="harness-badge label mono" title="Maki">maki</span>
+            {:else if p.harness === 'unreal_superpowers'}
+              <span class="harness-badge label mono" title="Unreal Agent">unreal</span>
             {:else}
               <span class="harness-badge label mono" title="Antigravity CLI">agy</span>
             {/if}
