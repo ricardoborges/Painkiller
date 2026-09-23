@@ -113,3 +113,32 @@ async def test_coolify_deploy_environment_with_composite_project_id():
         assert app_payload["name"] == "ricardo-store-api-a1b2c3-test"
         assert app_payload["domains"] == "http://ricardo-store-api-a1b2c3-test.coolify.local"
 
+
+
+@pytest.mark.parametrize(
+    "repo_url",
+    [
+        "http://localhost:8000/gitea/ricardoborges/jogo-de-damas",
+        "http://localhost:3300/ricardoborges/jogo-de-damas.git",
+        "http://127.0.0.1:3300/ricardoborges/jogo-de-damas",
+    ],
+)
+def test_resolve_repo_url_rewrites_external_gitea_to_internal(repo_url):
+    """Coolify rejects localhost repos, so the external Gitea address must become the internal one."""
+    adapter = CoolifyAdapter(
+        api_token="t",
+        gitea_internal_url="http://gitea:3000",
+        gitea_external_url="http://localhost:8000/gitea/",
+    )
+    project = Project(id="proj-1", name="damas", repo_path="/tmp/x", repo_url=repo_url)
+
+    assert adapter._resolve_repo_url(project) == "http://gitea:3000/ricardoborges/jogo-de-damas.git"
+
+
+def test_resolve_repo_url_keeps_external_hosts():
+    adapter = CoolifyAdapter(api_token="t", gitea_internal_url="http://gitea:3000")
+    project = Project(
+        id="proj-1", name="x", repo_path="/tmp/x", repo_url="https://github.com/acme/app.git"
+    )
+
+    assert adapter._resolve_repo_url(project) == "https://github.com/acme/app.git"

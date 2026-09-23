@@ -28,6 +28,7 @@ class CoolifyAdapter(DeploymentPort):
         server_uuid: Optional[str] = None,
         wildcard_domain: Optional[str] = None,
         gitea_internal_url: Optional[str] = None,
+        gitea_external_url: Optional[str] = None,
     ):
         self.api_url = (api_url if api_url is not None else os.environ.get("COOLIFY_API_URL", "http://localhost:8000")).rstrip("/")
         self.api_token = os.environ.get("COOLIFY_API_TOKEN", "") if api_token is None else api_token
@@ -40,6 +41,10 @@ class CoolifyAdapter(DeploymentPort):
             gitea_internal_url
             or os.environ.get("COOLIFY_GITEA_URL")
             or os.environ.get("PAINKILLER_GITEA_INTERNAL_URL", "http://painkiller-gitea:3000")
+        ).rstrip("/")
+        self.gitea_external_url = (
+            gitea_external_url
+            or os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL", "http://localhost:8000/gitea")
         ).rstrip("/")
 
     def _headers(self) -> dict[str, str]:
@@ -69,17 +74,27 @@ class CoolifyAdapter(DeploymentPort):
 
     def _resolve_repo_url(self, project: Project) -> str:
         """Resolve the Git repository URL that Coolify can reach."""
-        # Se project.repo_url for algo como http://localhost:3300/user/repo.git,
-        # reescreve o prefixo para a rede interna do docker do Coolify se aplicável
+        # O repo_url guardado é o endereço externo do Gitea (ex.: o proxy
+        # http://localhost:8000/gitea/...), que o Coolify recusa por apontar
+        # para localhost e que, de todo modo, não resolve dentro do container
+        # de build. Reescreve o prefixo para o Gitea na rede do docker.
         if not project.repo_url:
             slug = self._resolve_slug(project)
             return f"{self.gitea_internal_url}/painkiller/{slug}.git"
-        
+
         url = project.repo_url
-        if "localhost:3300" in url or "127.0.0.1:3300" in url:
-            # Substitui por Gitea interno
-            url = url.replace("http://localhost:3300", self.gitea_internal_url)
-            url = url.replace("http://127.0.0.1:3300", self.gitea_internal_url)
+        external_prefixes = [
+            self.gitea_external_url,
+            # Endereços de versões antigas, com o Gitea exposto direto no host.
+            "http://localhost:3300",
+            "http://127.0.0.1:3300",
+        ]
+        for prefix in external_prefixes:
+            if prefix and url.startswith(prefix + "/"):
+                url = self.gitea_internal_url + url[len(prefix):]
+                break
+        if not url.endswith(".git"):
+            url += ".git"
         return url
 
     async def _get_or_create_project(self, client: httpx.AsyncClient, project: Project) -> str:
