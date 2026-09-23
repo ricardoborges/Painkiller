@@ -1,5 +1,6 @@
 """Tests for DockerSandboxRunner harness selection and environment configuration."""
 
+import threading
 from unittest.mock import MagicMock
 import pytest
 from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
@@ -63,3 +64,47 @@ async def test_docker_runner_runs_dsh_for_deepseek():
     assert command == ["painkiller", "acp-run", "--prompt", "Implement feature"]
     env = call_args[1]["environment"]
     assert env["DEEPSEEK_API_KEY"] == "deepseek-key-456"
+
+
+def test_failure_summary_prefers_agent_last_words_over_raw_log():
+    logs = "\n".join(
+        [
+            '{"type":"system","subtype":"init"}',
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"Primeira fala."}]}}',
+            '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"bash","input":{"command":"ls"}}]}}',
+            '{"type":"user","message":{"content":[{"type":"tool_result","content":"' + "x" * 5000 + '"}]}}',
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"Investigando o SyntaxError."}]}}',
+        ]
+    )
+    assert DockerSandboxRunner._failure_summary(logs) == "Investigando o SyntaxError."
+
+
+def test_failure_summary_surfaces_harness_error():
+    logs = '{"type":"result","is_error":true,"result":"401 invalid api key"}\n'
+    assert "chave de API" in DockerSandboxRunner._failure_summary(logs)
+
+
+@pytest.mark.asyncio
+async def test_docker_runner_flags_timeout():
+    mock_client = MagicMock()
+    mock_container = MagicMock()
+    line = b'{"type":"assistant","message":{"content":[{"type":"text","text":"ainda trabalhando"}]}}\n'
+    fired = threading.Event()
+    # O kill do timer é o que encerra o log, como no contêiner real.
+    mock_container.kill.side_effect = fired.set
+
+    def follow(**_):
+        yield line
+        fired.wait(5)
+
+    mock_container.logs.side_effect = follow
+    mock_container.wait.return_value = {"StatusCode": 137}
+    mock_client.containers.run.return_value = mock_container
+
+    runner = DockerSandboxRunner(client=mock_client)
+    task = Task(id="t1", project_id="p1", title="T", description="d", status=TaskStatus.READY)
+    res = await runner.run_task(task=task, repo_path="/fake/repo", task_instructions="x", timeout_seconds=0.05)
+
+    assert res.exit_code == 137
+    assert res.timed_out is True
+    assert res.summary == "ainda trabalhando"

@@ -183,6 +183,11 @@ class ExecutionResult(BaseModel):
     exit_code: int
     logs: str
     clarification: Optional[ClarificationRequest] = None
+    # O contêiner foi morto por exceder o tempo limite (exit 137 do timer).
+    timed_out: bool = False
+    # Resumo legível da falha (última fala do agente, erro do harness), para
+    # não jogar o log inteiro na tela nem em `Task.error`.
+    summary: Optional[str] = None
 
 
 class AgentEventType(str, Enum):

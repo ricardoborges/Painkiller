@@ -131,3 +131,44 @@ async def test_merge_task_success(mock_tracker, mock_sandbox, mock_git):
     mock_tracker.update_task_status.assert_called_with("t1", TaskStatus.COMPLETED)
 
 
+
+
+@pytest.mark.asyncio
+async def test_dispatch_task_timeout_keeps_error_short(mock_tracker, mock_sandbox, mock_git, monkeypatch):
+    monkeypatch.setenv("PAINKILLER_TASK_TIMEOUT", "900")
+    project = Project(id="p1", name="App", repo_path="/repo")
+    task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc")
+
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    huge_log = '{"type":"assistant"}\n' * 20_000
+    mock_sandbox.run_task.return_value = ExecutionResult(
+        exit_code=137, logs=huge_log, timed_out=True, summary="Rodando os testes de novo."
+    )
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    assert mock_sandbox.run_task.call_args.kwargs["timeout_seconds"] == 900
+    failed = [c for c in mock_tracker.update_task_status.call_args_list if c.args[1] == TaskStatus.FAILED]
+    error = failed[0].kwargs["error"]
+    assert "tempo limite de 15 min" in error
+    assert "Rodando os testes de novo." in error
+    assert len(error) < 1000
+    comment = mock_tracker.add_comment.call_args.kwargs["comment"]
+    assert len(comment) < len(huge_log)
+
+
+@pytest.mark.asyncio
+async def test_retry_after_failure_tells_agent_to_continue(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo")
+    task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc", status=TaskStatus.FAILED)
+
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    assert "Execução anterior interrompida" in mock_sandbox.run_task.call_args.args[2]

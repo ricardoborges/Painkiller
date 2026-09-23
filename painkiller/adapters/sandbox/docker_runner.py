@@ -9,7 +9,7 @@ import uuid
 from typing import Optional, Any
 import docker
 
-from painkiller.core.domain.models import Task, ExecutionResult, ClarificationRequest
+from painkiller.core.domain.models import AgentEventType, Task, ExecutionResult, ClarificationRequest
 from painkiller.core.ports.sandbox import AgentEventCallback, SandboxPort
 from painkiller.adapters.sandbox.docker_agent_session import maki_model, parse_agent_line
 from painkiller.adapters.sandbox.paths import daemon_path
@@ -163,7 +163,10 @@ class DockerSandboxRunner(SandboxPort):
 
             # Seguir o log bloqueia até o contêiner sair; o timer garante que
             # um agente pendurado não segure a thread para sempre.
-            timer = threading.Timer(timeout_seconds, self._kill_on_timeout, (container, task.id))
+            timed_out = threading.Event()
+            timer = threading.Timer(
+                timeout_seconds, self._kill_on_timeout, (container, task.id, timed_out)
+            )
             timer.daemon = True
             timer.start()
             try:
@@ -188,6 +191,8 @@ class DockerSandboxRunner(SandboxPort):
                 exit_code=exit_code,
                 logs=logs,
                 clarification=clarification,
+                timed_out=timed_out.is_set() and exit_code != 42,
+                summary=None if exit_code in (0, 42) else self._failure_summary(logs),
             )
         except Exception as e:
             return ExecutionResult(
@@ -213,8 +218,52 @@ class DockerSandboxRunner(SandboxPort):
         return False
 
     @staticmethod
-    def _kill_on_timeout(container: Any, task_id: str) -> None:
+    def _failure_summary(logs: str, limit: int = 1500) -> Optional[str]:
+        """What the analyst needs from a failed run: the harness error, else the agent's last words.
+
+        The raw log is hundreds of KB of stream-json; this keeps the error readable.
+        """
+        harness_error: Optional[str] = None
+        last_text = ""
+        partial = ""
+        stderr: list[str] = []
+        for raw in (logs or "").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            event = parse_agent_line(line)
+            if event is None:
+                continue
+            if event.type == AgentEventType.ERROR:
+                if event.raw.get("harness_error"):
+                    harness_error = event.text
+                elif not line.startswith("{"):
+                    stderr.append(line)
+            elif event.type == AgentEventType.ASSISTANT_DELTA:
+                partial += event.text
+            elif event.type in (AgentEventType.ASSISTANT, AgentEventType.RESULT) and event.text.strip():
+                last_text = event.text
+                partial = ""
+            elif event.type == AgentEventType.TOOL_USE:
+                if partial.strip():
+                    last_text = partial
+                partial = ""
+        if partial.strip():
+            last_text = partial
+
+        summary = harness_error or last_text.strip() or "\n".join(stderr[-8:])
+        if not summary:
+            return None
+        summary = summary.strip()
+        if len(summary) > limit:
+            summary = "…" + summary[-limit:]
+        return summary
+
+    @staticmethod
+    def _kill_on_timeout(container: Any, task_id: str, flag: Optional[threading.Event] = None) -> None:
         logger.warning(f"Task {task_id} exceeded its timeout; killing container")
+        if flag is not None:
+            flag.set()
         try:
             container.kill()
         except Exception:

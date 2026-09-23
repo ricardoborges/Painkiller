@@ -23,6 +23,23 @@ from painkiller.engine.task_activity import TaskActivityHub
 
 logger = logging.getLogger(__name__)
 
+#: Tempo máximo de uma execução de tarefa. Tarefas com testes de navegador ou
+#: `npm install` passam fácil dos 10 min do padrão antigo.
+DEFAULT_TASK_TIMEOUT = 1800
+
+#: Quanto do log bruto vai no comentário de falha (o espelho do Gitea ainda o
+#: recolhe num <details>). O log inteiro de uma execução passa de centenas de KB.
+FAILURE_LOG_TAIL = 20_000
+
+
+def task_timeout_seconds() -> int:
+    """`PAINKILLER_TASK_TIMEOUT` in seconds, falling back to the default on garbage."""
+    try:
+        value = int(os.environ.get("PAINKILLER_TASK_TIMEOUT", "") or DEFAULT_TASK_TIMEOUT)
+    except ValueError:
+        return DEFAULT_TASK_TIMEOUT
+    return value if value > 0 else DEFAULT_TASK_TIMEOUT
+
 
 class PainkillerOrchestrator:
     """Coordinates task execution, git branches, docker containers, and status transitions."""
@@ -71,6 +88,8 @@ class PainkillerOrchestrator:
             self.activity.finish(task.id)
 
     async def _dispatch(self, task: Task, project: Project) -> Task:
+        # Uma nova tentativa roda na mesma branch, por cima do que ficou da anterior.
+        retrying = task.status == TaskStatus.FAILED
         # Ensure feature branch
         branch_name = task.assigned_branch or f"feature/{task.id}"
         await self.git.create_branch(project.repo_path, branch_name, project.default_branch)
@@ -84,14 +103,16 @@ class PainkillerOrchestrator:
         )
 
         # Build prompt instructions
-        instructions = self._build_task_instructions(task, project)
+        instructions = self._build_task_instructions(task, project, retrying=retrying)
 
         # Execute container
         self._note(task.id, f"Iniciando contêiner na branch {branch_name}")
+        timeout = task_timeout_seconds()
         result = await self.sandbox.run_task(
             task,
             project.repo_path,
             instructions,
+            timeout_seconds=timeout,
             on_event=self.activity.publisher(task.id, asyncio.get_running_loop()),
             harness=project.harness,
             api_key=project.api_key,
@@ -175,17 +196,18 @@ class PainkillerOrchestrator:
                     comment=f"❌ Tests failed after agent execution:\n{test_out}",
                 )
         else:
-            error_msg = f"❌ Agent execution failed with exit code {result.exit_code}:\n{result.logs}"
+            error_msg = self._describe_failure(result, timeout, branch_name)
             await self.tracker.update_task_status(
                 task.id,
                 TaskStatus.FAILED,
                 assigned_branch=branch_name,
                 error=error_msg,
             )
+            tail = (result.logs or "")[-FAILURE_LOG_TAIL:]
             await self.tracker.add_comment(
                 task.id,
                 author="system",
-                comment=error_msg,
+                comment=f"{error_msg}\n\nFinal do log do agente:\n{tail}" if tail.strip() else error_msg,
             )
 
         updated_task = await self.tracker.get_task(task.id)
@@ -224,11 +246,34 @@ class PainkillerOrchestrator:
         )
         return await self.dispatch_task(clar.task_id)
 
-    def _build_task_instructions(self, task: Task, project: Project) -> str:
+    @staticmethod
+    def _describe_failure(result: ExecutionResult, timeout: int, branch: str) -> str:
+        """Short pt-BR account of a failed run — the full log goes in the comment, not here."""
+        if result.timed_out:
+            minutes = max(1, round(timeout / 60))
+            head = (
+                f"O agente excedeu o tempo limite de {minutes} min e o contêiner foi encerrado. "
+                f"O trabalho parcial ficou na branch {branch}: use Repetir para continuar de onde parou "
+                f"ou aumente PAINKILLER_TASK_TIMEOUT."
+            )
+        else:
+            head = f"O agente encerrou com código {result.exit_code}."
+        if result.summary:
+            return f"{head}\n\nÚltima mensagem do agente:\n{result.summary}"
+        return head
+
+    def _build_task_instructions(self, task: Task, project: Project, retrying: bool = False) -> str:
         instructions = [
             f"# Tarefa: {task.title}",
             f"\n## Descrição:\n{task.description}",
         ]
+        if retrying:
+            instructions.append(
+                "\n## Execução anterior interrompida:\n"
+                "Uma tentativa anterior desta tarefa falhou ou foi interrompida nesta mesma branch. "
+                "Antes de começar, inspecione o estado atual (git status, git log, arquivos já criados) "
+                "e continue a partir do que já existe em vez de refazer do zero."
+            )
         if task.target_files:
             instructions.append("\n## Arquivos Alvo:")
             for f in task.target_files:

@@ -140,6 +140,32 @@
     expandOverride = Object.fromEntries(tasks.map((t) => [t.id, open]));
   }
 
+  /* O erro chega como um parágrafo de resumo e, às vezes, o log bruto inteiro
+     (falhas anteriores guardavam centenas de KB). Mostra só o resumo; o resto
+     fica recolhido, rolando dentro de uma caixa de altura fixa. */
+  const ERROR_TAIL = 20_000;
+
+  function splitError(message: string): { head: string; rest: string; huge: boolean } {
+    const text = message.trim();
+    const cut = text.indexOf('\n\n') >= 0 ? text.indexOf('\n\n') : text.indexOf('\n');
+    let head = (cut >= 0 ? text.slice(0, cut) : text).replace(/^❌\s*/, '');
+    let rest = cut >= 0 ? text.slice(cut).trim() : '';
+    if (head.length > 400) {
+      rest = head.slice(400) + (rest ? '\n\n' + rest : '');
+      head = head.slice(0, 400) + '…';
+    }
+    const legacy = head.match(/exit code (\d+)/);
+    if (legacy) {
+      head =
+        legacy[1] === '137'
+          ? 'O contêiner foi encerrado à força (código 137) — provavelmente excedeu o tempo limite. Use Repetir para continuar de onde parou.'
+          : `O agente encerrou com código ${legacy[1]}.`;
+    }
+    const huge = rest.length > 2000;
+    if (rest.length > ERROR_TAIL) rest = '…\n' + rest.slice(-ERROR_TAIL);
+    return { head, rest, huge };
+  }
+
   function stepLabel(id: string): string {
     const idx = ordered.findIndex((t) => t.id === id);
     return idx < 0 ? '' : `#${String(idx + 1).padStart(2, '0')}`;
@@ -833,16 +859,23 @@
               </div>
             {/if}
 
-            {#if dispatchError?.id === task.id}
-              <p class="error-line" role="alert">
-                <Icon name="alert" size={12} />
-                {dispatchError.message}
-              </p>
-            {:else if task.status === 'FAILED' && (task.error || task.last_comment)}
-              <p class="error-line" role="alert">
-                <Icon name="alert" size={12} />
-                {task.error || task.last_comment}
-              </p>
+            {#if dispatchError?.id === task.id || (task.status === 'FAILED' && (task.error || task.last_comment))}
+              {@const full = dispatchError?.id === task.id ? dispatchError.message : (task.error || task.last_comment || '')}
+              {@const err = splitError(full)}
+              <div class="error-box" role="alert">
+                <p class="error-head">
+                  <Icon name="alert" size={12} />
+                  <span>{err.head}</span>
+                </p>
+                {#if err.rest}
+                  <details class="error-more">
+                    <summary class="label">
+                      {err.huge ? 'Log bruto do agente' : 'Detalhes'}
+                    </summary>
+                    <pre class="error-pre mono">{err.rest}</pre>
+                  </details>
+                {/if}
+              </div>
             {:else if isCompleted && task.last_comment}
               <p class="completed-note mono faint">
                 {task.last_comment}
@@ -1557,14 +1590,48 @@
     color: var(--ink-3);
   }
 
-  .error-line {
+  .error-box {
+    margin-top: var(--s3);
+    max-width: 44rem;
+    padding: var(--s3) var(--s4);
+    border-left: 2px solid var(--ink);
+    background: repeating-linear-gradient(
+      -45deg,
+      var(--paper-sunk) 0 6px,
+      var(--paper) 6px 12px
+    );
+  }
+
+  .error-head {
     display: flex;
     align-items: flex-start;
     gap: var(--s2);
-    margin-top: var(--s3);
     font-size: var(--t-small);
-    color: var(--accent);
-    max-width: var(--measure);
+    color: var(--ink);
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+
+  .error-head :global(svg) {
+    flex: none;
+    margin-top: 0.2rem;
+  }
+
+  .error-more {
+    margin-top: var(--s2);
+  }
+
+  .error-pre {
+    margin-top: var(--s2);
+    max-height: 16rem;
+    overflow: auto;
+    padding: var(--s3);
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    font-size: var(--t-micro);
+    color: var(--ink-2);
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 
   .side {
