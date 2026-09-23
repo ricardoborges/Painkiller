@@ -107,7 +107,17 @@ flowchart TD
 - Docker & Docker Compose
 - API key for your chosen provider (`GEMINI_API_KEY` or `DEEPSEEK_API_KEY`)
 
-### Running with Docker Compose
+### One command
+
+```bash
+./linux-run.sh        # Linux
+./mac-run.sh          # macOS
+powershell -ExecutionPolicy Bypass -File .\win-run.ps1   # Windows
+```
+
+The script checks Docker/Compose, creates `.env` from `.env.example`, fills `PAINKILLER_HOST_ROOT` and generates the secrets, asks for an LLM key if none is set, builds **every** image (including each harness's worker and agent), verifies them and waits for the API. Use `--skip-build` / `-SkipBuild` to only start.
+
+### Running with Docker Compose manually
 
 1. Clone the repo and configure `.env`:
    ```bash
