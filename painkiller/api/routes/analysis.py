@@ -116,6 +116,9 @@ async def stream_analysis(session_id: str, request: Request):
                 "text": event.text,
                 "timestamp": event.timestamp.isoformat(),
             }
+            if event.raw.get("harness_error"):
+                # Falha do harness, não ruído: a UI a mostra fora dos diagnósticos.
+                payload["fatal"] = True
             yield f"event: {event.type.value}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
         yield "event: CLOSE\ndata: {}\n\n"
 

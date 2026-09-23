@@ -54,6 +54,9 @@ class Task(BaseModel):
     session_id: Optional[str] = None
     last_comment: Optional[str] = None
     error: Optional[str] = None
+    #: Issue espelhada no Gitea (número no repositório do projeto e link web).
+    issue_number: Optional[int] = None
+    issue_url: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -86,6 +89,7 @@ class HarnessType(str, Enum):
     """Supported agent harnesses."""
     AGY_SUPERPOWERS = "agy_superpowers"
     DEEPSEEK_SUPERPOWERS = "deepseek_superpowers"
+    MAKI_SUPERPOWERS = "maki_superpowers"
 
 
 class Project(BaseModel):

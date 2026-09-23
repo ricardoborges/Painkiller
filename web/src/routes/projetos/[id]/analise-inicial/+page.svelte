@@ -255,11 +255,16 @@
     openArtifactsModal(d);
   }
 
+  /** Por que o agente parou, quando o harness disse (ex.: conta DeepSeek sem saldo). */
+  const failure = $derived(
+    a.agentError ?? (a.session?.status === 'FAILED' ? a.session?.error : null) ?? null
+  );
+
   /** Um rótulo só para o estado da sessão — é o que a toolbar precisa dizer. */
   const phase = $derived.by(() => {
     if (a.startError) return { key: 'error', text: 'O agente não subiu' };
     if (a.starting) return { key: 'boot', text: 'Subindo o contêiner' };
-    if (a.session?.status === 'FAILED') return { key: 'error', text: 'Sessão falhou' };
+    if (a.session?.status === 'FAILED' || failure) return { key: 'error', text: 'Sessão falhou' };
     if (a.finished) return { key: 'done', text: 'Sessão encerrada' };
     if (a.myTurn) return { key: 'you', text: 'Sua vez' };
     return { key: 'agent', text: 'Agente trabalhando' };
@@ -430,7 +435,7 @@
               </li>
             {/each}
 
-            {#if !a.myTurn && !a.finished && !a.starting}
+            {#if !a.myTurn && !a.finished && !a.starting && !failure}
               <li class="turn">
                 <span class="label who">Agente</span>
                 <div class="content">
@@ -455,6 +460,13 @@
               </li>
             {/if}
           </ol>
+
+          {#if failure}
+            <div class="failure hatch" role="alert">
+              <p class="label">O agente parou</p>
+              <p>{failure}</p>
+            </div>
+          {/if}
 
           {#if a.diagnostics.length}
             <details class="diag">
@@ -839,16 +851,19 @@
     padding: var(--s6) var(--s4);
   }
 
+  /* O corpo do Modal não tem padding: o explorer ocupa a largura exata do
+     painel. (Margens negativas aqui empurravam a lateral para fora da janela
+     e criavam rolagem horizontal.) */
   .artifacts-explorer {
     display: flex;
-    height: min(65vh, 38rem);
-    margin: calc(-1 * var(--s4)) calc(-1 * var(--s5));
-    border-top: 1px solid var(--rule);
+    height: min(68vh, 42rem);
+    min-width: 0;
     overflow: hidden;
   }
 
   .artifacts-sidebar {
-    width: 19rem;
+    width: 18rem;
+    min-width: 0;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -868,7 +883,6 @@
     border: 1px solid var(--rule-ink);
     background: var(--paper);
     color: var(--ink);
-    border-radius: 2px;
   }
 
   .category-filters {
@@ -890,7 +904,6 @@
     border: 1px solid var(--rule);
     color: var(--ink-3);
     cursor: pointer;
-    border-radius: 2px;
     white-space: nowrap;
     transition: all var(--fast) var(--ease);
   }
@@ -921,6 +934,7 @@
 
   .modal-doc-item {
     width: 100%;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
@@ -958,6 +972,8 @@
   }
 
   .modal-doc-path {
+    display: block;
+    max-width: 100%;
     font-size: var(--t-nano, 0.68rem);
     color: var(--ink-3);
   }
@@ -979,9 +995,10 @@
 
   .preview-toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: var(--s3);
+    gap: var(--s2) var(--s3);
     padding: var(--s2) var(--s4);
     border-bottom: 1px solid var(--rule-ink);
     background: var(--paper-sunk);
@@ -1010,8 +1027,17 @@
 
   .preview-body {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: var(--s5) var(--s6);
+  }
+
+  /* Tabelas e blocos de código largos rolam dentro de si, não empurram o painel. */
+  .preview-body :global(pre),
+  .preview-body :global(table) {
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .preview-empty {
@@ -1042,7 +1068,6 @@
     background: var(--paper-sunk);
     color: var(--ink-2);
     flex-shrink: 0;
-    border-radius: 2px;
   }
 
   .cat.spec {
@@ -1075,7 +1100,6 @@
   .seg-control {
     display: inline-flex;
     border: 1px solid var(--rule-ink);
-    border-radius: 2px;
     overflow: hidden;
   }
 
@@ -1107,6 +1131,7 @@
     .artifacts-sidebar {
       width: 100%;
       height: 40%;
+      flex-shrink: 0;
       border-right: none;
       border-bottom: 1px solid var(--rule-ink);
     }
@@ -1516,6 +1541,19 @@
     color: var(--accent);
     font-size: var(--t-small);
     max-width: var(--measure);
+  }
+
+  /* Falha: peso e hachura, nunca o acento (reservado ao código 42). */
+  .failure {
+    margin-top: var(--s4);
+    padding: var(--s3) var(--s4);
+    border: 1px solid var(--ink);
+    max-width: var(--measure);
+    font-weight: 600;
+  }
+
+  .failure .label {
+    margin-bottom: var(--s2);
   }
 
   .diag {

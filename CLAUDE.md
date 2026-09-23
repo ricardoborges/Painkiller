@@ -8,8 +8,9 @@ Painkiller is a platform that automates software development by orchestrating co
 
 **Multi-Harness Agent Ecosystem.** Each project can be configured with its preferred harness:
 1. **Antigravity CLI (`agy`) + Superpowers**: Powered by Google's **Gemini 3.8 Flash** with the **Superpowers** plugin.
-2. **DeepSeek Harness (`dsh`) + Superpowers**: Powered by **DeepSeek V3 / R1** using the official `@deepseek-ai/dsh` harness.
-Users can optionally configure project-specific API keys (`api_key`), falling back to global server credentials (`GEMINI_API_KEY` or `DEEPSEEK_API_KEY`).
+2. **DeepSeek Harness (`dsh`) + Superpowers**: Powered by **DeepSeek V4** (`deepseek-v4-flash` by default) using the official `@deepseek-ai/dsh` harness. See **DeepSeek harness** below.
+3. **Maki (`maki`) + Superpowers**: [maki.sh](https://maki.sh), a Rust coding agent, on **DeepSeek V4** with the **same DeepSeek key** as option 2. See **Maki harness** below.
+Users can optionally configure project-specific API keys (`api_key`), falling back to global server credentials (`GEMINI_API_KEY` or `DEEPSEEK_API_KEY`). `dsh` and `maki` share the DeepSeek key, so switching a project between them keeps it.
 
 Code comments, LLM prompts, API error messages and the UI are in **Portuguese (pt-BR)**; code identifiers and docstrings are in English. Follow that split.
 
@@ -26,6 +27,9 @@ docker build -f docker/agent.Dockerfile -t painkiller-agent:latest .
 # DeepSeek Harness Images:
 docker build -f docker/deepseek-worker.Dockerfile -t painkiller-worker-deepseek:latest .
 docker build -f docker/deepseek-agent.Dockerfile -t painkiller-agent-deepseek:latest .
+# Maki Images:
+docker build -f docker/maki-worker.Dockerfile -t painkiller-worker-maki:latest .
+docker build -f docker/maki-agent.Dockerfile -t painkiller-agent-maki:latest .
 ```
 
 Frontend (`web/`, SvelteKit — see **Frontend** below):
@@ -100,6 +104,8 @@ The stream-json envelope from `agy` is parsed in `parse_agent_line` into an `Age
   - `step_type: "tool"` with done/error state -> `TOOL_RESULT`
 - `result`: Turn completed -> `RESULT`, enabling the analyst composer in the UI.
 
+An API restart kills the analysis containers while the restored session still says it is the analyst's turn, so `AnalysisOrchestrator.send` restores the run (`get_or_restore`) and, when the container is not alive, calls `resume` **before** appending the message — `resume` measures the queue offset first, so the new answer is the first thing the restarted agent reads.
+
 `AnalysisOrchestrator` fans events out to SSE subscribers and keeps a replay buffer, so a reconnecting `EventSource` sees the whole conversation. `POST /api/projects/{id}/analysis` returns immediately, streaming events via `/api/analysis/{sid}/stream`.
 
 Sessions and non-transient events are persisted through the tracker, so `get_or_restore` can rebuild a run after a restart. Two things make that replay honest, and both are easy to break:
@@ -120,6 +126,29 @@ So that this lands on the default branch (where the Artefatos links point), `_en
 Dispatch is synchronous inside the HTTP request (the blocking docker-py wait is offloaded with `run_in_executor`), so `POST /api/tasks/{id}/dispatch` blocks for the full agent run.
 
 While it blocks, progress goes out on a side channel: `DockerSandboxRunner` follows `container.logs(stream=True, follow=True)` (that same read is the final `ExecutionResult.logs`), parses each line with `parse_agent_line` and hands it to the `on_event` callback of `SandboxPort.run_task`. The orchestrator points that callback at its `TaskActivityHub` ([engine/task_activity.py](painkiller/engine/task_activity.py)), adds its own `SYSTEM` notes (container start, exit code, test run), and `GET /api/tasks/{id}/stream` serves it as SSE. The hub is **in-memory only**: its first frame, `STATE`, says `active: false` when this process is not running the task — after a restart the tracker can still say `RUNNING` with nothing behind it, and the UI says so instead of spinning. The container timeout is now a `threading.Timer` that kills the container, since following the log blocks until exit.
+
+### DeepSeek harness (`dsh` over ACP)
+
+A project with `harness = deepseek_superpowers` runs the same two flows on `painkiller-agent-deepseek` / `painkiller-worker-deepseek`, and the rest of Painkiller cannot tell the difference. The trick is [cli/acp_run.py](painkiller/cli/acp_run.py) (`painkiller acp-run`): it drives `dsh --profile acp` over the **Agent Client Protocol** (JSON-RPC stdio) and re-emits everything in the **Antigravity stream-json envelope** (`init` / `step_update` / `result`), so `parse_agent_line`, the analysis pump, the task hub and usage accounting are shared.
+
+- **Analysis**: `acp-run --stdin-file … --session-key <claude_session_id>` polls the same NDJSON queue as `agent-run`, one `session/prompt` per analyst line, in **one** ACP session (so the interview has memory). The ACP `sessionId` is stored in `.painkiller/dsh-sessions.json` under the session key; `resume` passes `--resume --stdin-offset <bytes>` and the bridge calls `session/resume`. The offset is measured by the API at restart time — measuring it inside the container would drop a message sent while it booted. `.painkiller/dsh_home/{sessions,storages}` is bind-mounted over `/root/.dsh/…` so the history outlives the container.
+- **Tasks**: `acp-run --prompt <instructions>`, one turn then exit — the `agy --print` equivalent. Clarification (exit 42) works unchanged, since `painkiller ask` runs inside the agent's bash tool.
+- **Skills**: the images symlink `/opt/superpowers/skills` to `~/.agents/skills`, which `dsh-skill-filesystem` puts in the session catalog; the agent loads them with its `skill` tool.
+- **Permissions**: `session/request_permission` is answered with the allow option — the `--dangerously-skip-permissions` equivalent.
+- **Tokens**: ACP reports none. The bridge sums `usage` of the `assistant/message` events in the dsh session log (`sessions/*/<id>/session.v3.jsonl.zstd`, multi-frame zstd, decoded through `node` because the image's Python has no zstd) by sequence number, so a late write lands in the next turn instead of being lost. The projection cache (`storages/session_projcache`) lags a turn behind — do not use it.
+- **Errors**: `dsh` failures surface as `dsh: <CODE>: <message>` lines; `parse_agent_line` turns `QUOTA`, `AUTH`, `fatal` etc. into `ERROR` events with `raw.harness_error`, the analysis stores the pt-BR text in `session.error`, and the UI shows it as "O agente parou" (weight + hatching, not the accent).
+- `PAINKILLER_DEEPSEEK_MODEL` / `PAINKILLER_DEEPSEEK_EFFORT` pick an advertised option through `session/set_config_option`; unset keeps dsh's default.
+
+### Maki harness (`maki`, Claude Code stream-json)
+
+`harness = maki_superpowers` runs on `painkiller-agent-maki` / `painkiller-worker-maki`. The images install the **pinned** release binary (`MAKI_VERSION`), verified against the release's `sha256sums.txt` — never the remote `install.sh`. Maki speaks **Claude Code's stream-json in both directions**, so unlike `dsh` it needs no protocol bridge: the analysis reuses `painkiller agent-run --agent-bin maki` with `--trust --yolo --print --input-format stream-json --output-format stream-json --include-partial-messages`, and `parse_agent_line`'s Claude Code branch does the parsing. Every `result` carries per-turn `usage` **and** `total_cost_usd`.
+
+- **Key and model**: the DeepSeek key (`DEEPSEEK_KEY_HARNESSES`), model `PAINKILLER_MAKI_MODEL` (default `deepseek/deepseek-v4-flash`, `provider/model` syntax).
+- **Skills**: `/opt/superpowers/skills` is linked to `~/.agents/skills`, which maki scans; the agent loads them with its `Skill` tool.
+- **Sessions**: started with `--session-id <claude_session_id>`, resumed with `--session <id>`. Maki stores the session as `sessions/<base58 of the UUID>.jsonl` (`maki_session_file`); `resume` uses `--session` only when that file exists (a container that died before the first turn has nothing to resume). State lives in `.painkiller/maki_home` → `/root/.local/state/maki`, and `sessions/locks` must be pre-created or maki does not save into an empty mount. On a Windows bind mount maki logs `failed to save session …`: that is only `cwd_latest.json` (used by `--continue`, which we never pass); the parser downgrades it to `SYSTEM`.
+- **Resume offset**: like `dsh`, `resume` passes `agent-run --stdin-offset <bytes>` so the answered queue is not replayed. (The `agy` path still replays from 0.)
+- **Errors, the tricky part**: maki reports a refused key or missing balance as a `result` with `is_error: true` **and exits 0**. Three guards: `parse_agent_line` maps such a result to an `ERROR` with `raw.harness_error` (same UI path as `dsh`); `DockerSandboxRunner._ended_in_error` turns exit 0 into 1 so a failed task never reaches tests/review; and `agent-run --fail-on-error-result` stops the analysis container. In SDK (bidirectional) mode maki does not even emit that result — it waits silently "for re-authentication" and only writes to `~/.local/logs/maki/maki.log` — so `agent-run --agent-log` tails that JSON log and synthesizes the error `result` on 401/402/403.
+- Task cost: maki's `result` has no model, so `parse_task_usage` takes it from the `system/init` / `assistant` events of the same log.
 
 ### Usage and cost tracking
 
@@ -152,7 +181,7 @@ Design rules that are load-bearing, not decoration:
 
 **Long-running requests:** `POST /api/tasks/{id}/dispatch` and `POST /api/tasks/{id}/clarification` hold the HTTP connection open for the entire container run. The UI has no timeout; for dispatch, `TaskActivity.svelte` subscribes to `/api/tasks/{id}/stream` and shows the tool calls and text the agent produces, plus "última atividade há N s" — deltas count as activity, and after two minutes of silence it warns that the agent may be stuck (weight and hatching, not the accent). The análise-inicial page is the exception: it streams, so the clock there only covers the gap between turns, and `TOOL_USE` events are deliberately **not** shown in the transcript (the audience is not developers) — they only trigger a refresh of the artifacts, while a generic "Trabalhando." indicator covers the silence.
 
-**The analysis session lives in a module, not in the route component** ([stores/analysis.svelte.ts](web/src/lib/stores/analysis.svelte.ts), keyed by project id). The page is a thin view over it: leaving for the backlog tab and coming back no longer closes the `EventSource` nor rebuilds the transcript, and `ensureBooted()` makes the second visit a no-op instead of a second container. Only `signOut` disposes it. The store still stashes the session id in `sessionStorage`/`localStorage` so a hard reload re-attaches, and still reports a 404 from `/analysis/{id}/message` as a dead session.
+**The analysis session lives in a module, not in the route component** ([stores/analysis.svelte.ts](web/src/lib/stores/analysis.svelte.ts), keyed by project id). The page is a thin view over it: leaving for the backlog tab and coming back no longer closes the `EventSource` nor rebuilds the transcript, and `ensureBooted()` makes the second visit a no-op instead of a second container. Only `signOut` disposes it. The store still stashes the session id in `sessionStorage`/`localStorage` so a hard reload re-attaches, and still reports a 404 from `/analysis/{id}/message` as a dead session. A **watchdog** in the store covers a frame lost in transit: when the UI shows "agente trabalhando", the stream has been silent for 20 s and `GET /analysis/{id}` says `WAITING_ANALYST`/`FINISHED`/`FAILED`, it wipes the transcript and re-attaches, so the replay rebuilds the right state — exactly what an F5 did. Without it the Choices form stayed disabled with the agent already stopped.
 
 **Clickable choices.** `build_analysis_prompt` tells the agent to end a multiple-choice question with a fenced ```` ```painkiller-choices ```` JSON block (`{"multiple": bool, "options": [{"label", "description"}]}`). [lib/choices.ts](web/src/lib/choices.ts) strips it from the markdown and `Choices.svelte` renders it as options plus a free-text field; the answer goes through the same `send()` as the composer, so the backend is unaware of it. The fence name is duplicated in `CHOICES_FENCE` (analysis.py) and `choices.ts`. A missing or malformed block just falls back to plain markdown.
 

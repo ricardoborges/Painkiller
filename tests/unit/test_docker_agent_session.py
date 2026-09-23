@@ -219,9 +219,32 @@ async def test_start_runs_dsh_for_deepseek_harness(tmp_path, client):
     run_kwargs = client.containers.run.call_args.kwargs
     assert run_kwargs["image"] == "painkiller-agent-deepseek:latest"
     command = run_kwargs["command"]
-    assert command[:4] == ["painkiller", "agent-run", "--agent-bin", "dsh"]
-    assert "--profile" in command and command[command.index("--profile") + 1] == "headless"
+    assert command[:4] == ["painkiller", "acp-run", "--stdin-file", "/workspace/.painkiller/agent-stdin.jsonl"]
+    assert "--resume" not in command
     assert run_kwargs["environment"]["DEEPSEEK_API_KEY"] == "sk-ds-project-key"
+    # O histórico do dsh vive fora do contêiner, para a retomada achar a sessão.
+    binds = {v["bind"] for v in run_kwargs["volumes"].values()}
+    assert {"/workspace", "/root/.dsh/sessions", "/root/.dsh/storages"} <= binds
+
+
+async def test_resume_deepseek_passes_session_key(tmp_path, client):
+    session = DockerAgentSession(client=client)
+
+    await session.start(
+        "analysis-dsh",
+        str(tmp_path),
+        "",
+        resume=True,
+        claude_session_id="pk-conv-1",
+        harness="deepseek_superpowers",
+        api_key="sk-ds-project-key",
+    )
+
+    command = client.containers.run.call_args.kwargs["command"]
+    assert command[command.index("--session-key") + 1] == "pk-conv-1"
+    assert "--resume" in command
+    # Medido antes de qualquer envio: a fila existente já foi respondida.
+    assert command[command.index("--stdin-offset") + 1] == "0"
 
 
 async def test_missing_deepseek_credentials_fail_with_clear_error(tmp_path, client, monkeypatch):
@@ -258,3 +281,30 @@ def test_parse_dsh_json_lines():
     assert ev_res.type == AgentEventType.RESULT
     assert ev_res.text == "Concluído com sucesso"
 
+
+
+def test_parse_dsh_quota_is_a_fatal_error_in_portuguese():
+    event = parse_agent_line("dsh: QUOTA: Insufficient Balance")
+    assert event is not None
+    assert event.type == AgentEventType.ERROR
+    assert event.raw["harness_error"] == "QUOTA"
+    assert event.raw["detail"] == "Insufficient Balance"
+    assert "sem saldo" in event.text
+
+
+def test_parse_dsh_auth_and_fatal_are_errors():
+    auth = parse_agent_line("dsh: AUTH: invalid api key")
+    assert auth.type == AgentEventType.ERROR
+    assert auth.raw["harness_error"] == "AUTH"
+
+    fatal = parse_agent_line("dsh: fatal: profile not found")
+    assert fatal.type == AgentEventType.ERROR
+    assert fatal.raw["harness_error"] == "FATAL"
+    assert "profile not found" in fatal.text
+
+
+def test_parse_dsh_reasoning_and_status_lines_are_not_errors():
+    assert parse_agent_line("dsh: reasoning: pensando").type == AgentEventType.THINKING_DELTA
+    status = parse_agent_line("dsh: booting profile headless")
+    assert status.type == AgentEventType.SYSTEM
+    assert "harness_error" not in status.raw

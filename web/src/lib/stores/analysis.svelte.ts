@@ -1,6 +1,11 @@
 import { ApiError, api, openAnalysisStream } from '$lib/api';
 import type { AgentEvent, AnalysisSession, ProjectDoc, Task } from '$lib/types';
 
+/** De quanto em quanto tempo a rede de segurança confere o servidor. */
+const WATCHDOG_INTERVAL_MS = 10_000;
+/** Silêncio do stream a partir do qual o estado local deixa de ser confiável. */
+const WATCHDOG_SILENCE_MS = 20_000;
+
 export interface Turn {
   who: 'agent' | 'analyst';
   text: string;
@@ -30,6 +35,8 @@ export class AnalysisStore {
 
   starting = $state(false);
   startError = $state<string | null>(null);
+  /** Motivo, dito pelo harness, de o agente ter parado (ex.: conta sem saldo). */
+  agentError = $state<string | null>(null);
   sendError = $state<string | null>(null);
   closing = $state(false);
   committing = $state(false);
@@ -52,6 +59,9 @@ export class AnalysisStore {
   #dispose: (() => void) | null = null;
   #booting: Promise<void> | null = null;
   #booted = false;
+  /** Último frame do stream ou envio do analista; mede o silêncio. */
+  #lastActivity = Date.now();
+  #watchdog: ReturnType<typeof setInterval> | null = null;
 
   constructor(projectId: string, iterationSessionId?: string) {
     this.projectId = projectId;
@@ -98,6 +108,7 @@ export class AnalysisStore {
     this.#booted = true;
     this.starting = true;
     this.startError = null;
+    this.agentError = null;
     this.turns = [];
     this.diagnostics = [];
     this.streaming = '';
@@ -149,13 +160,53 @@ export class AnalysisStore {
 
   attach(sessionId: string) {
     this.#dispose?.();
-    this.#dispose = openAnalysisStream(
+    this.#lastActivity = Date.now();
+    const close = openAnalysisStream(
       sessionId,
-      (e) => this.onEvent(e),
+      (e) => {
+        this.#lastActivity = Date.now();
+        this.onEvent(e);
+      },
       () => {
         this.streamClosed = true;
       }
     );
+    this.#watchdog ??= setInterval(() => void this.#reconcile(), WATCHDOG_INTERVAL_MS);
+    this.#dispose = () => {
+      close();
+      if (this.#watchdog) clearInterval(this.#watchdog);
+      this.#watchdog = null;
+    };
+  }
+
+  /**
+   * Rede de segurança do stream: se a tela diz "agente trabalhando" mas nada
+   * chega há um tempo e o servidor diz que a vez é do analista (ou que a
+   * sessão acabou), um frame se perdeu no caminho — reconstrói a conversa a
+   * partir do servidor, como um F5 faria. Sem isso o formulário de resposta
+   * ficava travado com o agente já parado.
+   */
+  async #reconcile() {
+    const session = this.session;
+    if (!session || this.myTurn || this.finished || this.starting) return;
+    if (Date.now() - this.#lastActivity < WATCHDOG_SILENCE_MS) return;
+    let server: AnalysisSession;
+    try {
+      server = await api.getAnalysis(session.session_id);
+    } catch {
+      return;
+    }
+    // O analista pode ter enviado algo enquanto a consulta estava no ar.
+    if (this.session?.session_id !== session.session_id || this.myTurn) return;
+    if (Date.now() - this.#lastActivity < WATCHDOG_SILENCE_MS) return;
+    if (!['WAITING_ANALYST', 'FINISHED', 'FAILED'].includes(server.status)) return;
+    this.turns = [];
+    this.streaming = '';
+    this.reasoning = '';
+    this.diagnostics = [];
+    this.session = server;
+    // O replay do stream refaz o histórico e devolve o estado certo.
+    this.attach(server.session_id);
   }
 
   commitAgentText(text: string) {
@@ -222,7 +273,8 @@ export class AnalysisStore {
         }
         break;
       case 'ERROR':
-        this.diagnostics = [...this.diagnostics, event.text];
+        if (event.fatal) this.agentError = event.text;
+        else this.diagnostics = [...this.diagnostics, event.text];
         break;
     }
   }
@@ -238,6 +290,7 @@ export class AnalysisStore {
     this.reasoning = '';
     this.sendError = null;
     this.waitingSince = Date.now();
+    this.#lastActivity = Date.now();
     this.session = { ...this.session, status: 'WAITING_AGENT' };
 
     try {

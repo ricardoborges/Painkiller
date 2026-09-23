@@ -3,6 +3,13 @@
   import Icon from '$lib/components/Icon.svelte';
   import SessionSidebar from '$lib/components/SessionSidebar.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
+  import type { HarnessType } from '$lib/types';
+
+  const HARNESS_LABELS: Record<HarnessType, string> = {
+    agy_superpowers: 'agy + superpowers',
+    deepseek_superpowers: 'deepseek + superpowers',
+    maki_superpowers: 'maki + superpowers'
+  };
 
   let { data, children } = $props();
 
@@ -89,7 +96,7 @@
         <span class="sep" aria-hidden="true">·</span>
         <span>branch base {data.project.default_branch}</span>
         <span class="sep" aria-hidden="true">·</span>
-        <span>{data.project.harness === 'deepseek_superpowers' ? 'deepseek + superpowers' : 'agy + superpowers'}</span>
+        <span>{HARNESS_LABELS[data.project.harness ?? 'agy_superpowers']}</span>
       </div>
 
       <nav aria-label="Seções do projeto">

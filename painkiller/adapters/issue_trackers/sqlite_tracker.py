@@ -95,6 +95,8 @@ class TaskRecord(Base):
     session_id = Column(String, nullable=True, index=True)
     last_comment = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
+    issue_number = Column(Integer, nullable=True)
+    issue_url = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -526,6 +528,17 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             record = res.scalar_one()
             return self._to_task_domain(record)
 
+    async def set_task_issue(self, task_id: str, issue_number: int, issue_url: str) -> Task:
+        async with self.session_factory() as session:
+            await session.execute(
+                update(TaskRecord)
+                .where(TaskRecord.id == task_id)
+                .values(issue_number=issue_number, issue_url=issue_url)
+            )
+            await session.commit()
+            res = await session.execute(select(TaskRecord).where(TaskRecord.id == task_id))
+            return self._to_task_domain(res.scalar_one())
+
     async def add_comment(self, task_id: str, author: str, comment: str) -> None:
         now = datetime.now(timezone.utc)
         record = TaskCommentRecord(
@@ -637,6 +650,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             session_id=record.session_id,
             last_comment=record.last_comment,
             error=record.error,
+            issue_number=getattr(record, "issue_number", None),
+            issue_url=getattr(record, "issue_url", None),
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

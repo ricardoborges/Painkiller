@@ -111,6 +111,11 @@ class IssueTrackerPort(ABC):
         pass
 
     @abstractmethod
+    async def set_task_issue(self, task_id: str, issue_number: int, issue_url: str) -> Task:
+        """Record the external issue (e.g. Gitea) that mirrors this task."""
+        pass
+
+    @abstractmethod
     async def add_comment(self, task_id: str, author: str, comment: str) -> None:
         """Add an audit comment to a task issue."""
         pass

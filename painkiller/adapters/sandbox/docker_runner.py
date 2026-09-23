@@ -11,7 +11,7 @@ import docker
 
 from painkiller.core.domain.models import Task, ExecutionResult, ClarificationRequest
 from painkiller.core.ports.sandbox import AgentEventCallback, SandboxPort
-from painkiller.adapters.sandbox.docker_agent_session import parse_agent_line
+from painkiller.adapters.sandbox.docker_agent_session import maki_model, parse_agent_line
 from painkiller.adapters.sandbox.paths import daemon_path
 
 logger = logging.getLogger(__name__)
@@ -81,6 +81,9 @@ class DockerSandboxRunner(SandboxPort):
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "DEEPSEEK_API_KEY",
+            "PAINKILLER_DEEPSEEK_MODEL",
+            "PAINKILLER_DEEPSEEK_EFFORT",
+            "PAINKILLER_MAKI_MODEL",
             "PAINKILLER_AGENT_MODEL",
             "PAINKILLER_AGENT_EFFORT",
             "PAINKILLER_LLM_MODEL",
@@ -90,15 +93,33 @@ class DockerSandboxRunner(SandboxPort):
                 env_vars[key] = os.environ[key]
         env_vars["PAINKILLER_WORKSPACE"] = "/workspace"
 
-        harness_type = harness or "agy_superpowers"
-        if harness_type == "deepseek_superpowers":
+        harness_type = getattr(harness, "value", harness) or "agy_superpowers"
+        if harness_type == "maki_superpowers":
+            image = os.environ.get("PAINKILLER_WORKER_MAKI_IMAGE") or "painkiller-worker-maki:latest"
+            if api_key:
+                env_vars["DEEPSEEK_API_KEY"] = api_key
+            # Um turno só, como o `agy --print`; saída no stream-json do Claude Code.
+            command = [
+                "maki",
+                "--trust",
+                "--yolo",
+                "--print",
+                "--output-format",
+                "stream-json",
+                "--include-partial-messages",
+                "--model",
+                maki_model(),
+                task_instructions,
+            ]
+        elif harness_type == "deepseek_superpowers":
             image = os.environ.get("PAINKILLER_WORKER_DEEPSEEK_IMAGE") or "painkiller-worker-deepseek:latest"
             if api_key:
                 env_vars["DEEPSEEK_API_KEY"] = api_key
+            # Um turno só, como o `agy --print`; a ponte emite o mesmo stream-json.
             command = [
-                "dsh",
-                "--profile",
-                "headless",
+                "painkiller",
+                "acp-run",
+                "--prompt",
                 task_instructions,
             ]
         else:
@@ -151,6 +172,10 @@ class DockerSandboxRunner(SandboxPort):
             finally:
                 timer.cancel()
             exit_code = res.get("StatusCode", 1)
+            if exit_code == 0 and self._ended_in_error(logs):
+                # O maki sai com 0 mesmo quando o turno falhou (chave recusada,
+                # sem saldo): sem isto a tarefa seguiria para os testes e o review.
+                exit_code = 1
 
             clarification = None
             clar_file = os.path.join(repo_path, ".painkiller", "clarification.json")
@@ -171,6 +196,21 @@ class DockerSandboxRunner(SandboxPort):
             )
         finally:
             self._cleanup_container(task.id)
+
+    @staticmethod
+    def _ended_in_error(logs: str) -> bool:
+        """Whether the last stream-json `result` in the logs reports is_error."""
+        for line in reversed((logs or "").splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(data, dict) and data.get("type") == "result":
+                return bool(data.get("is_error"))
+        return False
 
     @staticmethod
     def _kill_on_timeout(container: Any, task_id: str) -> None:

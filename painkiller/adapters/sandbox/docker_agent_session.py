@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any, AsyncIterator, Optional
 
@@ -25,6 +26,9 @@ FORWARDED_ENV = [
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "DEEPSEEK_API_KEY",
+    "PAINKILLER_DEEPSEEK_MODEL",
+    "PAINKILLER_DEEPSEEK_EFFORT",
+    "PAINKILLER_MAKI_MODEL",
     "PAINKILLER_AGENT_MODEL",
     "PAINKILLER_AGENT_EFFORT",
     "ANTHROPIC_API_KEY",
@@ -42,6 +46,34 @@ FORWARDED_ENV = [
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
 ]
+
+
+#: Harnesses que autenticam com a chave DeepSeek (do projeto ou do .env).
+DEEPSEEK_KEY_HARNESSES = frozenset({"deepseek_superpowers", "maki_superpowers"})
+
+
+def maki_model() -> str:
+    """Model spec (provider/model-id) for maki; DeepSeek, as its key is the one passed."""
+    return os.environ.get("PAINKILLER_MAKI_MODEL") or "deepseek/deepseek-v4-flash"
+
+
+#: Log JSON do maki; no modo SDK é o único lugar onde uma chave recusada aparece.
+MAKI_LOG = "/root/.local/logs/maki/maki.log"
+
+_BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def maki_session_file(session_uuid: str) -> str:
+    """File maki writes for `--session-id <uuid>`: the UUID's 128 bits in base58."""
+    try:
+        number = uuid.UUID(session_uuid).int
+    except ValueError:
+        return f"{session_uuid}.jsonl"
+    digits = ""
+    while number:
+        number, rest = divmod(number, 58)
+        digits = _BASE58[rest] + digits
+    return f"{digits or _BASE58[0]}.jsonl"
 
 
 class DockerAgentSession(AgentSessionPort):
@@ -89,7 +121,7 @@ class DockerAgentSession(AgentSessionPort):
         env_vars = {k: os.environ[k] for k in FORWARDED_ENV if k in os.environ}
         env_vars.update(env or {})
         if api_key:
-            if harness_type == "deepseek_superpowers":
+            if harness_type in DEEPSEEK_KEY_HARNESSES:
                 env_vars["DEEPSEEK_API_KEY"] = api_key
             else:
                 env_vars["GEMINI_API_KEY"] = api_key
@@ -97,7 +129,7 @@ class DockerAgentSession(AgentSessionPort):
 
         # Pasta para persistir configurações e memória do Antigravity CLI
         gemini_home = os.path.join(repo_path, ".painkiller", "gemini_home")
-        if harness_type != "deepseek_superpowers":
+        if harness_type not in DEEPSEEK_KEY_HARNESSES:
             os.makedirs(gemini_home, exist_ok=True)
             settings_file = os.path.join(gemini_home, "antigravity-cli", "settings.json")
             try:
@@ -127,15 +159,68 @@ class DockerAgentSession(AgentSessionPort):
 
         if harness_type == "deepseek_superpowers":
             image = os.environ.get("PAINKILLER_AGENT_DEEPSEEK_IMAGE") or "painkiller-agent-deepseek:latest"
+            # `painkiller acp-run` mantém uma sessão ACP do dsh viva e emite o
+            # mesmo stream-json do agy. A chave da sessão do Painkiller acha a
+            # sessão ACP de novo quando o contêiner é religado.
             command = [
-                "painkiller", "agent-run",
-                "--agent-bin", "dsh",
+                "painkiller", "acp-run",
                 "--stdin-file", "/workspace/" + STDIN_RELATIVE,
                 "--idle-timeout", str(timeout_seconds),
-                "--", "--profile", "headless",
             ]
+            if claude_session_id:
+                command.extend(["--session-key", claude_session_id])
+            if resume:
+                # O que já está na fila foi respondido pelo contêiner anterior.
+                command.extend(["--resume", "--stdin-offset", str(os.path.getsize(stdin_path))])
+            # Histórico e contagem de tokens do dsh sobrevivem ao contêiner.
+            dsh_home = os.path.join(repo_path, ".painkiller", "dsh_home")
+            volumes = {daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"}}
+            for sub in ("sessions", "storages"):
+                os.makedirs(os.path.join(dsh_home, sub), exist_ok=True)
+                volumes[daemon_path(os.path.join(dsh_home, sub))] = {
+                    "bind": f"/root/.dsh/{sub}",
+                    "mode": "rw",
+                }
+        elif harness_type == "maki_superpowers":
+            image = os.environ.get("PAINKILLER_AGENT_MAKI_IMAGE") or "painkiller-agent-maki:latest"
+            # O maki fala o stream-json do Claude Code nos dois sentidos, então
+            # a mesma ponte de fila do agy serve. A sessão é gravada sob o id do
+            # Painkiller e retomada por ele (`--session`).
+            maki_state = os.path.join(repo_path, ".painkiller", "maki_home")
+            # Sem `sessions/` o maki nem grava a sessão num diretório montado vazio.
+            os.makedirs(os.path.join(maki_state, "sessions", "locks"), exist_ok=True)
+            has_saved = bool(claude_session_id) and os.path.exists(
+                os.path.join(maki_state, "sessions", maki_session_file(claude_session_id))
+            )
+            agent_args = [
+                "--trust", "--yolo", "--print",
+                "--input-format", "stream-json",
+                "--output-format", "stream-json",
+                "--include-partial-messages",
+                "--model", maki_model(),
+            ]
+            if claude_session_id:
+                # Retomar exige que a sessão exista; se o contêiner caiu antes
+                # do primeiro turno, começa de novo sob o mesmo id.
+                flag = "--session" if resume and has_saved else "--session-id"
+                agent_args.extend([flag, claude_session_id])
+            elif resume:
+                agent_args.append("--continue")
+            command = [
+                "painkiller", "agent-run",
+                "--agent-bin", "maki",
+                "--stdin-file", "/workspace/" + STDIN_RELATIVE,
+                "--idle-timeout", str(timeout_seconds),
+                "--fail-on-error-result",
+                "--agent-log", MAKI_LOG,
+            ]
+            if resume:
+                # O que já está na fila foi respondido pelo contêiner anterior.
+                command.extend(["--stdin-offset", str(os.path.getsize(stdin_path))])
+            command.extend(["--", *agent_args])
             volumes = {
                 daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
+                daemon_path(maki_state): {"bind": "/root/.local/state/maki", "mode": "rw"},
             }
         else:
             image = self.image_name
@@ -192,7 +277,7 @@ class DockerAgentSession(AgentSessionPort):
     @staticmethod
     def _require_credentials(env_vars: dict[str, str], harness: str = "agy_superpowers") -> None:
         """Fail early and in pt-BR rather than letting the container die silently."""
-        if harness == "deepseek_superpowers":
+        if harness in DEEPSEEK_KEY_HARNESSES:
             if not env_vars.get("DEEPSEEK_API_KEY"):
                 raise RuntimeError(
                     "DEEPSEEK_API_KEY não está definida para este projeto e nem no arquivo .env. "
@@ -399,7 +484,15 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
         if line.startswith("dsh: reasoning:"):
             text = line[len("dsh: reasoning:"):].strip()
             return AgentEvent(type=AgentEventType.THINKING_DELTA, text=(text + "\n") if text else "", raw={"line": line})
-        if line.startswith("dsh:") and not line.startswith("dsh: AUTH:") and not line.startswith("dsh: fatal"):
+        dsh_error = _parse_dsh_error(line)
+        if dsh_error is not None:
+            return dsh_error
+        if line.startswith("dsh:"):
+            return AgentEvent(type=AgentEventType.SYSTEM, text=line, raw={"line": line})
+        if line.startswith("maki: failed to save session"):
+            # Num bind mount do Windows o maki não consegue gravar o
+            # `cwd_latest.json` (só usado por --continue); a sessão em si é
+            # gravada e retomada normalmente por `--session`.
             return AgentEvent(type=AgentEventType.SYSTEM, text=line, raw={"line": line})
         # Ruído de stderr não é fatal.
         return AgentEvent(type=AgentEventType.ERROR, text=line, raw={"line": line})
@@ -443,6 +536,10 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
         return _from_tool_result(data)
     if kind in ("result", "done"):
         text = data.get("result") or data.get("response") or data.get("text") or data.get("content") or ""
+        if data.get("is_error"):
+            # O maki (formato Claude Code) relata chave recusada, falta de saldo
+            # etc. num `result` com is_error — e sai com código 0.
+            return _harness_error(str(text or data.get("subtype") or "erro"), raw=data)
         return AgentEvent(type=AgentEventType.RESULT, text=text, raw=data)
     if kind == "system":
         return AgentEvent(type=AgentEventType.SYSTEM, text=data.get("subtype", "") or data.get("message", ""), raw=data)
@@ -459,6 +556,54 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
         tool_name = data.get("name") or data.get("tool") or ""
         return AgentEvent(type=AgentEventType.TOOL_RESULT, text=tool_name, raw=data)
     return None
+
+
+#: Falhas que o `dsh` anuncia no stderr como `dsh: <CÓDIGO>: <detalhe>`.
+_DSH_ERROR_RE = re.compile(r"^dsh:\s*(?:([A-Z][A-Z_]+):|(fatal)\b:?)\s*(.*)$")
+
+#: Mensagens para o analista; o detalhe original vai junto em `raw`. Os dois
+#: harnesses que as disparam (dsh e maki) usam a mesma chave DeepSeek.
+_HARNESS_ERROR_MESSAGES = {
+    "QUOTA": (
+        "A conta DeepSeek está sem saldo. Recarregue os créditos em "
+        "platform.deepseek.com ou troque a chave de API do projeto."
+    ),
+    "AUTH": (
+        "A DeepSeek recusou a chave de API. Confira a chave do projeto "
+        "ou DEEPSEEK_API_KEY no .env."
+    ),
+}
+
+
+def classify_harness_error(message: str) -> str:
+    """Best-effort error code for a free-text harness failure."""
+    upper = message.upper()
+    if "BALANCE" in upper or "QUOTA" in upper or "402" in upper:
+        return "QUOTA"
+    if "AUTH" in upper or "API KEY" in upper or "401" in upper:
+        return "AUTH"
+    return "ERROR"
+
+
+def _harness_error(detail: str, code: Optional[str] = None, raw: Optional[dict] = None) -> AgentEvent:
+    """An ERROR the analyst must see — not container noise (see `harness_error`)."""
+    code = (code or classify_harness_error(detail)).upper()
+    message = _HARNESS_ERROR_MESSAGES.get(code) or f"O agente falhou: {detail}"
+    return AgentEvent(
+        type=AgentEventType.ERROR,
+        text=message,
+        raw={**(raw or {}), "harness_error": code, "detail": detail},
+    )
+
+
+def _parse_dsh_error(line: str) -> Optional[AgentEvent]:
+    """Recognize a fatal `dsh` stderr line and describe it in pt-BR."""
+    match = _DSH_ERROR_RE.match(line)
+    if not match:
+        return None
+    code = (match.group(1) or match.group(2) or "").upper()
+    detail = match.group(3).strip()
+    return _harness_error(detail or line, code=code, raw={"line": line})
 
 
 def _from_stream_event(data: dict) -> Optional[AgentEvent]:

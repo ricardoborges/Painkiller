@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 import logging
 from typing import Optional, Any
+from painkiller.adapters.issue_trackers.gitea_mirror import GiteaIssueMirror
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 from painkiller.adapters.git.git_adapter import GitCliAdapter
 from painkiller.adapters.vcs.gitea_adapter import GiteaAdapter
@@ -119,8 +120,10 @@ def create_app(
     app = FastAPI(title="Painkiller Engine", version="0.1.0", lifespan=lifespan)
 
     # Instantiate adapters
-    tracker = SQLiteIssueTracker(db_url=db_url)
     vcs = GiteaAdapter()
+    # Toda escrita de tarefa passa pelo tracker: embrulhá-lo espelha o backlog
+    # em issues do Gitea sem que o engine saiba que o Gitea existe.
+    tracker = GiteaIssueMirror(SQLiteIssueTracker(db_url=db_url), vcs)
     # A senha da conta de serviço vai só para o ambiente do `git push`.
     git = GitCliAdapter(http_credentials=vcs.push_credentials())
     sandbox = DockerSandboxRunner(image_name=docker_image)

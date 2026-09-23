@@ -60,6 +60,6 @@ async def test_docker_runner_runs_dsh_for_deepseek():
     call_args = mock_client.containers.run.call_args
     assert call_args[0][0] == "painkiller-worker-deepseek:latest"
     command = call_args[1]["command"]
-    assert command == ["dsh", "--profile", "headless", "Implement feature"]
+    assert command == ["painkiller", "acp-run", "--prompt", "Implement feature"]
     env = call_args[1]["environment"]
     assert env["DEEPSEEK_API_KEY"] == "deepseek-key-456"

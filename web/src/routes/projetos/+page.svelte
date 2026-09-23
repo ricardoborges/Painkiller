@@ -136,6 +136,8 @@
             <a class="title name" href="/projetos/{p.id}">{p.name}</a>
             {#if p.harness === 'deepseek_superpowers'}
               <span class="harness-badge label mono" title="DeepSeek Harness">dsh</span>
+            {:else if p.harness === 'maki_superpowers'}
+              <span class="harness-badge label mono" title="Maki">maki</span>
             {:else}
               <span class="harness-badge label mono" title="Antigravity CLI">agy</span>
             {/if}

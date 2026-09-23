@@ -14,7 +14,10 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export type ClarificationStatus = 'PENDING' | 'ANSWERED';
 
-export type HarnessType = 'agy_superpowers' | 'deepseek_superpowers';
+export type HarnessType = 'agy_superpowers' | 'deepseek_superpowers' | 'maki_superpowers';
+
+/** Harnesses que autenticam com a chave DeepSeek (dsh e maki compartilham a mesma). */
+export const DEEPSEEK_KEY_HARNESSES: readonly HarnessType[] = ['deepseek_superpowers', 'maki_superpowers'];
 
 export interface Project {
   id: string;
@@ -191,6 +194,8 @@ export interface AgentEvent {
   timestamp: string;
   /** Só no stream de tarefas: alvo da ferramenta (comando, arquivo), quando o backend o reconhece. */
   detail?: string | null;
+  /** Só na análise: erro anunciado pelo harness (sem saldo, chave recusada), não ruído. */
+  fatal?: boolean;
 }
 
 /** Primeiro frame do stream de uma tarefa: se este servidor está mesmo executando-a. */

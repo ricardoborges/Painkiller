@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, baseName } from '$lib/api';
-  import type { HarnessType, Project } from '$lib/types';
+  import { DEEPSEEK_KEY_HARNESSES, type HarnessType, type Project } from '$lib/types';
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
 
@@ -20,6 +20,8 @@
   let purpose = $state('');
   let solution = $state('');
   let harness = $state<HarnessType>('agy_superpowers');
+  /** dsh e maki usam a mesma chave DeepSeek: trocar entre eles a preserva. */
+  const usesDeepseekKey = $derived(DEEPSEEK_KEY_HARNESSES.includes(harness));
   let apiKey = $state('');
   let files = $state<File[]>([]);
   let dragging = $state(false);
@@ -193,7 +195,19 @@
             />
             <div class="radio-info">
               <span class="radio-title">DeepSeek Harness (dsh) + Superpowers</span>
-              <span class="radio-desc">DeepSeek V3 / R1 via @deepseek-ai/dsh oficial</span>
+              <span class="radio-desc">DeepSeek V4 via @deepseek-ai/dsh oficial</span>
+            </div>
+          </label>
+          <label class="radio-card" class:active={harness === 'maki_superpowers'}>
+            <input
+              type="radio"
+              name="harness"
+              value="maki_superpowers"
+              bind:group={harness}
+            />
+            <div class="radio-info">
+              <span class="radio-title">Maki + Superpowers</span>
+              <span class="radio-desc">DeepSeek V4 via maki.sh, com a mesma chave DeepSeek</span>
             </div>
           </label>
         </div>
@@ -201,15 +215,15 @@
 
       <div class="field">
         <label for="papikey">
-          {#if harness === 'deepseek_superpowers'}
+          {#if usesDeepseekKey}
             Chave de API DeepSeek <span class="opt">(Opcional)</span>
           {:else}
             Chave de API Google Gemini <span class="opt">(Opcional)</span>
           {/if}
         </label>
         <p class="help">
-          {#if harness === 'deepseek_superpowers'}
-            {#if project?.has_api_key && project?.harness === 'deepseek_superpowers'}
+          {#if usesDeepseekKey}
+            {#if project?.has_api_key && project?.harness && DEEPSEEK_KEY_HARNESSES.includes(project.harness)}
               Chave configurada ({project.masked_api_key}). Deixe em branco para mantê-la ou para fallback no .env do servidor.
             {:else}
               Deixe em branco para usar a chave padrão do servidor (DEEPSEEK_API_KEY).
@@ -227,7 +241,7 @@
           type="password"
           class="input mono"
           bind:value={apiKey}
-          placeholder={harness === 'deepseek_superpowers' ? 'sk-...' : 'AIzaSy...'}
+          placeholder={usesDeepseekKey ? 'sk-...' : 'AIzaSy...'}
           autocomplete="off"
         />
       </div>

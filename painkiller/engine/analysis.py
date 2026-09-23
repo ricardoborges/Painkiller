@@ -459,6 +459,10 @@ class AnalysisOrchestrator:
         elif event.type == AgentEventType.RESULT:
             # O agente terminou o turno: a bola volta para o analista.
             run.session.status = AnalysisStatus.WAITING_ANALYST
+        elif event.type == AgentEventType.ERROR and event.raw.get("harness_error"):
+            # Falha anunciada pelo harness (sem saldo, chave recusada...): é o
+            # motivo que o analista precisa ver quando a sessão cair logo depois.
+            run.session.error = event.text
         elif event.type == AgentEventType.EXIT:
             code = event.raw.get("exit_code", 1)
             run.session.exit_code = code
@@ -467,7 +471,18 @@ class AnalysisOrchestrator:
             )
 
     async def send(self, session_id: str, text: str) -> AnalysisSession:
+        # Após um restart a sessão só existe no banco até alguém abrir o stream.
+        await self.get_or_restore(session_id)
         run = self._require(session_id)
+        # Um restart da API derruba o contêiner, mas a sessão restaurada ainda
+        # mostra a vez do analista: sem religar, a resposta cairia numa fila que
+        # ninguém lê e a tela ficaria em "agente trabalhando" para sempre. O
+        # `resume` sobe o agente na mesma conversa, posicionado no fim da fila,
+        # então a mensagem abaixo é a primeira coisa que ele lê.
+        if run.session.status != AnalysisStatus.FINISHED and not await self.agent.is_alive(session_id):
+            project = await self.tracker.get_project(run.session.project_id)
+            if isinstance(project, Project):
+                await self.resume(project, session_id)
         user_event = AgentEvent(type=AgentEventType.USER, text=text)
         try:
             await self.tracker.save_analysis_event(session_id, user_event)

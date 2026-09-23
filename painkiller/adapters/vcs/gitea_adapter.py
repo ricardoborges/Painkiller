@@ -336,19 +336,102 @@ class GiteaAdapter:
             "web_url_external": external_web_url,
         }
 
+    def repo_from_url(self, web_url: Optional[str]) -> Optional[tuple[str, str]]:
+        """(owner, repo) of a project's `repo_url`, or None when it is not on this Gitea."""
+        prefix = self.external_base_url + "/"
+        if not web_url or not web_url.startswith(prefix):
+            return None
+        parts = web_url[len(prefix):].strip("/").split("/")
+        if len(parts) != 2 or not all(parts):
+            return None
+        return parts[0], parts[1]
+
+    # ---- issues ---------------------------------------------------------
+
+    async def _api(self, method: str, path: str, **kwargs) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            return await client.request(
+                method, f"{self.internal_base_url}/api/v1{path}", auth=self._auth(), **kwargs
+            )
+
+    async def ensure_labels(self, owner: str, repo: str, specs: list[dict]) -> dict[str, int]:
+        """Create the missing labels of `specs` ({name, color, description, exclusive}); name → id."""
+        res = await self._api("GET", f"/repos/{owner}/{repo}/labels", params={"limit": 100})
+        if res.status_code != 200:
+            raise RuntimeError(f"Gitea labels failed: {res.status_code} - {res.text}")
+        ids = {label["name"]: label["id"] for label in res.json()}
+        for spec in specs:
+            if spec["name"] in ids:
+                continue
+            created = await self._api("POST", f"/repos/{owner}/{repo}/labels", json=spec)
+            if created.status_code != 201:
+                raise RuntimeError(f"Gitea create label failed: {created.status_code} - {created.text}")
+            ids[spec["name"]] = created.json()["id"]
+        return ids
+
+    async def create_issue(
+        self, owner: str, repo: str, title: str, body: str, label_ids: list[int]
+    ) -> dict[str, Any]:
+        """Open an issue; returns {number, html_url}."""
+        res = await self._api(
+            "POST",
+            f"/repos/{owner}/{repo}/issues",
+            json={"title": title, "body": body, "labels": label_ids},
+        )
+        if res.status_code != 201:
+            raise RuntimeError(f"Gitea create issue failed: {res.status_code} - {res.text}")
+        data = res.json()
+        return {
+            "number": data["number"],
+            # O html_url segue o ROOT_URL do Gitea; sem ele, montamos pelo externo.
+            "html_url": data.get("html_url") or f"{self.external_base_url}/{owner}/{repo}/issues/{data['number']}",
+        }
+
+    async def update_issue(
+        self,
+        owner: str,
+        repo: str,
+        number: int,
+        *,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+        closed: Optional[bool] = None,
+        label_ids: Optional[list[int]] = None,
+    ) -> None:
+        """Edit an issue's text/state and replace its labels."""
+        fields: dict[str, Any] = {}
+        if title is not None:
+            fields["title"] = title
+        if body is not None:
+            fields["body"] = body
+        if closed is not None:
+            fields["state"] = "closed" if closed else "open"
+        if fields:
+            res = await self._api("PATCH", f"/repos/{owner}/{repo}/issues/{number}", json=fields)
+            if res.status_code != 201 and res.status_code != 200:
+                raise RuntimeError(f"Gitea edit issue failed: {res.status_code} - {res.text}")
+        if label_ids is not None:
+            res = await self._api(
+                "PUT", f"/repos/{owner}/{repo}/issues/{number}/labels", json={"labels": label_ids}
+            )
+            if res.status_code != 200:
+                raise RuntimeError(f"Gitea issue labels failed: {res.status_code} - {res.text}")
+
+    async def comment_issue(self, owner: str, repo: str, number: int, body: str) -> None:
+        res = await self._api("POST", f"/repos/{owner}/{repo}/issues/{number}/comments", json={"body": body})
+        if res.status_code != 201:
+            raise RuntimeError(f"Gitea comment failed: {res.status_code} - {res.text}")
+
     async def archive_repository(self, web_url: str) -> bool:
         """Archive the repository behind a project's `repo_url`; False if it is not ours.
 
         Arquivar, e não apagar: o repositório some do uso mas continua
         recuperável pelo admin do Gitea.
         """
-        prefix = self.external_base_url + "/"
-        if not web_url or not web_url.startswith(prefix):
+        located = self.repo_from_url(web_url)
+        if located is None:
             return False
-        parts = web_url[len(prefix):].strip("/").split("/")
-        if len(parts) != 2:
-            return False
-        owner, repo = parts
+        owner, repo = located
         async with httpx.AsyncClient(timeout=10.0) as client:
             res = await client.patch(
                 f"{self.internal_base_url}/api/v1/repos/{owner}/{repo}",

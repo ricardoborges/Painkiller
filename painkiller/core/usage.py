@@ -90,19 +90,40 @@ def parse_task_usage(logs: str) -> Optional[tuple[int, int, Optional[float], str
     if not logs:
         return None
 
-    for line in reversed(logs.splitlines()):
-        line = line.strip()
+    lines = [l.strip() for l in logs.splitlines()]
+    for line in reversed(lines):
         if not line or not (line.startswith("{") and line.endswith("}")):
             continue
         try:
             data = json.loads(line)
             parsed = parse_agent_usage(data)
             if parsed is not None:
+                if not parsed[3]:
+                    # O `result` do formato Claude Code (maki) não repete o
+                    # modelo; ele vem no `system/init` ou nas mensagens.
+                    parsed = (*parsed[:3], _model_from_logs(lines))
                 return parsed
         except Exception:
             continue
 
     return None
+
+
+def _model_from_logs(lines: list[str]) -> str:
+    for line in lines:
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        message = data.get("message") if isinstance(data.get("message"), dict) else {}
+        model = data.get("model") or message.get("model")
+        if model:
+            return str(model)
+    return ""
 
 
 def _model_keys(model: str) -> list[str]:

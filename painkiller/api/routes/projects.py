@@ -165,6 +165,15 @@ async def delete_project(project_id: str, request: Request):
     return {"status": "deleted", "project_id": project_id}
 
 
+@router.post("/{project_id}/issues/sync", dependencies=[Depends(require_project)])
+async def sync_issues(project_id: str, request: Request):
+    """Mirror every task of the project into Gitea issues (creates the missing ones)."""
+    tracker = request.app.state.tracker
+    if not hasattr(tracker, "sync_project"):
+        raise HTTPException(status_code=501, detail="Espelhamento de issues não está configurado")
+    return await tracker.sync_project(project_id)
+
+
 @router.post("/{project_id}/attachments", dependencies=[Depends(require_project)])
 async def upload_attachment(project_id: str, file: UploadFile = File(...), request: Request = None):
     tracker = request.app.state.tracker

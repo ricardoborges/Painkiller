@@ -55,6 +55,8 @@
     background: var(--paper);
     color: var(--ink);
     box-shadow: 0 24px 48px -24px rgba(20, 20, 22, 0.24);
+    /* Conteúdo largo rola dentro de si; a janela nunca ganha barra lateral. */
+    overflow-x: hidden;
   }
 
   dialog::backdrop {

@@ -524,3 +524,40 @@ async def test_refused_branch_switch_does_not_block_the_analysis(tmp_path):
 
     assert session.container_name == "pk-analysis-fake"
     git.push.assert_awaited_once_with(str(tmp_path), "feature/t1")
+
+
+async def test_answering_a_session_whose_container_died_resumes_it_first(tmp_path):
+    # Depois de um restart da API o contêiner some, mas a sessão restaurada
+    # ainda está na vez do analista: a resposta tem que religar o agente.
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    project = _project(tmp_path)
+    tracker = AsyncMock()
+    tracker.get_project.return_value = project
+    engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
+
+    session = await engine.start(project)
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    await asyncio.sleep(0)
+    agent.resume = False
+    agent.is_alive = AsyncMock(return_value=False)
+
+    await engine.send(session.id, "quero um CRUD")
+
+    assert agent.resume is True
+    assert agent.claude_session_id == session.claude_session_id
+    assert agent.sent[-1] == "quero um CRUD"
+    assert engine.get(session.id).status == AnalysisStatus.WAITING_AGENT
+
+
+async def test_answering_a_live_session_does_not_restart_it(tmp_path):
+    agent = FakeAgentSession([AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    engine = AnalysisOrchestrator(agent=agent, tracker=AsyncMock())
+
+    session = await engine.start(_project(tmp_path))
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    await asyncio.sleep(0)
+    agent.resume = None
+
+    await engine.send(session.id, "oi")
+
+    assert agent.resume is None
