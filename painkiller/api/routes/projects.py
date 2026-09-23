@@ -14,6 +14,7 @@ from painkiller.api.routes.auth import ensure_gitea_account
 from painkiller.api.security import current_user, require_project, visible_project
 from painkiller.core.attachment_reader import extract_attachment_text
 from painkiller.core.domain.models import User
+from painkiller.core.naming import compose_project_identity
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -78,9 +79,10 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
     if req.repo_path and not user.is_admin:
         raise HTTPException(status_code=403, detail="Só o administrador pode escolher o caminho do repositório")
 
+    identity = compose_project_identity(user, req.name)
+
     # Default repo path inside storage if not provided
-    proj_id_temp = f"proj-{uuid.uuid4().hex[:8]}"
-    base_repo_path = req.repo_path or os.path.join(_get_storage_dir(), "projects", proj_id_temp, "repo")
+    base_repo_path = req.repo_path or os.path.join(_get_storage_dir(), "projects", identity.project_id, "repo")
     os.makedirs(base_repo_path, exist_ok=True)
 
     default_branch = req.default_branch or "main"
@@ -98,14 +100,14 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
                     raise RuntimeError("usuário sem conta no Gitea")
                 owner = user.gitea_username
             repo_info = await vcs.create_repository(
-                name=req.name, description=req.description or "", private=True, owner=owner
+                name=identity.slug, description=req.description or "", private=True, owner=owner
             )
             await git.set_remote(base_repo_path, repo_info["clone_url_internal"], remote_name="origin")
             await git.push(base_repo_path, default_branch, remote_name="origin", set_upstream=True)
             repo_url = repo_info["web_url_external"]
         except Exception as e:
             import logging
-            logging.getLogger(__name__).warning(f"Could not link Gitea repo for {req.name}: {e}")
+            logging.getLogger(__name__).warning(f"Could not link Gitea repo for {req.name} ({identity.slug}): {e}")
 
     project = await tracker.create_project(
         name=req.name,
@@ -118,6 +120,7 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         owner_id=None if user.is_admin else user.id,
         harness=req.harness,
         api_key=req.api_key,
+        project_id=identity.project_id,
     )
     return _format_project(project)
 

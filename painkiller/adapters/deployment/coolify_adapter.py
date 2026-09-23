@@ -49,16 +49,31 @@ class CoolifyAdapter(DeploymentPort):
             "Accept": "application/json",
         }
 
-    def _generate_fqdn(self, project: Project, environment: EnvironmentType) -> str:
+    def _resolve_slug(self, project: Project) -> str:
+        """Resolve a unique DNS/URL safe identifier for the project."""
+        raw = project.id.removeprefix("proj-")
+        parts = raw.split("-")
+        # If there are at least 3 parts (e.g. user-project-code), use the composite slug
+        if len(parts) >= 3:
+            clean = "".join(c if c.isalnum() else "-" for c in raw.lower()).strip("-")
+            if clean:
+                return clean[:45].rstrip("-")
         clean_name = "".join(c if c.isalnum() else "-" for c in project.name.lower()).strip("-")
-        return f"http://{clean_name}-{environment.value}.{self.wildcard_domain}"
+        return clean_name or "app"
+
+    def _generate_fqdn(self, project: Project, environment: EnvironmentType) -> str:
+        slug = self._resolve_slug(project)
+        max_label_len = 63 - len(f"-{environment.value}")
+        clean_label = slug[:max_label_len].rstrip("-")
+        return f"http://{clean_label}-{environment.value}.{self.wildcard_domain}"
 
     def _resolve_repo_url(self, project: Project) -> str:
         """Resolve the Git repository URL that Coolify can reach."""
         # Se project.repo_url for algo como http://localhost:3300/user/repo.git,
         # reescreve o prefixo para a rede interna do docker do Coolify se aplicável
         if not project.repo_url:
-            return f"{self.gitea_internal_url}/painkiller/{project.name}.git"
+            slug = self._resolve_slug(project)
+            return f"{self.gitea_internal_url}/painkiller/{slug}.git"
         
         url = project.repo_url
         if "localhost:3300" in url or "127.0.0.1:3300" in url:
@@ -83,11 +98,12 @@ class CoolifyAdapter(DeploymentPort):
                     return p.get("uuid")
 
         # Create new project in Coolify
+        proj_name = f"painkiller-{project.id}" if len(project.id.split("-")) >= 3 else f"painkiller-{project.name}-{project.id[:6]}"
         create_resp = await client.post(
             f"{self.api_url}/api/v1/projects",
             headers=self._headers(),
             json={
-                "name": f"painkiller-{project.name}-{project.id[:6]}",
+                "name": proj_name,
                 "description": project.description or f"Painkiller project {project.name}",
             },
         )
@@ -179,7 +195,8 @@ class CoolifyAdapter(DeploymentPort):
                 repo_url = self._resolve_repo_url(project)
 
                 # 2. Localizar se aplicação já existe no Coolify
-                app_name = f"{project.name}-{environment.value}"
+                slug = self._resolve_slug(project)
+                app_name = f"{slug}-{environment.value}"
                 app_uuid: Optional[str] = None
 
                 apps_resp = await client.get(f"{self.api_url}/api/v1/applications", headers=self._headers())

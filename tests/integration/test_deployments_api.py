@@ -10,7 +10,8 @@ from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 
 
 @pytest.fixture
-async def deployment_client():
+async def deployment_client(monkeypatch):
+    monkeypatch.setenv("COOLIFY_API_TOKEN", "")
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = os.path.join(tmpdir, "test_deploy.db")
         app = create_app(db_url=f"sqlite+aiosqlite:///{db_path}")
@@ -41,7 +42,7 @@ async def test_deployments_api_flow(deployment_client: AsyncClient):
     assert deploy_res.status_code == 200
     deploy_data = deploy_res.json()
     assert deploy_data["environment"] == "test"
-    assert "deploy-app-test" in deploy_data["url"]
+    assert "deploy-app" in deploy_data["url"] and "-test" in deploy_data["url"]
     dep_id = deploy_data["id"]
 
     # 3. Get deployment details
@@ -63,7 +64,7 @@ async def test_deployments_api_flow(deployment_client: AsyncClient):
     assert prod_res.status_code == 200
     prod_data = prod_res.json()
     assert prod_data["environment"] == "production"
-    assert "deploy-app-production" in prod_data["url"]
+    assert "deploy-app" in prod_data["url"] and "-production" in prod_data["url"]
 
     # 6. List deployments
     list_res = await deployment_client.get(f"/api/projects/{proj_id}/deployments")

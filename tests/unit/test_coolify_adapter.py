@@ -70,3 +70,46 @@ async def test_coolify_deploy_environment_creates_app_and_triggers_deploy():
         assert record.coolify_deployment_uuid == "dep-uuid-88"
         assert record.status == DeploymentStatus.BUILDING
         assert record.url == "http://store-api-production.coolify.local"
+
+
+@pytest.mark.asyncio
+async def test_coolify_deploy_environment_with_composite_project_id():
+    adapter = CoolifyAdapter(
+        api_url="http://coolify.test",
+        api_token="test-token",
+        server_uuid="srv-1",
+        wildcard_domain="coolify.local",
+    )
+    project = Project(
+        id="proj-ricardo-store-api-a1b2c3",
+        name="Store API",
+        repo_path="/tmp/store",
+        default_branch="main",
+    )
+
+    mock_get_projects = MagicMock(is_success=True, json=lambda: [{"name": "painkiller-proj-ricardo-store-api-a1b2c3", "uuid": "proj-uuid-10"}])
+    mock_get_envs = MagicMock(is_success=True, json=lambda: [{"name": "test"}])
+    mock_get_servers = MagicMock(is_success=True, json=lambda: [{"uuid": "srv-1"}])
+    mock_get_apps = MagicMock(is_success=True, json=lambda: [])
+    mock_post_app = MagicMock(is_success=True, json=lambda: {"uuid": "app-uuid-55"})
+    mock_post_deploy = MagicMock(is_success=True, json=lambda: {"deployment_uuid": "dep-uuid-44"})
+
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+
+        mock_get.side_effect = [mock_get_projects, mock_get_envs, mock_get_apps]
+        mock_post.side_effect = [mock_post_app, mock_post_deploy]
+
+        record = await adapter.deploy_environment(
+            project=project,
+            environment=EnvironmentType.TEST,
+            branch="feature/x",
+        )
+
+        assert record.coolify_app_uuid == "app-uuid-55"
+        assert record.url == "http://ricardo-store-api-a1b2c3-test.coolify.local"
+        # Check app creation payload passed to Coolify
+        app_payload = mock_post.call_args_list[0].kwargs["json"]
+        assert app_payload["name"] == "ricardo-store-api-a1b2c3-test"
+        assert app_payload["domains"] == "http://ricardo-store-api-a1b2c3-test.coolify.local"
+

@@ -150,6 +150,16 @@ A project with `harness = deepseek_superpowers` runs the same two flows on `pain
 - **Errors, the tricky part**: maki reports a refused key or missing balance as a `result` with `is_error: true` **and exits 0**. Three guards: `parse_agent_line` maps such a result to an `ERROR` with `raw.harness_error` (same UI path as `dsh`); `DockerSandboxRunner._ended_in_error` turns exit 0 into 1 so a failed task never reaches tests/review; and `agent-run --fail-on-error-result` stops the analysis container. In SDK (bidirectional) mode maki does not even emit that result — it waits silently "for re-authentication" and only writes to `~/.local/logs/maki/maki.log` — so `agent-run --agent-log` tails that JSON log and synthesizes the error `result` on 401/402/403.
 - Task cost: maki's `result` has no model, so `parse_task_usage` takes it from the `system/init` / `assistant` events of the same log.
 
+### Gitea issues (one-way mirror of the backlog)
+
+Every task has a Gitea issue in the project's repo. [gitea_mirror.py](painkiller/adapters/issue_trackers/gitea_mirror.py) is a **decorator over the tracker**, wired in `create_app()` (`GiteaIssueMirror(SQLiteIssueTracker(...), vcs)`): all task writes go through `create_task` / `update_task_status` / `add_comment`, so wrapping them catches every path while `engine/` never learns Gitea exists. Everything else is delegated via `__getattr__`.
+
+- **What the issue shows**: title; body rebuilt on every sync (description, acceptance criteria as a checklist — ticked when `COMPLETED` —, target files, dependencies as `#n`, task id and branch); the status as an **exclusive scoped label** `painkiller/<estado>` (same colour rule as the UI: only `aguardando-analista` is vermilion); closed when `COMPLETED`; the task's comments, with long logs truncated into a `<details>` block.
+- **Never on the critical path**: each mirror call runs as a background task, serialized per task id (create before relabel), and failures are logged, never raised. `close()` drains them before disposing the DB — tests call `tracker.close()` directly.
+- `Task.issue_number` / `issue_url` (new columns, added by `_migrate_columns`; `set_task_issue` on the port) link the card in the backlog to the issue. Projects without a `repo_url` on this Gitea are skipped.
+- **Backfill**: `POST /api/projects/{id}/issues/sync` (button "Sincronizar issues" in the backlog) creates the missing issues and realigns all of them in two passes, so dependencies already resolve to `#n`.
+- One-way: closing or editing the issue in Gitea does **not** change the task.
+
 ### Usage and cost tracking
 
 Every token spent lands in the `usage_records` table through `UsageLedgerPort`, which `SQLiteIssueTracker` also implements (same database). There are three sources, all optional dependencies (`usage=None` disables recording, which is why older tests need no change):

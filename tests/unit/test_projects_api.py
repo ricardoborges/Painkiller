@@ -31,6 +31,7 @@ async def test_create_project_with_harness_and_api_key(client: AsyncClient):
     )
     assert res.status_code == 200
     data = res.json()
+    assert data["id"].startswith("proj-admin-dsh-project-")
     assert data["harness"] == "deepseek_superpowers"
     # Raw API key must never be exposed
     assert "sk-secret12345678" not in str(data)

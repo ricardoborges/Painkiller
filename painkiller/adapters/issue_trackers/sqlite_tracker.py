@@ -256,8 +256,9 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
         owner_id: Optional[str] = None,
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Project:
-        proj_id = f"proj-{uuid.uuid4().hex[:8]}"
+        proj_id = project_id or f"proj-{uuid.uuid4().hex[:8]}"
         harness_val = (harness.value if isinstance(harness, HarnessType) else harness) or HarnessType.AGY_SUPERPOWERS.value
         record = ProjectRecord(
             id=proj_id,

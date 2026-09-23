@@ -209,6 +209,15 @@
 
   const modalRenderedHtml = $derived.by(() => {
     if (!modalDocContent?.content) return '';
+    // Backlog é JSON: como markdown vira um paredão de texto; indentado, lê-se.
+    if (modalSelectedDoc?.path.endsWith('.json')) {
+      try {
+        const pretty = JSON.stringify(JSON.parse(modalDocContent.content), null, 2);
+        return marked.parse('```json\n' + pretty + '\n```') as string;
+      } catch {
+        /* JSON inválido: cai no markdown abaixo */
+      }
+    }
     try {
       return marked.parse(modalDocContent.content, { gfm: true, breaks: true }) as string;
     } catch {

@@ -34,6 +34,7 @@ class IssueTrackerPort(ABC):
         owner_id: Optional[str] = None,
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Project:
         """Create or register a project."""
         pass
