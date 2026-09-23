@@ -29,6 +29,8 @@
   let loading = $state(true);
   let migrating = $state(false);
   let error = $state<string | null>(null);
+  let syncingIssues = $state(false);
+  let issuesNote = $state<string | null>(null);
 
   // Execução individual
   let dispatching = $state<string | null>(null);
@@ -129,6 +131,26 @@
       error = e instanceof Error ? e.message : 'Falha ao carregar o backlog.';
     } finally {
       loading = false;
+    }
+  }
+
+  /* As tarefas novas já viram issues sozinhas; isto cobre as anteriores à
+     integração e realinha estado e rótulos de todas. */
+  async function syncIssues() {
+    syncingIssues = true;
+    issuesNote = null;
+    try {
+      const res = await api.syncIssues(data.project.id);
+      issuesNote = !res.enabled
+        ? 'Projeto sem repositório no Gitea.'
+        : res.created
+          ? `${res.created} issue${res.created > 1 ? 's' : ''} criada${res.created > 1 ? 's' : ''} no Gitea.`
+          : 'Issues em dia com o backlog.';
+      await load();
+    } catch (e) {
+      issuesNote = e instanceof Error ? e.message : 'Falha ao sincronizar as issues.';
+    } finally {
+      syncingIssues = false;
     }
   }
 
@@ -486,6 +508,27 @@
           {/if}
         </button>
 
+        {#if data.project.repo_url}
+          <a
+            class="btn btn-line btn-sm"
+            href="{data.project.repo_url}/issues?labels=&state=all"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir as issues do backlog no Gitea"
+          >
+            <Icon name="external" size={11} /> Issues
+          </a>
+          <button
+            type="button"
+            class="btn btn-line btn-sm"
+            onclick={syncIssues}
+            disabled={syncingIssues}
+            title="Criar no Gitea as issues que faltam e realinhar estado e rótulos"
+          >
+            {syncingIssues ? 'Sincronizando…' : 'Sincronizar issues'}
+          </button>
+        {/if}
+
         <span class="ctrl-sep" aria-hidden="true">|</span>
 
         <button
@@ -503,6 +546,10 @@
         </button>
       </div>
     </div>
+
+    {#if issuesNote}
+      <p class="issues-note mono" role="status">{issuesNote}</p>
+    {/if}
 
     <!-- Barra de Ambientes Coolify -->
     <div class="env-bar spread">
@@ -605,6 +652,18 @@
 
           <div class="facts mono">
             <span title="Identificador da tarefa">{task.id}</span>
+            {#if task.issue_url}
+              <span class="sep" aria-hidden="true">·</span>
+              <a
+                href={task.issue_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="branch-link"
+                title="Ver a issue desta tarefa no Gitea"
+              >
+                #{task.issue_number} <Icon name="external" size={9} />
+              </a>
+            {/if}
             {#if task.assigned_branch}
               <span class="sep" aria-hidden="true">·</span>
               {#if data.project.repo_url}
@@ -1397,6 +1456,14 @@
     color: var(--ink-2);
     text-decoration: underline;
     text-underline-offset: 2px;
+  }
+
+  .issues-note {
+    margin: 0;
+    padding: var(--s2) var(--s4);
+    border-top: 1px solid var(--rule);
+    font-size: var(--t-micro);
+    color: var(--ink-2);
   }
 
   .branch-link:hover {

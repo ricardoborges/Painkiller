@@ -83,6 +83,9 @@ export interface Task {
   session_id?: string | null;
   last_comment?: string | null;
   error?: string | null;
+  /** Issue espelhada no Gitea; nula enquanto o espelho não a criou. */
+  issue_number?: number | null;
+  issue_url?: string | null;
   created_at: string;
   updated_at: string;
 }

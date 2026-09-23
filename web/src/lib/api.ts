@@ -264,6 +264,13 @@ export const api = {
 
   mergeTask: (id: string) => request<Task>(`/tasks/${id}/merge`, { method: 'POST' }),
 
+  /** Cria no Gitea as issues que faltam e realinha as existentes. */
+  syncIssues: (projectId: string) =>
+    request<{ enabled: boolean; created: number; updated: number }>(
+      `/projects/${projectId}/issues/sync`,
+      { method: 'POST' }
+    ),
+
   getTaskDiff: (id: string) =>
     request<{
       task_id: string;
