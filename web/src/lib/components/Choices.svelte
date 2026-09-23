@@ -122,6 +122,10 @@
     color: var(--ink-3);
   }
 
+  .is-active .hint {
+    color: var(--ink-2);
+  }
+
   ul {
     border-top: 1px solid var(--rule);
   }
@@ -142,20 +146,48 @@
     line-height: 1.5;
     transition:
       background var(--fast) var(--ease),
+      box-shadow var(--fast) var(--ease),
       color var(--fast) var(--ease);
-  }
-
-  .is-active .opt {
-    cursor: pointer;
-  }
-
-  .is-active .opt:hover {
-    background: var(--paper-sunk);
-    color: var(--ink);
   }
 
   .opt:disabled {
     cursor: default;
+  }
+
+  /* Pergunta aberta: contraste pleno, para não parecer desabilitada. A
+     distinção fica em peso, marcador e fundo; a cor segue só a tinta. */
+  .is-active ul {
+    border-top-color: var(--rule-2);
+  }
+
+  .is-active .opt {
+    cursor: pointer;
+    color: var(--ink);
+    padding-inline: var(--s3);
+    border-bottom-color: var(--rule-2);
+  }
+
+  .is-active .opt-label {
+    font-weight: 500;
+  }
+
+  .is-active .opt-desc {
+    color: var(--ink-2);
+  }
+
+  .is-active .opt:hover {
+    background: var(--paper-sunk);
+    box-shadow: inset 2px 0 0 var(--ink-3);
+  }
+
+  .is-active .opt.is-on,
+  .is-active .opt.is-on:hover {
+    background: var(--paper-sunk);
+    box-shadow: inset 3px 0 0 var(--ink);
+  }
+
+  .is-active .opt:focus-visible {
+    outline-offset: -2px;
   }
 
   /* Pergunta já respondida: as opções não escolhidas recuam. */
@@ -177,8 +209,18 @@
     width: 12px;
     height: 12px;
     margin-top: 0.3em;
-    border: 1px solid var(--ink-2);
+    border: 1px solid var(--ink-3);
     border-radius: 50%;
+    transition:
+      background var(--fast) var(--ease),
+      border-color var(--fast) var(--ease);
+  }
+
+  .is-active .mark {
+    width: 16px;
+    height: 16px;
+    margin-top: 0.15em;
+    border: 1.5px solid var(--ink);
   }
 
   .mark.square {
@@ -191,9 +233,14 @@
     box-shadow: inset 0 0 0 2px var(--paper);
   }
 
+  .is-active .is-on .mark {
+    box-shadow: inset 0 0 0 3px var(--paper-sunk);
+  }
+
   .text {
     display: flex;
     flex-direction: column;
+    gap: 2px;
     min-width: 0;
   }
 
