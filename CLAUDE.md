@@ -155,6 +155,15 @@ A project with `harness = deepseek_superpowers` runs the same two flows on `pain
 - **Errors, the tricky part**: maki reports a refused key or missing balance as a `result` with `is_error: true` **and exits 0**. Three guards: `parse_agent_line` maps such a result to an `ERROR` with `raw.harness_error` (same UI path as `dsh`); `DockerSandboxRunner._ended_in_error` turns exit 0 into 1 so a failed task never reaches tests/review; and `agent-run --fail-on-error-result` stops the analysis container. In SDK (bidirectional) mode maki does not even emit that result — it waits silently "for re-authentication" and only writes to `~/.local/logs/maki/maki.log` — so `agent-run --agent-log` tails that JSON log and synthesizes the error `result` on 401/402/403.
 - Task cost: maki's `result` has no model, so `parse_task_usage` takes it from the `system/init` / `assistant` events of the same log.
 
+### Unreal Agent harness (`unreal-agent-runner`, OpenAI Responses API over DeepSeek)
+
+`harness = unreal_superpowers` runs on `painkiller-agent-unreal` / `painkiller-worker-unreal`. Built from [unreallabsai/unreal-agent](https://github.com/unreallabsai/unreal-agent) via multi-stage Go 1.24 build, compiling `cmd/unreal-agent-runner`. It interacts with DeepSeek via OpenAI Responses API format (`UNREAL_HARNESS_LLM_PROVIDER=openai`, `UNREAL_HARNESS_LLM_BASE_URL=https://api.deepseek.com`, model `deepseek/deepseek-v4-pro`).
+
+- **CLI Bridge**: [cli/unreal_run.py](painkiller/cli/unreal_run.py) (`painkiller unreal-run`) drives the agent, feeds analyst turns from `.painkiller/agent-stdin.jsonl`, maintains session history in `/root/.local/state/unreal-agent/sessions`, and translates emitted JSON lines (`model_response`, `tool_call_status`, `turn`, `error`) into domain `AgentEvent` objects (`init`, `assistant`, `tool_use`, `result`).
+- **Skills**: Natively discovered at `<workspace>/.harness/skills`. Automatically linked from `/opt/superpowers/skills` to `/workspace/.harness/skills`.
+- **Tasks & Clarification**: Runs one-shot via `unreal-agent-runner -workspace /workspace -p <instructions>`. Supports clean interruption (exit 42) via `painkiller ask` executed in the Bash tool.
+- **Key & Model**: Uses `DEEPSEEK_API_KEY` (shared via `DEEPSEEK_KEY_HARNESSES`), defaulting to `deepseek/deepseek-v4-pro`.
+
 ### Gitea issues (one-way mirror of the backlog)
 
 Every task has a Gitea issue in the project's repo. [gitea_mirror.py](painkiller/adapters/issue_trackers/gitea_mirror.py) is a **decorator over the tracker**, wired in `create_app()` (`GiteaIssueMirror(SQLiteIssueTracker(...), vcs)`): all task writes go through `create_task` / `update_task_status` / `add_comment`, so wrapping them catches every path while `engine/` never learns Gitea exists. Everything else is delegated via `__getattr__`.

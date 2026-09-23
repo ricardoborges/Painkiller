@@ -19,7 +19,7 @@ Agents run inside ephemeral Docker sibling containers with filesystem isolation.
 - **`agy`** (Antigravity CLI powered by Gemini)
 - **`dsh`** (DeepSeek Harness)
 - **`maki`** (Rust-based coding agent)
-- **`more coming soon`**
+- **`unreal`** (Go-based Unreal Agent powered by DeepSeek)
 
 **Clean interruption protocol (Exit 42):** When an agent hits an ambiguous requirement, it doesn't guess or hallucinate. It runs `painkiller ask "<question>"`, commits its current work-in-progress, and exits with code `42`. The task pauses in the UI until you answer, then resumes on the exact same branch.
 
@@ -57,7 +57,7 @@ flowchart TD
 
     subgraph S2["2. Isolated Execution (Sandbox Harness)"]
         Dispatch["Task Dispatch<br/>(New Feature Branch)"]
-        Harness["Container Docker<br/>(agy / dsh / maki)"]
+        Harness["Container Docker<br/>(agy / dsh / maki / unreal)"]
         Skills["Superpowers Engine<br/>(TDD, Writing Plans)"]
         Ask{"Ambiguity?<br/>(painkiller ask)"}
         Tests{"Local Tests<br/>(pytest / test runner)"}
