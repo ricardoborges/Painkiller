@@ -1,0 +1,1 @@
+import"../chunks/CWj6FrbW.js";import{p as t,u as e,a as p}from"../chunks/C-sgLFz0.js";import{g as r}from"../chunks/NaQ5sHOP.js";function c(a,o){t(o,!0),e(()=>{r("/projetos",{replaceState:!0})}),p()}export{c as component};

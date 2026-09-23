@@ -127,7 +127,8 @@ async def test_merge_task_success(mock_tracker, mock_sandbox, mock_git):
     await orchestrator.merge_task("t1")
 
     mock_git.merge_branch.assert_called_once_with("/repo", source_branch="feature/t1", target_branch="main")
-    mock_git.push.assert_called_once_with("/repo", "main")
+    # A branch da tarefa é publicada antes do merge e nunca apagada (o "Testar" usa ela)
+    assert [c.args for c in mock_git.push.call_args_list] == [("/repo", "feature/t1"), ("/repo", "main")]
     mock_tracker.update_task_status.assert_called_with("t1", TaskStatus.COMPLETED)
 
 
