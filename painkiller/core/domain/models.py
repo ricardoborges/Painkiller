@@ -136,6 +136,7 @@ class HarnessType(str, Enum):
     AGY_SUPERPOWERS = "agy_superpowers"
     DEEPSEEK_SUPERPOWERS = "deepseek_superpowers"
     MAKI_SUPERPOWERS = "maki_superpowers"
+    UNREAL_SUPERPOWERS = "unreal_superpowers"
 
 
 class Project(BaseModel):

@@ -93,5 +93,19 @@ async def test_sqlite_tracker_project_harness_persistence(tmp_path):
     assert loaded_p3 is not None
     assert loaded_p3.model == "deepseek/deepseek-v4-pro"
 
+    # Create with Unreal Agent harness
+    p4 = await tracker.create_project(
+        name="Unreal Agent Project",
+        repo_path="/tmp/p4",
+        harness=HarnessType.UNREAL_SUPERPOWERS,
+        model="deepseek/deepseek-v4-pro",
+    )
+    assert p4.harness == HarnessType.UNREAL_SUPERPOWERS
+    assert p4.model == "deepseek/deepseek-v4-pro"
+
+    loaded_p4 = await tracker.get_project(p4.id)
+    assert loaded_p4 is not None
+    assert loaded_p4.harness == HarnessType.UNREAL_SUPERPOWERS
+
     await tracker.close()
 
