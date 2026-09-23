@@ -44,50 +44,50 @@ Painkiller integrates with [Coolify](https://coolify.io) to turn Git branches in
 
 ```mermaid
 flowchart TD
-    subgraph S1["1. Elicitação & Specs"]
-        Human["Usuário / Analista"]
+    subgraph S1["1. Elicitation & Specs"]
+        Human["User"]
         Brainstorm["Agent + Superpowers<br/>(brainstorming)"]
-        Spec["Especificação Técnica<br/>(Requisitos Aprovados)"]
-        Decomp["Decomposição em Backlog<br/>(Tarefas Atômicas)"]
+        Spec["Technical Specification<br/>(Approved Requirements)"]
+        Decomp["Backlog Decomposition<br/>(Atomic Tasks)"]
         
-        Human <-->|"Entrevista interativa"| Brainstorm
+        Human <-->|"Interactive interview"| Brainstorm
         Brainstorm --> Spec
         Spec --> Decomp
     end
 
-    subgraph S2["2. Execução Isolada (Sandbox Harness)"]
-        Dispatch["Despacho da Tarefa<br/>(Nova Feature Branch)"]
+    subgraph S2["2. Isolated Execution (Sandbox Harness)"]
+        Dispatch["Task Dispatch<br/>(New Feature Branch)"]
         Harness["Container Docker<br/>(agy / dsh / maki)"]
         Skills["Superpowers Engine<br/>(TDD, Writing Plans)"]
-        Ask{"Ambiguidade?<br/>(painkiller ask)"}
-        Tests{"Testes Locais<br/>(pytest / test runner)"}
+        Ask{"Ambiguity?<br/>(painkiller ask)"}
+        Tests{"Local Tests<br/>(pytest / test runner)"}
         
         Decomp --> Dispatch
         Dispatch --> Harness
         Harness --- Skills
         Skills --> Ask
-        Ask -- "Exit 42 (Pausa WIP)" --> Human
-        Human -- "Esclarecimento" --> Harness
-        Ask -- "Sem dúvidas" --> Tests
-        Tests -- "Falha" --> Skills
+        Ask -- "Exit 42 (WIP pause)" --> Human
+        Human -- "Clarification" --> Harness
+        Ask -- "No questions" --> Tests
+        Tests -- "Fail" --> Skills
     end
 
-    subgraph S3["3. Versionamento (Gitea)"]
+    subgraph S3["3. Version Control (Gitea)"]
         Commit["Git Commit & Push<br/>(Feature Branch)"]
         GiteaRepo["Gitea Forge<br/>(Diffs, Commits & PRs)"]
-        Review{"Revisão de Código"}
+        Review{"Code Review"}
         
-        Tests -- "Passou" --> Commit
+        Tests -- "Pass" --> Commit
         Commit --> GiteaRepo
         GiteaRepo --> Review
     end
 
-    subgraph S4["4. Deploy Automatizado (Coolify)"]
+    subgraph S4["4. Automated Deployment (Coolify)"]
         CoolifyAPI["Coolify REST API"]
         BuildPack["Build Container<br/>(Nixpacks / Dockerfile)"]
-        LiveEnv["Ambiente Live Provisionado<br/>(Preview / Staging / Prod)"]
+        LiveEnv["Provisioned Live Environment<br/>(Preview / Staging / Prod)"]
         
-        Review -- "Aprovado" --> CoolifyAPI
+        Review -- "Approved" --> CoolifyAPI
         CoolifyAPI --> BuildPack
         BuildPack --> LiveEnv
     end
