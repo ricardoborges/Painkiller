@@ -162,3 +162,25 @@ async def test_ensure_user_skips_taken_login_and_reuses_own_account():
         login = await adapter.ensure_user("alice@example.com")
 
     assert login == "alice-2"
+
+
+@pytest.mark.asyncio
+async def test_add_deploy_key_replaces_orphan_with_same_title():
+    """A key left behind by a failed deploy would make Gitea answer 422 forever."""
+    adapter = GiteaAdapter(internal_base_url="http://gitea:3000", username="painkiller", password="pw")
+    calls = []
+
+    async def fake_api(method, path, **kwargs):
+        calls.append((method, path))
+        if method == "GET":
+            return _response(200, [{"id": 7, "title": "painkiller-damas"}, {"id": 8, "title": "outra"}])
+        return _response(201 if method == "POST" else 204)
+
+    with patch.object(adapter, "_api", side_effect=fake_api):
+        await adapter.add_deploy_key("alice", "damas", "painkiller-damas", "ssh-ed25519 AAA")
+
+    assert calls == [
+        ("GET", "/repos/alice/damas/keys"),
+        ("DELETE", "/repos/alice/damas/keys/7"),
+        ("POST", "/repos/alice/damas/keys"),
+    ]

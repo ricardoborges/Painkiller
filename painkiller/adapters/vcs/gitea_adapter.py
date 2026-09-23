@@ -423,7 +423,17 @@ class GiteaAdapter:
             raise RuntimeError(f"Gitea comment failed: {res.status_code} - {res.text}")
 
     async def add_deploy_key(self, owner: str, repo: str, title: str, public_key: str) -> None:
-        """Register a read-only SSH deploy key on the repository."""
+        """Register a read-only SSH deploy key on the repository, replacing one with the same title.
+
+        Uma chave homônima é órfã: a privada correspondente nunca chegou ao
+        Coolify (ou ele foi recriado), senão o adapter a teria reaproveitado.
+        Sem trocá-la, o Gitea responde 422 em toda tentativa seguinte.
+        """
+        listed = await self._api("GET", f"/repos/{owner}/{repo}/keys", params={"limit": 100})
+        if listed.status_code == 200:
+            for key in listed.json():
+                if key.get("title") == title:
+                    await self._api("DELETE", f"/repos/{owner}/{repo}/keys/{key['id']}")
         res = await self._api(
             "POST",
             f"/repos/{owner}/{repo}/keys",
