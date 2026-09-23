@@ -126,3 +126,35 @@ async def test_push_to_unknown_remote_gets_no_credentials():
     assert adapter._auth_env("http://gitea:30001/alice/loja.git") is None
     assert strip_userinfo("http://u:p@gitea:3000/a/b.git") == "http://gitea:3000/a/b.git"
     assert strip_userinfo("git@github.com:a/b.git") == "git@github.com:a/b.git"
+
+
+@pytest.mark.asyncio
+async def test_delete_branch_removes_merged_branch_locally_and_on_remote():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo = os.path.join(tmpdir, "repo")
+        remote = os.path.join(tmpdir, "remote.git")
+        adapter = GitCliAdapter()
+        await adapter._run_git(tmpdir, "init", "--bare", remote)
+        await adapter.init_repo(repo, default_branch="main", initial_commit=True)
+        await adapter.set_remote(repo, remote)
+        await adapter.push(repo, "main")
+
+        for name in ("feature/merged", "feature/pending"):
+            await adapter.create_branch(repo, name, base_branch="main")
+            with open(os.path.join(repo, name.replace("/", "-") + ".txt"), "w") as f:
+                f.write(name)
+            await adapter.commit_wip(repo, f"feat: {name}")
+            await adapter.push(repo, name)
+            await adapter.switch_branch(repo, "main")
+        await adapter.merge_branch(repo, source_branch="feature/merged", target_branch="main")
+
+        code, out = await adapter.delete_branch(repo, "feature/merged", merged_into="main")
+        assert code == 0, out
+        # Uma branch não incorporada nunca é apagada: perderia trabalho
+        code, _ = await adapter.delete_branch(repo, "feature/pending", merged_into="main")
+        assert code != 0
+
+        _, local, _ = await adapter._run_git(repo, "branch", "--list")
+        _, remote_heads, _ = await adapter._run_git(remote, "branch", "--list")
+        assert "feature/merged" not in local and "feature/pending" in local
+        assert "feature/merged" not in remote_heads and "feature/pending" in remote_heads

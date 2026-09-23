@@ -9,11 +9,16 @@ from painkiller.core.domain.models import (
     DeploymentRecord,
     DeploymentStatus,
     EnvironmentType,
+    SessionStatus,
 )
 from painkiller.core.ports.deployment import DeploymentPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 
 logger = logging.getLogger(__name__)
+
+
+class BranchUnavailableError(Exception):
+    """The task's branch was deleted when its session was finalized."""
 
 
 class DeploymentService:
@@ -45,15 +50,25 @@ class DeploymentService:
         # tarefa concluída, a branch padrão.
         # Para PRODUÇÃO:
         # Sempre usa a default_branch (main).
+        # Uma sessão finalizada teve as branches apagadas: só a sessão aberta
+        # tem o que testar por tarefa.
         branch = project.default_branch or "main"
         if environment == EnvironmentType.TEST:
             task = await self.tracker.get_task(task_id) if task_id else None
+            if task and await self._session_finalized(task.session_id):
+                raise BranchUnavailableError(
+                    "A sessão desta tarefa foi finalizada e as branches dela foram apagadas "
+                    "após o merge. Só as tarefas da sessão atual podem ser testadas."
+                )
             if task and task.status == TaskStatus.COMPLETED:
                 branch = task.assigned_branch or f"feature/{task.id}"
             else:
                 task_id = None
                 tasks = await self.tracker.list_tasks(project_id, session_id=session_id)
-                completed = [t for t in tasks if t.status == TaskStatus.COMPLETED]
+                completed = [
+                    t for t in tasks
+                    if t.status == TaskStatus.COMPLETED and not await self._session_finalized(t.session_id)
+                ]
                 if completed:
                     chosen_task = completed[-1]
                     branch = chosen_task.assigned_branch or f"feature/{chosen_task.id}"
@@ -78,6 +93,12 @@ class DeploymentService:
                 await self.tracker.update_project_deployment_urls(project_id, production_url=saved.url)
 
         return saved
+
+    async def _session_finalized(self, session_id: Optional[str]) -> bool:
+        if not session_id:
+            return False
+        session = await self.tracker.get_session(session_id)
+        return bool(session and session.status == SessionStatus.COMPLETED)
 
     async def get_deployment(self, deployment_id: str) -> Optional[DeploymentRecord]:
         """Fetch deployment record and refresh status from Coolify if still pending/building."""

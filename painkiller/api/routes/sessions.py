@@ -60,6 +60,13 @@ async def create_session(project_id: str, request: Request, req: Optional[Create
     if not project:
         raise HTTPException(status_code=404, detail="Projeto não encontrado")
 
+    # Abrir a próxima sessão encerra as anteriores: as branches das tarefas já
+    # incorporadas são apagadas, e o "Testar" fica só na sessão mais recente.
+    orchestrator = request.app.state.orchestrator
+    for previous in await tracker.list_sessions(project_id):
+        if previous.status != SessionStatus.COMPLETED:
+            await orchestrator.finalize_session(previous.id)
+
     title = req.title if req else None
     session = await tracker.create_session(project_id=project_id, title=title)
     return session
@@ -83,9 +90,10 @@ async def update_session(project_id: str, session_id: str, req: UpdateSessionReq
     if not session or session.project_id != project_id:
         raise HTTPException(status_code=404, detail="Sessão não encontrada")
 
+    finalizing = req.status == SessionStatus.COMPLETED and session.status != SessionStatus.COMPLETED
     if req.title is not None:
         session.title = req.title
-    if req.status is not None:
+    if req.status is not None and not finalizing:
         session.status = req.status
     if req.spec_path is not None:
         session.spec_path = req.spec_path
@@ -94,6 +102,9 @@ async def update_session(project_id: str, session_id: str, req: UpdateSessionReq
 
     session.updated_at = datetime.now(timezone.utc)
     updated = await tracker.update_session(session)
+    if finalizing:
+        await request.app.state.orchestrator.finalize_session(session_id)
+        updated = await tracker.get_session(session_id)
     return updated
 
 

@@ -272,6 +272,43 @@ class GitCliAdapter(GitPort):
         )
         return code_merge, (out + "\n" + err_m).strip()
 
+    async def delete_branch(
+        self,
+        repo_path: str,
+        branch_name: str,
+        merged_into: str = "main",
+        remote_name: str = "origin",
+    ) -> tuple[int, str]:
+        if branch_name == merged_into:
+            return 1, f"Recusado: {branch_name} é a branch de destino"
+
+        code, _, _ = await self._run_git(repo_path, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch_name}")
+        local_exists = code == 0
+        if local_exists:
+            # Só apaga o que já está incorporado: uma branch com commits fora do
+            # merge perderia trabalho.
+            code, _, _ = await self._run_git(repo_path, "merge-base", "--is-ancestor", branch_name, merged_into)
+            if code != 0:
+                return 1, f"{branch_name} não está incorporada em {merged_into}"
+            if await self.current_branch(repo_path) == branch_name:
+                code, out = await self.switch_branch(repo_path, merged_into)
+                if code != 0:
+                    return code, out
+            code, _, err = await self._run_git(repo_path, "branch", "-D", branch_name)
+            if code != 0:
+                return code, err.strip()
+
+        remote_url = await self.scrub_remote_credentials(repo_path, remote_name)
+        if not remote_url:
+            return 0, ""
+        code, out, err = await self._run_git(
+            repo_path, "push", remote_name, "--delete", branch_name, env=self._auth_env(remote_url)
+        )
+        output = (out + "\n" + err).strip()
+        if code != 0 and "remote ref does not exist" in output:
+            return 0, output
+        return code, output
+
     async def archive(self, repo_path: str, ref: str = "HEAD") -> bytes:
         proc = await asyncio.create_subprocess_exec(
             "git",

@@ -170,3 +170,26 @@ async def test_deployment_service_production_always_uses_main():
         session_id=None,
     )
     mock_tracker.update_project_deployment_urls.assert_called_once_with("proj-1", production_url="http://app-prod.local")
+
+
+@pytest.mark.asyncio
+async def test_test_deploy_refuses_task_of_finalized_session():
+    """Finalizing a session deleted its branches: its tasks cannot be tested anymore."""
+    from painkiller.core.domain.models import IterationSession, SessionStatus
+    from painkiller.engine.deployment_service import BranchUnavailableError
+
+    mock_tracker = AsyncMock()
+    mock_deployment = AsyncMock()
+    mock_tracker.get_project.return_value = Project(id="proj-1", name="App", repo_path="/tmp")
+    mock_tracker.get_task.return_value = Task(
+        id="task-10", project_id="proj-1", title="X", description="", status=TaskStatus.COMPLETED,
+        assigned_branch="feature/task-10", session_id="s1",
+    )
+    mock_tracker.get_session.return_value = IterationSession(
+        id="s1", project_id="proj-1", number=1, title="Sessão 1", status=SessionStatus.COMPLETED
+    )
+
+    service = DeploymentService(tracker=mock_tracker, deployment=mock_deployment)
+    with pytest.raises(BranchUnavailableError):
+        await service.trigger_deploy(project_id="proj-1", environment=EnvironmentType.TEST, task_id="task-10")
+    mock_deployment.deploy_environment.assert_not_called()

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from painkiller.api.security import current_user, visible_project
 from painkiller.core.domain.models import User, EnvironmentType, DeploymentRecord
+from painkiller.engine.deployment_service import BranchUnavailableError
 
 router = APIRouter(tags=["deployments"])
 
@@ -35,6 +36,8 @@ async def trigger_deploy(
             session_id=body.session_id,
         )
         return record
+    except BranchUnavailableError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

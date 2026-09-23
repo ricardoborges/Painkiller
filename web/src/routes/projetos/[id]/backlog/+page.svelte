@@ -23,6 +23,13 @@
 
   const sessionStore = $derived(getProjectSessionStore(data.project.id));
   const activeSession = $derived(sessionStore.activeSession);
+  // Só a sessão mais recente ainda tem as branches das tarefas: ao abrir a
+  // próxima, o backend finaliza a anterior e apaga as branches incorporadas.
+  const branchesAlive = $derived(
+    !!activeSession &&
+      activeSession.status !== 'COMPLETED' &&
+      activeSession.id === sessionStore.sessions[sessionStore.sessions.length - 1]?.id
+  );
 
   let tasks = $state<Task[]>([]);
   let candidatesForMigration = $state<Task[]>([]);
@@ -920,6 +927,7 @@
 
         <div class="side">
           {#if isCompleted}
+            {#if branchesAlive}
             <button
               type="button"
               class="btn btn-line btn-xs test-task-btn"
@@ -933,6 +941,7 @@
                 <Icon name="play" size={10} /> Testar
               {/if}
             </button>
+            {/if}
           {:else if isMerging}
             <span class="completed-tag label mono">
               <span class="spinner-inline" aria-hidden="true"></span> Incorporando…

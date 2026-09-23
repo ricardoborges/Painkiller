@@ -9,6 +9,8 @@ from painkiller.core.domain.models import (
     ClarificationRequest,
     ClarificationStatus,
     ExecutionResult,
+    IterationSession,
+    SessionStatus,
 )
 from painkiller.engine.orchestrator import PainkillerOrchestrator
 
@@ -127,9 +129,32 @@ async def test_merge_task_success(mock_tracker, mock_sandbox, mock_git):
     await orchestrator.merge_task("t1")
 
     mock_git.merge_branch.assert_called_once_with("/repo", source_branch="feature/t1", target_branch="main")
-    # A branch da tarefa é publicada antes do merge e nunca apagada (o "Testar" usa ela)
+    # A branch da tarefa é publicada antes do merge (o "Testar" da sessão atual usa ela)
     assert [c.args for c in mock_git.push.call_args_list] == [("/repo", "feature/t1"), ("/repo", "main")]
     mock_tracker.update_task_status.assert_called_with("t1", TaskStatus.COMPLETED)
+
+
+@pytest.mark.asyncio
+async def test_finalize_session_deletes_only_merged_branches(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo", default_branch="main")
+    session = IterationSession(id="s1", project_id="p1", number=1, title="Sessão 1", status=SessionStatus.IN_SPRINT)
+    done = Task(id="t1", project_id="p1", title="A", description="", status=TaskStatus.COMPLETED,
+                assigned_branch="feature/t1", session_id="s1")
+    failed = Task(id="t2", project_id="p1", title="B", description="", status=TaskStatus.FAILED,
+                  assigned_branch="feature/t2", session_id="s1")
+    mock_tracker.get_session.return_value = session
+    mock_tracker.get_project.return_value = project
+    mock_tracker.list_tasks.return_value = [done, failed]
+    mock_git.delete_branch.return_value = (0, "")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    deleted = await orchestrator.finalize_session("s1")
+
+    # A tarefa que falhou mantém a branch: pode migrar para a próxima sessão
+    assert deleted == ["feature/t1"]
+    mock_git.delete_branch.assert_awaited_once_with("/repo", "feature/t1", merged_into="main")
+    saved = mock_tracker.update_session.await_args.args[0]
+    assert saved.status == SessionStatus.COMPLETED
 
 
 

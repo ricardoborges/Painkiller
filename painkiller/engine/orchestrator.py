@@ -3,12 +3,14 @@
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional, Any
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
     ExecutionResult,
     Project,
+    SessionStatus,
     Task,
     TaskStatus,
     UsageRecord,
@@ -469,4 +471,41 @@ class PainkillerOrchestrator:
         )
         updated_task = await self.tracker.get_task(task.id)
         return updated_task or task
+
+    async def finalize_session(self, session_id: str) -> list[str]:
+        """Mark a session COMPLETED and delete the branches of its merged tasks.
+
+        Only COMPLETED tasks lose their branch: those are already merged into
+        the default branch. Anything else keeps it, since it may be migrated to
+        the next session and continue from there. Returns the deleted branches.
+        """
+        session = await self.tracker.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        project = await self.tracker.get_project(session.project_id)
+        if not project:
+            raise ValueError(f"Project {session.project_id} not found")
+
+        deleted: list[str] = []
+        tasks = await self.tracker.list_tasks(session.project_id, session_id=session_id)
+        for task in tasks:
+            if task.status != TaskStatus.COMPLETED:
+                continue
+            branch = task.assigned_branch or f"feature/{task.id}"
+            try:
+                code, out = await self.git.delete_branch(
+                    project.repo_path, branch, merged_into=project.default_branch
+                )
+            except Exception as e:
+                code, out = 1, str(e)
+            if code == 0:
+                deleted.append(branch)
+            else:
+                logger.warning(f"Branch {branch} mantida ao finalizar a sessão {session_id}: {out}")
+
+        if session.status != SessionStatus.COMPLETED:
+            session.status = SessionStatus.COMPLETED
+            session.updated_at = datetime.now(timezone.utc)
+            await self.tracker.update_session(session)
+        return deleted
 

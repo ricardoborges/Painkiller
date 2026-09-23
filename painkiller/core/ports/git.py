@@ -68,6 +68,13 @@ class GitPort(ABC):
         pass
 
     @abstractmethod
+    async def delete_branch(
+        self, repo_path: str, branch_name: str, merged_into: str = "main", remote_name: str = "origin"
+    ) -> tuple[int, str]:
+        """Delete a branch locally and on the remote, only if it is already merged into ``merged_into``."""
+        pass
+
+    @abstractmethod
     async def archive(self, repo_path: str, ref: str = "HEAD") -> bytes:
         """Return a zip of the tree at ``ref`` (tracked files only, no .git)."""
         pass
