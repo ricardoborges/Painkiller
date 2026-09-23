@@ -113,6 +113,46 @@
     return blockers(task).length === 0;
   }
 
+  /* Linhas começam recolhidas. Tarefa em execução ou esperando o analista
+     abre sozinha; a escolha do usuário prevalece até a tarefa voltar a
+     precisar de atenção (ex.: um novo despacho). */
+  let expandOverride = $state<Record<string, boolean>>({});
+  let wasActive = new Set<string>();
+
+  function needsAttention(task: Task): boolean {
+    return (
+      dispatching === task.id ||
+      task.status === 'RUNNING' ||
+      task.status === 'AWAITING_ANALYST' ||
+      dispatchError?.id === task.id
+    );
+  }
+
+  function isOpen(task: Task): boolean {
+    return expandOverride[task.id] ?? needsAttention(task);
+  }
+
+  function toggle(task: Task) {
+    expandOverride[task.id] = !isOpen(task);
+  }
+
+  function setAll(open: boolean) {
+    expandOverride = Object.fromEntries(tasks.map((t) => [t.id, open]));
+  }
+
+  function stepLabel(id: string): string {
+    const idx = ordered.findIndex((t) => t.id === id);
+    return idx < 0 ? '' : `#${String(idx + 1).padStart(2, '0')}`;
+  }
+
+  $effect(() => {
+    const active = new Set(tasks.filter(needsAttention).map((t) => t.id));
+    for (const id of active) {
+      if (!wasActive.has(id) && id in expandOverride) delete expandOverride[id];
+    }
+    wasActive = active;
+  });
+
   async function load() {
     loading = true;
     error = null;
@@ -621,13 +661,31 @@
   </div>
 
   <!-- Lista de Tarefas em Ordem de Execução Sequencial -->
+  <div class="list-tools">
+    <span class="label mono">{ordered.length} tarefas em ordem de execução</span>
+    <div class="list-tools-actions">
+      <button type="button" class="btn-link label" onclick={() => setAll(true)}>Expandir todas</button>
+      <span class="sep" aria-hidden="true">·</span>
+      <button type="button" class="btn-link label" onclick={() => setAll(false)}>Recolher todas</button>
+    </div>
+  </div>
+
   <ol class="list divide">
     {#each ordered as task, i (task.id)}
       {@const stuck = blockers(task)}
       {@const isRunning = dispatching === task.id || task.status === 'RUNNING'}
       {@const isAwaiting = task.status === 'AWAITING_ANALYST'}
       {@const isCompleted = task.status === 'COMPLETED'}
-      <li class="task rise" class:running={isRunning} class:completed={isCompleted} style="--i: {Math.min(i, 8)}">
+      {@const isMerging = merging === task.id || task.status === 'IN_REVIEW'}
+      {@const hasError = dispatchError?.id === task.id || (task.status === 'FAILED' && !!(task.error || task.last_comment))}
+      {@const open = isOpen(task)}
+      <li
+        class="task rise"
+        class:is-running={isRunning}
+        class:open
+        class:completed={isCompleted}
+        style="--i: {Math.min(i, 8)}"
+      >
         <!-- Número de Ordem de Execução Sequencial -->
         <div class="step-col">
           <span class="step-num mono" class:done={isCompleted} title="Ordem de execução sequencial">
@@ -637,156 +695,178 @@
               #{String(i + 1).padStart(2, '0')}
             {/if}
           </span>
-          {#if i < ordered.length - 1}
-            <span class="step-line" class:done={isCompleted} aria-hidden="true"></span>
-          {/if}
         </div>
 
         <div class="body">
-          <div class="head">
-            <h3 class="title">{task.title}</h3>
+          <button
+            type="button"
+            class="row-toggle"
+            aria-expanded={open}
+            aria-controls="task-detail-{task.id}"
+            onclick={() => toggle(task)}
+          >
+            <span class="chev" class:rot={open} aria-hidden="true"><Icon name="arrow-right" size={11} /></span>
+            <span class="title">{task.title}</span>
             <StatusTag status={task.status} size="sm" />
-          </div>
-
-          <p class="desc muted">{task.description}</p>
-
-          <div class="facts mono">
-            <span title="Identificador da tarefa">{task.id}</span>
-            {#if task.issue_url}
-              <span class="sep" aria-hidden="true">·</span>
-              <a
-                href={task.issue_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="branch-link"
-                title="Ver a issue desta tarefa no Gitea"
-              >
-                #{task.issue_number} <Icon name="external" size={9} />
-              </a>
+            {#if !open}
+              <span class="row-hint mono">
+                {#if isRunning}
+                  <span class="spinner-inline" aria-hidden="true"></span> em execução
+                {:else if isMerging}
+                  incorporando…
+                {:else if hasError}
+                  <Icon name="alert" size={10} /> falhou
+                {:else if stuck.length}
+                  aguarda {stuck.map((d) => stepLabel(d.id)).join(', ')}
+                {/if}
+              </span>
             {/if}
-            {#if task.assigned_branch}
-              <span class="sep" aria-hidden="true">·</span>
-              {#if data.project.repo_url}
-                <a
-                  href="{data.project.repo_url}/src/branch/{task.assigned_branch}"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="branch-link"
-                  title="Ver branch no Gitea"
-                >
-                  {task.assigned_branch} <Icon name="external" size={9} />
-                </a>
-              {:else}
-                <span>{task.assigned_branch}</span>
-              {/if}
-            {/if}
-            {#if task.target_files.length}
-              <span class="sep" aria-hidden="true">·</span>
-              <span>{task.target_files.length} arquivo{task.target_files.length > 1 ? 's' : ''}</span>
-            {/if}
-          </div>
+          </button>
 
-          {#if task.target_files.length || task.acceptance_criteria.length}
-            <details>
-              <summary class="label">Critérios e arquivos alvo</summary>
-              <div class="detail-grid">
-                {#if task.acceptance_criteria.length}
-                  <div>
-                    <span class="label">Critérios de aceitação</span>
-                    <ul class="bullets">
-                      {#each task.acceptance_criteria as c, ci (ci)}
-                        <li>{c}</li>
-                      {/each}
-                    </ul>
-                  </div>
+          {#if open}
+            <div class="detail" id="task-detail-{task.id}">
+              <p class="desc muted">{task.description}</p>
+
+              <div class="facts mono">
+                <span title="Identificador da tarefa">{task.id}</span>
+                {#if task.issue_url}
+                  <span class="sep" aria-hidden="true">·</span>
+                  <a
+                    href={task.issue_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="branch-link"
+                    title="Ver a issue desta tarefa no Gitea"
+                  >
+                    #{task.issue_number} <Icon name="external" size={9} />
+                  </a>
+                {/if}
+                {#if task.assigned_branch}
+                  <span class="sep" aria-hidden="true">·</span>
+                  {#if data.project.repo_url}
+                    <a
+                      href="{data.project.repo_url}/src/branch/{task.assigned_branch}"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="branch-link"
+                      title="Ver branch no Gitea"
+                    >
+                      {task.assigned_branch} <Icon name="external" size={9} />
+                    </a>
+                  {:else}
+                    <span>{task.assigned_branch}</span>
+                  {/if}
                 {/if}
                 {#if task.target_files.length}
-                  <div>
-                    <span class="label">Arquivos alvo</span>
-                    <ul class="bullets mono files">
-                      {#each task.target_files as f (f)}
-                        <li>{f}</li>
-                      {/each}
-                    </ul>
-                  </div>
+                  <span class="sep" aria-hidden="true">·</span>
+                  <span>{task.target_files.length} arquivo{task.target_files.length > 1 ? 's' : ''}</span>
                 {/if}
               </div>
-            </details>
-          {/if}
 
-          {#if stuck.length > 0}
-            <p class="blocked-note">
-              Travada por
-              {#each stuck as d, di (d.id)}
-                <span class="mono bold">{d.title}</span>{#if di < stuck.length - 1}, {/if}
-              {/each}
-              — o orquestrador exige a conclusão da dependência antes de despachar.
-            </p>
-          {/if}
+              {#if task.target_files.length || task.acceptance_criteria.length}
+                <details>
+                  <summary class="label">Critérios e arquivos alvo</summary>
+                  <div class="detail-grid">
+                    {#if task.acceptance_criteria.length}
+                      <div>
+                        <span class="label">Critérios de aceitação</span>
+                        <ul class="bullets">
+                          {#each task.acceptance_criteria as c, ci (ci)}
+                            <li>{c}</li>
+                          {/each}
+                        </ul>
+                      </div>
+                    {/if}
+                    {#if task.target_files.length}
+                      <div>
+                        <span class="label">Arquivos alvo</span>
+                        <ul class="bullets mono files">
+                          {#each task.target_files as f (f)}
+                            <li>{f}</li>
+                          {/each}
+                        </ul>
+                      </div>
+                    {/if}
+                  </div>
+                </details>
+              {/if}
 
-          {#if isAwaiting && !isRunning}
-            <div class="clar">
-              <ClarificationPanel {task} onresolved={replace} />
+              {#if stuck.length > 0}
+                <p class="blocked-note">
+                  Travada por
+                  {#each stuck as d, di (d.id)}
+                    <span class="mono bold">{stepLabel(d.id)} {d.title}</span>{#if di < stuck.length - 1}, {/if}
+                  {/each}
+                  — o orquestrador exige a conclusão da dependência antes de despachar.
+                </p>
+              {/if}
+
+              {#if isAwaiting && !isRunning}
+                <div class="clar">
+                  <ClarificationPanel {task} onresolved={replace} />
+                </div>
+              {/if}
             </div>
           {/if}
 
+          <!-- Montado mesmo recolhido: o stream precisa seguir vivo para o
+               onclosed recarregar a lista quando o contêiner termina. -->
           {#if isRunning}
-            <!-- Quem disparou recebe o resultado pela própria requisição; quem só
-                 abriu a página recarrega quando o stream encerra. -->
-            <TaskActivity
-              taskId={task.id}
-              starting={dispatching === task.id}
-              onclosed={() => {
-                if (dispatching !== task.id) load();
-              }}
-            />
-          {/if}
-
-          {#if merging === task.id || task.status === 'IN_REVIEW'}
-            <div class="merging-banner">
-              <span class="spinner-inline" aria-hidden="true"></span>
-              <span>Incorporando alterações na branch principal ({data.project.default_branch || 'main'})…</span>
+            <div class="activity" hidden={!open}>
+              <!-- Quem disparou recebe o resultado pela própria requisição; quem só
+                   abriu a página recarrega quando o stream encerra. -->
+              <TaskActivity
+                taskId={task.id}
+                starting={dispatching === task.id}
+                onclosed={() => {
+                  if (dispatching !== task.id) load();
+                }}
+              />
             </div>
           {/if}
 
-          {#if dispatchError?.id === task.id}
-            <p class="error-line" role="alert">
-              <Icon name="alert" size={12} />
-              {dispatchError.message}
-            </p>
-          {:else if task.status === 'FAILED' && (task.error || task.last_comment)}
-            <p class="error-line" role="alert">
-              <Icon name="alert" size={12} />
-              {task.error || task.last_comment}
-            </p>
-          {:else if isCompleted && task.last_comment}
-            <p class="completed-note mono faint">
-              {task.last_comment}
-            </p>
+          {#if open}
+            {#if isMerging}
+              <div class="merging-banner">
+                <span class="spinner-inline" aria-hidden="true"></span>
+                <span>Incorporando alterações na branch principal ({data.project.default_branch || 'main'})…</span>
+              </div>
+            {/if}
+
+            {#if dispatchError?.id === task.id}
+              <p class="error-line" role="alert">
+                <Icon name="alert" size={12} />
+                {dispatchError.message}
+              </p>
+            {:else if task.status === 'FAILED' && (task.error || task.last_comment)}
+              <p class="error-line" role="alert">
+                <Icon name="alert" size={12} />
+                {task.error || task.last_comment}
+              </p>
+            {:else if isCompleted && task.last_comment}
+              <p class="completed-note mono faint">
+                {task.last_comment}
+              </p>
+            {/if}
           {/if}
         </div>
 
         <div class="side">
           {#if isCompleted}
-            <div class="completed-actions">
-              <span class="completed-tag label mono">
-                <Icon name="check" size={11} /> Concluída
-              </span>
-              <button
-                type="button"
-                class="btn btn-line btn-xs test-task-btn"
-                onclick={() => deployTest(task.id)}
-                disabled={deployingTaskId === task.id || isQueueRunning}
-                title="Provisionar ambiente de teste no Coolify com a branch desta tarefa"
-              >
-                {#if deployingTaskId === task.id}
-                  <span class="spinner-inline" aria-hidden="true"></span> Testando…
-                {:else}
-                  <Icon name="play" size={10} /> Testar
-                {/if}
-              </button>
-            </div>
-          {:else if task.status === 'IN_REVIEW' || merging === task.id}
+            <button
+              type="button"
+              class="btn btn-line btn-xs test-task-btn"
+              onclick={() => deployTest(task.id)}
+              disabled={deployingTaskId === task.id || isQueueRunning}
+              title="Provisionar ambiente de teste no Coolify com a branch desta tarefa"
+            >
+              {#if deployingTaskId === task.id}
+                <span class="spinner-inline" aria-hidden="true"></span> Testando…
+              {:else}
+                <Icon name="play" size={10} /> Testar
+              {/if}
+            </button>
+          {:else if isMerging}
             <span class="completed-tag label mono">
               <span class="spinner-inline" aria-hidden="true"></span> Incorporando…
             </span>
@@ -1067,13 +1147,6 @@
     text-decoration: underline;
   }
 
-  .completed-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: var(--s2);
-  }
-
   .test-task-btn {
     font-size: var(--t-micro);
   }
@@ -1180,27 +1253,60 @@
     list-style: none;
   }
 
+  .list-tools {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    margin-top: var(--s5);
+    padding-bottom: var(--s2);
+    border-bottom: 1px solid var(--rule);
+    color: var(--ink-3);
+  }
+
+  .list-tools-actions {
+    display: flex;
+    align-items: center;
+  }
+
+  .btn-link {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    color: var(--ink-2);
+  }
+
+  .btn-link:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
   .task {
     display: grid;
     grid-template-columns: 2.75rem 1fr auto;
     gap: var(--s4);
-    padding: var(--s5) 0;
+    align-items: start;
+    padding: var(--s3) 0;
     position: relative;
     transition: background-color 0.2s ease;
   }
 
-  .task.running {
+  .task.open {
+    padding: var(--s4) 0 var(--s5);
+  }
+
+  .task.is-running {
     background: var(--paper-sunk);
+    box-shadow: inset 2px 0 0 var(--ink);
     margin-inline: -1rem;
     padding-inline: 1rem;
   }
 
   .step-col {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    position: relative;
-    padding-top: 0.15rem;
+    justify-content: center;
   }
 
   .step-num {
@@ -1213,37 +1319,86 @@
     border: 1px solid var(--rule-2);
     background: var(--paper);
     color: var(--ink-3);
-    border-radius: 2px;
     font-weight: 500;
   }
 
   .step-num.done {
     background: var(--paper-2);
-    color: var(--accent);
-    border-color: var(--accent);
+    color: var(--ink);
+    border-color: var(--rule-ink);
   }
 
-  .step-line {
-    width: 1px;
-    flex: 1;
-    background: var(--rule-2);
-    margin-top: 0.35rem;
-    min-height: 2rem;
+  .row-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    width: 100%;
+    min-height: 1.85rem;
+    padding: 0;
+    background: none;
+    border: 0;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
   }
 
-  .step-line.done {
-    background: var(--rule-ink);
+  .row-toggle:hover .title {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+
+  .row-toggle:focus-visible {
+    outline: 1px solid var(--ink);
+    outline-offset: 2px;
+  }
+
+  .chev {
+    display: inline-flex;
+    flex: none;
+    color: var(--ink-3);
+    transition: transform 0.15s ease;
+  }
+
+  .chev.rot {
+    transform: rotate(90deg);
+  }
+
+  .title {
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .task.open .title {
+    white-space: normal;
+  }
+
+  .task.completed:not(.open) .title {
+    color: var(--ink-3);
+  }
+
+  .row-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-left: auto;
+    padding-left: var(--s3);
+    flex: none;
+    font-size: var(--t-micro);
+    color: var(--ink-3);
+  }
+
+  .detail,
+  .activity {
+    padding-left: calc(11px + var(--s3));
   }
 
   .body {
     min-width: 0;
-  }
-
-  .head {
-    display: flex;
-    align-items: center;
-    gap: var(--s3);
-    flex-wrap: wrap;
   }
 
   .desc {
@@ -1342,19 +1497,6 @@
 
   .clar {
     margin-top: var(--s4);
-    max-width: 44rem;
-  }
-
-  .running {
-    display: flex;
-    align-items: center;
-    gap: var(--s3);
-    margin-top: var(--s4);
-    padding: var(--s3) var(--s4);
-    background: var(--paper-sunk);
-    border-left: 2px solid var(--ink);
-    font-size: var(--t-small);
-    color: var(--ink-2);
     max-width: 44rem;
   }
 
