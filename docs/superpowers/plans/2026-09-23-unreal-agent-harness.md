@@ -159,7 +159,7 @@ git commit -m "feat(cli): implementar painkiller unreal-run e parser de eventos 
 - Consumes: `HarnessType.UNREAL_SUPERPOWERS`, `Project.harness`, `Project.api_key`
 - Produces: Docker container execution targeting `painkiller-agent-unreal:latest` and `painkiller-worker-unreal:latest`
 
-- [ ] **Step 1: Write failing tests in `tests/unit/test_unreal_harness.py`**
+- [x] **Step 1: Write failing tests in `tests/unit/test_unreal_harness.py`**
 
 Add tests for `DockerAgentSession.start()` and `DockerSandboxRunner.run_task()` with `harness="unreal_superpowers"`:
 ```python
@@ -183,12 +183,12 @@ async def test_runner_runs_unreal_one_shot():
     ...
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_unreal_harness.py -k test_start_runs_unreal_in_session_mode -v`
 Expected: FAIL
 
-- [ ] **Step 3: Implement Docker adapter logic for `unreal_superpowers`**
+- [x] **Step 3: Implement Docker adapter logic for `unreal_superpowers`**
 
 In `painkiller/adapters/sandbox/docker_agent_session.py`:
 - Add `"unreal_superpowers"` to `DEEPSEEK_KEY_HARNESSES`.
@@ -204,12 +204,12 @@ In `painkiller/adapters/sandbox/docker_agent_session.py`:
 - In `parse_agent_line`:
   - Ensure lines with `Kind` (`model_response`, `tool_call_status`) are parsed directly if encountered from worker container logs.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/unit/test_unreal_harness.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add painkiller/adapters/sandbox/docker_agent_session.py painkiller/adapters/sandbox/docker_runner.py tests/unit/test_unreal_harness.py
@@ -228,7 +228,7 @@ git commit -m "feat(sandbox): suportar unreal_superpowers em DockerAgentSession 
 **Interfaces:**
 - Produces: `painkiller-agent-unreal:latest` and `painkiller-worker-unreal:latest` image definitions
 
-- [ ] **Step 1: Create `docker/unreal-agent.Dockerfile`**
+- [x] **Step 1: Create `docker/unreal-agent.Dockerfile`**
 
 Multi-stage build:
 - Stage 1: Build `unreal-agent-runner` with Go from github.com/unreallabsai/unreal-agent.
@@ -238,15 +238,15 @@ Multi-stage build:
 - Install Painkiller package (`pip install /tmp/painkiller`).
 - Default CMD: `["painkiller", "unreal-run", "--stdin-file", "/workspace/.painkiller/agent-stdin.jsonl"]`.
 
-- [ ] **Step 2: Create `docker/unreal-worker.Dockerfile`**
+- [x] **Step 2: Create `docker/unreal-worker.Dockerfile`**
 
 Same base with pytest, pytest-asyncio, lxml, and painkiller CLI for task verification and clean interruption.
 
-- [ ] **Step 3: Update `docker-compose.yml`**
+- [x] **Step 3: Update `docker-compose.yml`**
 
 Add image build sections or service reference notes for `painkiller-agent-unreal` and `painkiller-worker-unreal`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docker/unreal-agent.Dockerfile docker/unreal-worker.Dockerfile docker-compose.yml
@@ -267,7 +267,7 @@ git commit -m "chore(docker): criar Dockerfiles para painkiller-agent-unreal e p
 - Consumes: `HarnessType` definition
 - Produces: UI options and model selectors for `unreal_superpowers`
 
-- [ ] **Step 1: Update `web/src/lib/types.ts`**
+- [x] **Step 1: Update `web/src/lib/types.ts`**
 
 Update `HarnessType` and `DEEPSEEK_KEY_HARNESSES`:
 ```typescript
@@ -280,7 +280,7 @@ export const DEEPSEEK_KEY_HARNESSES: readonly HarnessType[] = [
 ];
 ```
 
-- [ ] **Step 2: Update `ProjectDialog.svelte`**
+- [x] **Step 2: Update `ProjectDialog.svelte`**
 
 - Add `unreal_superpowers` presets in `MODEL_PRESETS`:
 ```typescript
@@ -306,16 +306,16 @@ export const DEEPSEEK_KEY_HARNESSES: readonly HarnessType[] = [
           </label>
 ```
 
-- [ ] **Step 3: Update `+page.svelte` and `+layout.svelte`**
+- [x] **Step 3: Update `+page.svelte` and `+layout.svelte`**
 
 Add badge label `unreal` in `/projetos` and layout map in `/projetos/[id]`.
 
-- [ ] **Step 4: Run typecheck**
+- [x] **Step 4: Run typecheck**
 
 Run in `web/`: `npm run check`
 Expected: 0 errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/src/lib/types.ts web/src/lib/components/ProjectDialog.svelte web/src/routes/projetos/+page.svelte web/src/routes/projetos/[id]/+layout.svelte
@@ -331,16 +331,16 @@ git commit -m "feat(web): adicionar suporte ao harness Unreal Agent + Superpower
 - Modify: `README.md`
 - Test: All tests in `tests/`
 
-- [ ] **Step 1: Run complete test suite**
+- [x] **Step 1: Run complete test suite**
 
 Run: `pytest`
 Expected: All tests pass.
 
-- [ ] **Step 2: Update documentation**
+- [x] **Step 2: Update documentation**
 
 Document `unreal_superpowers` in `CLAUDE.md` and `README.md` detailing the async-first Go harness, provider settings, and Superpowers skills integration.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add CLAUDE.md README.md
