@@ -263,8 +263,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
 networks:
+  # A rede "coolify" pertence ao Coolify: ele a cria (sem labels do compose)
+  # sempre que ela falta. Declara-la como gerenciada pelo compose gera o erro
+  # "has incorrect label com.docker.compose.network". Externa, o compose so a
+  # usa; crie-a uma vez com: docker network create coolify
   coolify:
     name: coolify
+    external: true
 
 
 volumes:

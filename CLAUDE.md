@@ -47,6 +47,7 @@ npm run check      # svelte-check; must stay at 0 errors
 Whole stack in Docker (see **Container topology** below):
 
 ```bash
+docker network create coolify           # once per machine — see below
 docker compose --profile build build    # api image + painkiller-worker + painkiller-agent
 docker compose up -d                    # api on :8000; the *-image services never start
 docker compose logs -f api
@@ -210,6 +211,8 @@ The analysis page sizes itself to the viewport (measured, because the project he
 `PAINKILLER_HOST_ROOT` must be the **absolute host path** of `./storage` and lives in `.env`. Get it wrong and the UI still works end to end; only dispatch silently mounts the wrong directory into the agent.
 
 `./storage` must stay a bind mount rather than a named volume, precisely because the sibling containers address it through the host.
+
+The `coolify` network is `external: true` on purpose: Coolify creates it itself (without compose labels) whenever it is missing, so a compose-managed declaration fails with `network coolify was found but has incorrect label com.docker.compose.network`. Do not make it compose-managed again; it only has to exist before `up`.
 
 Other pieces: `docker/api.Dockerfile` is multi-stage (Node builds `web/`, then a Python runtime with no Node), so the image does not depend on the committed `painkiller/api/static/`. `PAINKILLER_DB_URL` puts SQLite on a named volume. The `worker-image` service exists only so compose builds the image the API instantiates by name; it sits behind a `build` profile so `up` never starts it.
 

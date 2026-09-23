@@ -31,6 +31,11 @@ DEFAULT_TASK_TIMEOUT = 1800
 #: recolhe num <details>). O log inteiro de uma execução passa de centenas de KB.
 FAILURE_LOG_TAIL = 20_000
 
+STOPPED_MESSAGE = (
+    "Execução interrompida pelo usuário. O trabalho parcial ficou na branch {branch}: "
+    "use Repetir para continuar de onde parou."
+)
+
 
 def task_timeout_seconds() -> int:
     """`PAINKILLER_TASK_TIMEOUT` in seconds, falling back to the default on garbage."""
@@ -59,6 +64,9 @@ class PainkillerOrchestrator:
         self.vcs = vcs
         self.usage = usage
         self.activity = activity or TaskActivityHub()
+        # Tarefas cuja interrupção foi pedida durante uma execução deste processo:
+        # o _dispatch registra a falha como interrupção, não como código 137.
+        self._stop_requested: set[str] = set()
 
     def _note(self, task_id: str, text: str) -> None:
         """Tell whoever watches the task what the orchestrator itself is doing."""
@@ -81,11 +89,13 @@ class PainkillerOrchestrator:
                 if not dep_task or dep_task.status != TaskStatus.COMPLETED:
                     raise RuntimeError(f"Cannot run task {task.id}: dependency {dep_id} is not completed")
 
+        self._stop_requested.discard(task.id)
         self.activity.start(task.id)
         try:
             return await self._dispatch(task, project)
         finally:
             self.activity.finish(task.id)
+            self._stop_requested.discard(task.id)
 
     async def _dispatch(self, task: Task, project: Project) -> Task:
         # Uma nova tentativa roda na mesma branch, por cima do que ficou da anterior.
@@ -197,7 +207,10 @@ class PainkillerOrchestrator:
                     comment=f"❌ Tests failed after agent execution:\n{test_out}",
                 )
         else:
-            error_msg = self._describe_failure(result, timeout, branch_name)
+            if task.id in self._stop_requested:
+                error_msg = STOPPED_MESSAGE.format(branch=branch_name)
+            else:
+                error_msg = self._describe_failure(result, timeout, branch_name)
             await self.tracker.update_task_status(
                 task.id,
                 TaskStatus.FAILED,
@@ -248,9 +261,34 @@ class PainkillerOrchestrator:
         return await self.dispatch_task(clar.task_id)
 
     async def stop_task(self, task_id: str) -> None:
-        """Stop a running task by stopping its container."""
+        """Stop a running task by killing its container, and make sure its status moves.
+
+        When this process is running the dispatch, killing the container is
+        enough: `_dispatch` wakes up and records the interruption. Otherwise —
+        typically after an API restart — nothing would ever leave RUNNING, so
+        the status is set here.
+        """
+        run = self.activity.get(task_id)
+        live = run is not None and not run.done
+        if live:
+            self._stop_requested.add(task_id)
         self._note(task_id, "Interrompendo execução da tarefa a pedido do usuário")
         await self.sandbox.stop_task(task_id)
+        if live:
+            return
+
+        task = await self.tracker.get_task(task_id)
+        if task is None or task.status != TaskStatus.RUNNING:
+            return
+        branch = task.assigned_branch or f"feature/{task.id}"
+        message = STOPPED_MESSAGE.format(branch=branch)
+        await self.tracker.update_task_status(
+            task.id,
+            TaskStatus.FAILED,
+            assigned_branch=branch,
+            error=message,
+        )
+        await self.tracker.add_comment(task.id, author="system", comment=message)
 
     @staticmethod
     def _describe_failure(result: ExecutionResult, timeout: int, branch: str) -> str:

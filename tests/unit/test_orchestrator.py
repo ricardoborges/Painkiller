@@ -172,3 +172,55 @@ async def test_retry_after_failure_tells_agent_to_continue(mock_tracker, mock_sa
     await orchestrator.dispatch_task("t1")
 
     assert "Execução anterior interrompida" in mock_sandbox.run_task.call_args.args[2]
+
+
+@pytest.mark.asyncio
+async def test_stop_orphaned_running_task_marks_it_failed(mock_tracker, mock_sandbox, mock_git):
+    # Após um restart da API a tarefa segue RUNNING sem ninguém executando-a aqui.
+    task = Task(
+        id="t1", project_id="p1", title="T", description="D",
+        status=TaskStatus.RUNNING, assigned_branch="feature/t1",
+    )
+    mock_tracker.get_task.return_value = task
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.stop_task("t1")
+
+    mock_sandbox.stop_task.assert_awaited_once_with("t1")
+    call = mock_tracker.update_task_status.call_args
+    assert call.args == ("t1", TaskStatus.FAILED)
+    assert "interrompida pelo usuário" in call.kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_stop_ignores_task_that_is_not_running(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(
+        id="t1", project_id="p1", title="T", description="D", status=TaskStatus.COMPLETED
+    )
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.stop_task("t1")
+
+    mock_tracker.update_task_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stop_during_dispatch_reports_interruption_not_exit_code(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo")
+    task = Task(id="t1", project_id="p1", title="T", description="D")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    async def run_and_get_stopped(*args, **kwargs):
+        await orchestrator.stop_task("t1")
+        return ExecutionResult(exit_code=137, logs="killed")
+
+    mock_sandbox.run_task.side_effect = run_and_get_stopped
+    await orchestrator.dispatch_task("t1")
+
+    failed = [c for c in mock_tracker.update_task_status.call_args_list if c.args[1] == TaskStatus.FAILED]
+    assert len(failed) == 1  # só o _dispatch registra; o stop não duplica
+    assert "interrompida pelo usuário" in failed[0].kwargs["error"]
+    assert "137" not in failed[0].kwargs["error"]

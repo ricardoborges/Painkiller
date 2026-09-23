@@ -117,6 +117,7 @@ flowchart TD
 
 2. Build and start the services:
    ```bash
+   docker network create coolify   # once per machine; owned by Coolify, external to compose
    docker compose --profile build build
    docker compose up -d
    ```
