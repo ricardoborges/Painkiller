@@ -155,10 +155,12 @@
   }
 
   function handleChoiceSubmit(text: string) {
+    // Sem o arquivo gravado, a escolha vai para o agente, que então o grava.
     if (
-      text.toLowerCase().includes('seguir para backlog') ||
-      text.toLowerCase().includes('importar backlog') ||
-      text.toLowerCase().includes('abrir backlog')
+      backlogReady &&
+      (text.toLowerCase().includes('seguir para backlog') ||
+        text.toLowerCase().includes('importar backlog') ||
+        text.toLowerCase().includes('abrir backlog'))
     ) {
       importBacklog();
     } else {
@@ -166,15 +168,17 @@
     }
   }
 
-  function hasBacklogCreated(text: string): boolean {
-    const lower = text.toLowerCase();
-    return (
-      lower.includes('backlog.json') ||
-      lower.includes('.painkiller/backlogs/') ||
-      (lower.includes('backlog') && lower.includes('tarefas planejadas')) ||
-      (lower.includes('backlog') && lower.includes('critérios de aceitação'))
-    );
-  }
+  /* O botão de importar só aparece quando o arquivo existe de verdade — a
+     lista de artefatos é relida a cada ferramenta e a cada fim de turno. Um
+     texto que só *fala* em backlog ("antes de eu decompor o backlog") não
+     basta: importar antes de o agente gravar falha. */
+  const backlogReady = $derived(
+    !!a.session &&
+      a.docs.some(
+        (d) => d.category === 'backlog' && d.path.endsWith(`/${a.session!.session_id}.json`)
+      )
+  );
+  const lastAgentTurn = $derived(a.turns.findLastIndex((t) => t.who === 'agent'));
 
   function confirmRestart() {
     menuOpen = false;
@@ -406,13 +410,7 @@
 
             {#each a.turns as turn, i (i)}
               {@const parsed = turn.who === 'agent' ? parseMessage(turn.text) : null}
-              {@const showBacklogAction =
-                turn.who === 'agent' &&
-                (hasBacklogCreated(turn.text) ||
-                  (parsed?.choices?.options.some((o) =>
-                    o.label.toLowerCase().includes('seguir para backlog') ||
-                    o.label.toLowerCase().includes('backlog')
-                  ) ?? false))}
+              {@const showBacklogAction = backlogReady && i === lastAgentTurn && a.myTurn}
               <li class="turn" class:is-analyst={turn.who === 'analyst'}>
                 <span class="label who">{turn.who === 'agent' ? 'Agente' : 'Você'}</span>
                 <div class="content">

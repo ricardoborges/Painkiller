@@ -308,3 +308,13 @@ def test_parse_dsh_reasoning_and_status_lines_are_not_errors():
     status = parse_agent_line("dsh: booting profile headless")
     assert status.type == AgentEventType.SYSTEM
     assert "harness_error" not in status.raw
+
+
+async def test_missing_image_explains_how_to_build_it(tmp_path, client):
+    import docker.errors
+
+    client.containers.run.side_effect = docker.errors.ImageNotFound("pull access denied")
+    session = DockerAgentSession(client=client)
+
+    with pytest.raises(RuntimeError, match=r"docker compose --profile build build"):
+        await session.start("analysis-x", str(tmp_path), "p")

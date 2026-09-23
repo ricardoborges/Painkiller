@@ -252,21 +252,29 @@ class DockerAgentSession(AgentSessionPort):
 
         container_name = f"pk-analysis-{session_id}-{uuid.uuid4().hex[:6]}"
         loop = asyncio.get_running_loop()
-        container = await loop.run_in_executor(
-            None,
-            lambda: self.client.containers.run(
-                image=image,
-                command=command,
-                name=container_name,
-                volumes=volumes,
-                environment=env_vars,
-                working_dir="/workspace",
-                network=self.network,
-                extra_hosts={"host.docker.internal": "host-gateway"},
-                detach=True,
-                remove=False,
-            ),
-        )
+        try:
+            container = await loop.run_in_executor(
+                None,
+                lambda: self.client.containers.run(
+                    image=image,
+                    command=command,
+                    name=container_name,
+                    volumes=volumes,
+                    environment=env_vars,
+                    working_dir="/workspace",
+                    network=self.network,
+                    extra_hosts={"host.docker.internal": "host-gateway"},
+                    detach=True,
+                    remove=False,
+                ),
+            )
+        except docker.errors.ImageNotFound as e:
+            # A imagem não existe localmente e o docker-py tenta um pull do
+            # Docker Hub, que falha com um 404 cru. Diz o que fazer.
+            raise RuntimeError(
+                f"A imagem do agente '{image}' não foi encontrada no Docker. "
+                "Construa as imagens dos harnesses com: docker compose --profile build build"
+            ) from e
         self._containers[session_id] = container
 
         # O prompt inicial entra pela mesma fila: só envia se for nova sessão
