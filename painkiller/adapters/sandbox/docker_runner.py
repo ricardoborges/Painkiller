@@ -128,6 +128,23 @@ class DockerSandboxRunner(SandboxPort):
                 "--prompt",
                 task_instructions,
             ]
+        elif harness_type == "unreal_superpowers":
+            image = os.environ.get("PAINKILLER_WORKER_UNREAL_IMAGE") or "painkiller-worker-unreal:latest"
+            if api_key:
+                env_vars["DEEPSEEK_API_KEY"] = api_key
+            env_vars["UNREAL_HARNESS_LLM_PROVIDER"] = "openai"
+            env_vars["UNREAL_HARNESS_LLM_BASE_URL"] = "https://api.deepseek.com"
+            env_vars["UNREAL_HARNESS_LLM_API_KEY"] = env_vars.get("DEEPSEEK_API_KEY", "")
+            chosen_model = model or maki_model()
+            env_vars["UNREAL_HARNESS_LLM_MODEL"] = chosen_model
+
+            command = [
+                "unreal-agent-runner",
+                "-workspace",
+                "/workspace",
+                "-p",
+                task_instructions,
+            ]
         else:
             image = self.image_name
             if api_key:

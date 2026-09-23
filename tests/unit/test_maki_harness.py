@@ -81,7 +81,7 @@ async def test_start_runs_maki_in_bidirectional_stream_mode(tmp_path, client):
         assert flag in args
     assert args[args.index("--input-format") + 1] == "stream-json"
     assert args[args.index("--output-format") + 1] == "stream-json"
-    assert args[args.index("--model") + 1] == "deepseek/deepseek-v4-flash"
+    assert args[args.index("--model") + 1] == "deepseek/deepseek-v4-pro"
     assert args[args.index("--session-id") + 1] == SESSION
     # A mesma chave DeepSeek do projeto, não a do .env.
     assert kwargs["environment"]["DEEPSEEK_API_KEY"] == "sk-project"
@@ -196,7 +196,7 @@ async def test_runner_runs_maki_one_shot():
     assert args[0] == "painkiller-worker-maki:latest"
     assert kwargs["command"] == [
         "maki", "--trust", "--yolo", "--print", "--output-format", "stream-json",
-        "--include-partial-messages", "--model", "deepseek/deepseek-v4-flash", "Implemente X",
+        "--include-partial-messages", "--model", "deepseek/deepseek-v4-pro", "Implemente X",
     ]
     assert kwargs["environment"]["DEEPSEEK_API_KEY"] == "sk-project"
 

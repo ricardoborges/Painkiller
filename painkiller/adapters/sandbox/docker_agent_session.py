@@ -49,7 +49,7 @@ FORWARDED_ENV = [
 
 
 #: Harnesses que autenticam com a chave DeepSeek (do projeto ou do .env).
-DEEPSEEK_KEY_HARNESSES = frozenset({"deepseek_superpowers", "maki_superpowers"})
+DEEPSEEK_KEY_HARNESSES = frozenset({"deepseek_superpowers", "maki_superpowers", "unreal_superpowers"})
 
 
 def maki_model() -> str:
@@ -224,6 +224,29 @@ class DockerAgentSession(AgentSessionPort):
             volumes = {
                 daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
                 daemon_path(maki_state): {"bind": "/root/.local/state/maki", "mode": "rw"},
+            }
+        elif harness_type == "unreal_superpowers":
+            image = os.environ.get("PAINKILLER_AGENT_UNREAL_IMAGE") or "painkiller-agent-unreal:latest"
+            env_vars["UNREAL_HARNESS_LLM_PROVIDER"] = "openai"
+            env_vars["UNREAL_HARNESS_LLM_BASE_URL"] = "https://api.deepseek.com"
+            env_vars["UNREAL_HARNESS_LLM_API_KEY"] = env_vars.get("DEEPSEEK_API_KEY", "")
+            env_vars["UNREAL_HARNESS_LLM_MODEL"] = model or maki_model()
+
+            unreal_state = os.path.join(repo_path, ".painkiller", "unreal_home")
+            os.makedirs(os.path.join(unreal_state, "sessions"), exist_ok=True)
+
+            command = [
+                "painkiller", "unreal-run",
+                "--stdin-file", "/workspace/" + STDIN_RELATIVE,
+                "--session-id", claude_session_id or "unreal-session",
+                "--session-directory", "/root/.local/state/unreal-agent/sessions",
+                "--idle-timeout", str(timeout_seconds),
+            ]
+            if resume:
+                command.extend(["--resume", "--stdin-offset", str(os.path.getsize(stdin_path))])
+            volumes = {
+                daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
+                daemon_path(unreal_state): {"bind": "/root/.local/state/unreal-agent", "mode": "rw"},
             }
         else:
             image = self.image_name
@@ -536,6 +559,13 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
             res = data.get("result") or {}
             text = res.get("response") or ""
             return AgentEvent(type=AgentEventType.RESULT, text=text, raw=data)
+
+    # Eventos nativos do Unreal Agent (`unreal-agent-runner`)
+    if "Kind" in data or (data.get("type") == "error" and "message" in data and "response" not in data):
+        from painkiller.cli.unreal_run import parse_unreal_line
+        unreal_events = parse_unreal_line(line)
+        if unreal_events:
+            return unreal_events[0]
 
     # Eventos legados do Claude Code e DeepSeek Harness (`dsh`)
     kind = data.get("type")
