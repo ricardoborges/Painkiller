@@ -96,9 +96,13 @@
     description = project?.description ?? '';
     purpose = project?.purpose ?? '';
     solution = project?.solution_description ?? '';
-    harness = project?.harness ?? 'agy_superpowers';
-    const currentModel = project?.model || defaultModelFor(harness);
-    const presets = MODEL_PRESETS[harness] || [];
+    // Variável local: ler `harness` aqui o tornaria dependência do efeito,
+    // que então desfaria toda troca de harness feita pelo usuário.
+    const initialHarness: HarnessType = project?.harness ?? 'agy_superpowers';
+    harness = initialHarness;
+    previousHarness = initialHarness;
+    const currentModel = project?.model || defaultModelFor(initialHarness);
+    const presets = MODEL_PRESETS[initialHarness] || [];
     if (presets.some((p) => p.id === currentModel)) {
       model = currentModel;
       isCustomModel = false;

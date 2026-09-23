@@ -1,0 +1,1 @@
+import"../chunks/CWj6FrbW.js";import{p as e,u as o,a}from"../chunks/C-sgLFz0.js";import{g as p}from"../chunks/C1dWLYDo.js";function u(r,t){e(t,!0),o(()=>{p("/admin/templates",{replaceState:!0})}),a()}export{u as component};
