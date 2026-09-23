@@ -37,6 +37,7 @@
   let dispatchError = $state<{ id: string; message: string } | null>(null);
   let merging = $state<string | null>(null);
   let stoppingTaskId = $state<string | null>(null);
+  let abbreviatingTaskId = $state<string | null>(null);
 
   // Fila sequencial (Executar Todas)
   let isQueueRunning = $state(false);
@@ -246,9 +247,9 @@
     }
   }
 
-  async function deployTest(taskId?: string) {
+  async function deployTest(taskId: string) {
     deployingEnv = 'test';
-    if (taskId) deployingTaskId = taskId;
+    deployingTaskId = taskId;
     try {
       const record = await api.triggerDeploy(
         data.project.id,
@@ -352,6 +353,32 @@
       return null;
     } finally {
       merging = null;
+    }
+  }
+
+  async function abbreviateTests(task: Task) {
+    if (abbreviatingTaskId === task.id) return;
+    const ok = confirm(
+      'Abreviar testes: o agente será reiniciado nesta mesma branch sem escrever nem rodar testes, ' +
+        'e a suíte não será executada ao final. Você assume o teste manual e os riscos. Continuar?'
+    );
+    if (!ok) return;
+    abbreviatingTaskId = task.id;
+    try {
+      const res = await api.abbreviateTests(task.id);
+      replace({ ...task, skip_tests: true });
+      // Sem execução viva neste servidor (ex.: após um restart), a tarefa foi
+      // liberada e é despachada de novo daqui, já sem testes.
+      if (!res.restarting) {
+        await load();
+        const fresh = tasks.find((t) => t.id === task.id);
+        if (fresh && fresh.status !== 'RUNNING' && fresh.status !== 'COMPLETED') await dispatch(fresh);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Falha ao abreviar os testes.';
+      dispatchError = { id: task.id, message: msg };
+    } finally {
+      abbreviatingTaskId = null;
     }
   }
 
@@ -563,23 +590,6 @@
       </div>
 
       <div class="runner-controls">
-        <button
-          type="button"
-          class="btn btn-line btn-sm"
-          onclick={() => {
-            const target = ordered.find((t) => t.status !== 'COMPLETED') ?? ordered[ordered.length - 1];
-            deployTest(target?.id);
-          }}
-          disabled={deployingEnv === 'test' || isQueueRunning}
-          title="Provisionar / atualizar o ambiente de teste no Coolify com a branch da feature"
-        >
-          {#if deployingEnv === 'test'}
-            <span class="spinner-inline" aria-hidden="true"></span> Testando…
-          {:else}
-            <Icon name="play" size={11} /> Testar
-          {/if}
-        </button>
-
         <button
           type="button"
           class="btn btn-solid btn-sm"
@@ -807,6 +817,10 @@
                   <span class="sep" aria-hidden="true">·</span>
                   <span>{task.target_files.length} arquivo{task.target_files.length > 1 ? 's' : ''}</span>
                 {/if}
+                {#if task.skip_tests}
+                  <span class="sep" aria-hidden="true">·</span>
+                  <span class="skip-tests" title="O analista assumiu o teste manual e os riscos">testes abreviados</span>
+                {/if}
               </div>
 
               {#if task.target_files.length || task.acceptance_criteria.length}
@@ -934,6 +948,17 @@
               <Icon name="square" size={10} />
               <span>{stoppingTaskId === task.id ? 'Interrompendo…' : 'Interromper'}</span>
             </button>
+            {#if !task.skip_tests}
+              <button
+                type="button"
+                class="btn btn-line btn-sm"
+                onclick={() => abbreviateTests(task)}
+                disabled={abbreviatingTaskId === task.id || stoppingTaskId === task.id}
+                title="Reinicia o agente sem escrever nem rodar testes; você assume o teste manual e os riscos"
+              >
+                <span>{abbreviatingTaskId === task.id ? 'Abreviando…' : 'Abreviar testes'}</span>
+              </button>
+            {/if}
           {:else}
             <button
               type="button"
@@ -1669,6 +1694,12 @@
     flex-direction: column;
     gap: var(--s2);
     align-items: flex-end;
+  }
+
+  /* Peso, não cor: o acento é reservado ao agente parado à espera do analista. */
+  .skip-tests {
+    font-weight: 600;
+    color: var(--ink);
   }
 
   .btn-group {

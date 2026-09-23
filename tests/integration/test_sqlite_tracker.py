@@ -21,6 +21,18 @@ async def tracker():
 
 
 @pytest.mark.asyncio
+async def test_skip_tests_flag_persists(tracker: SQLiteIssueTracker):
+    proj = await tracker.create_project(name="App", repo_path="/tmp/app")
+    task = await tracker.create_task(project_id=proj.id, title="T", description="D")
+    assert task.skip_tests is False
+
+    updated = await tracker.set_task_skip_tests(task.id, True)
+
+    assert updated.skip_tests is True
+    assert (await tracker.get_task(task.id)).skip_tests is True
+
+
+@pytest.mark.asyncio
 async def test_project_and_task_crud(tracker: SQLiteIssueTracker):
     # 1. Create project
     proj = await tracker.create_project(

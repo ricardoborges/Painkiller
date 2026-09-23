@@ -21,7 +21,11 @@
     if (!auth.ready) return;
     if (!auth.signedIn && !isLogin) goto('/login', { replaceState: true });
     if (auth.signedIn && isLogin) goto('/projetos', { replaceState: true });
-    if (auth.signedIn && !auth.isAdmin && page.url.pathname.startsWith('/pendencias')) {
+    if (
+      auth.signedIn &&
+      !auth.isAdmin &&
+      (page.url.pathname.startsWith('/pendencias') || page.url.pathname.startsWith('/admin'))
+    ) {
       goto('/projetos', { replaceState: true });
     }
   });
@@ -42,7 +46,12 @@
   const nav = $derived([
     { href: '/projetos', label: 'Projetos', external: false },
     { href: '/gitea/', label: 'Repositórios', external: true },
-    ...(auth.isAdmin ? [{ href: '/pendencias', label: 'Pendências', external: false }] : [])
+    ...(auth.isAdmin
+      ? [
+          { href: '/pendencias', label: 'Pendências', external: false },
+          { href: '/admin/templates', label: 'Admin', external: false }
+        ]
+      : [])
   ]);
   const isFluid = $derived(page.url.pathname.includes('/analise-inicial'));
 </script>

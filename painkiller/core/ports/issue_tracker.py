@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Sequence
 from painkiller.core.domain.models import (
     Project,
+    ProjectType,
+    ProjectTemplate,
     HarnessType,
     Task,
     TaskStatus,
@@ -116,6 +118,11 @@ class IssueTrackerPort(ABC):
     @abstractmethod
     async def set_task_issue(self, task_id: str, issue_number: int, issue_url: str) -> Task:
         """Record the external issue (e.g. Gitea) that mirrors this task."""
+        pass
+
+    @abstractmethod
+    async def set_task_skip_tests(self, task_id: str, skip_tests: bool) -> Task:
+        """Record whether the analyst waived the agent's tests for this task."""
         pass
 
     @abstractmethod
@@ -243,5 +250,56 @@ class IssueTrackerPort(ABC):
         coolify_project_uuid: Optional[str] = None,
     ) -> Project:
         """Update deployment URLs and coolify references for a project."""
+        pass
+
+    @abstractmethod
+    async def create_project_template(
+        self,
+        name: str,
+        project_type: ProjectType,
+        description: str = "",
+        coolify_compatible: bool = True,
+        skill_path: Optional[str] = None,
+        skill_filename: Optional[str] = None,
+        scaffold_path: Optional[str] = None,
+        scaffold_filename: Optional[str] = None,
+        prompt: str = "",
+        is_active: bool = True,
+        template_id: Optional[str] = None,
+    ) -> ProjectTemplate:
+        """Create a new reusable project template."""
+        pass
+
+    @abstractmethod
+    async def list_project_templates(self, active_only: bool = False) -> list[ProjectTemplate]:
+        """List project templates, optionally only active ones."""
+        pass
+
+    @abstractmethod
+    async def get_project_template(self, template_id: str) -> Optional[ProjectTemplate]:
+        """Retrieve a project template by ID."""
+        pass
+
+    @abstractmethod
+    async def update_project_template(
+        self,
+        template_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        project_type: Optional[ProjectType] = None,
+        coolify_compatible: Optional[bool] = None,
+        skill_path: Optional[str] = None,
+        skill_filename: Optional[str] = None,
+        scaffold_path: Optional[str] = None,
+        scaffold_filename: Optional[str] = None,
+        prompt: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> Optional[ProjectTemplate]:
+        """Update fields of an existing project template."""
+        pass
+
+    @abstractmethod
+    async def delete_project_template(self, template_id: str) -> bool:
+        """Delete a project template by ID."""
         pass
 

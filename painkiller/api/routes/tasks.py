@@ -47,6 +47,17 @@ async def stop_task(task_id: str, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/{task_id}/abbreviate-tests")
+async def abbreviate_tests(task_id: str, request: Request):
+    """The analyst waives the agent's tests; a live run restarts without them."""
+    orchestrator = request.app.state.orchestrator
+    try:
+        restarting = await orchestrator.abbreviate_tests(task_id)
+        return {"task_id": task_id, "skip_tests": True, "restarting": restarting}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # Chaves onde o stream-json costuma pôr o alvo de uma ferramenta (comando,
 # arquivo). O formato do `agy` não é contrato estável: sem acerto, fica só o nome.
 _TOOL_DETAIL_KEYS = (

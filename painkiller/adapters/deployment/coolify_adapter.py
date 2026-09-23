@@ -330,8 +330,10 @@ class CoolifyAdapter(DeploymentPort):
                             updated_at=now,
                         )
                 else:
-                    # Atualiza a branch e configurações caso a aplicação já existisse
-                    await client.patch(
+                    # Atualiza a branch e configurações caso a aplicação já existisse.
+                    # Uma recusa aqui deixaria o deploy rodar na branch anterior
+                    # sem aviso, então vira falha explícita.
+                    patch_resp = await client.patch(
                         f"{self.api_url}/api/v1/applications/{app_uuid}",
                         headers=self._headers(),
                         json={
@@ -341,6 +343,23 @@ class CoolifyAdapter(DeploymentPort):
                             "is_static": is_static,
                         },
                     )
+                    if not patch_resp.is_success:
+                        error_text = patch_resp.text
+                        logger.error(f"Erro ao atualizar aplicação no Coolify: {error_text}")
+                        return DeploymentRecord(
+                            id=deployment_id,
+                            project_id=project.id,
+                            task_id=task_id,
+                            session_id=session_id,
+                            environment=environment,
+                            branch=branch,
+                            status=DeploymentStatus.FAILED,
+                            coolify_app_uuid=app_uuid,
+                            url=fqdn,
+                            logs=f"Falha ao apontar a aplicação do Coolify para a branch {branch}: {error_text}",
+                            created_at=now,
+                            updated_at=now,
+                        )
 
                 # 4. Disparar Deploy no Coolify
                 deploy_resp = await client.post(

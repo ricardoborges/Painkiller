@@ -59,7 +59,7 @@
   --s8: 4rem;
   --s9: 6rem;
 
-  --gutter: clamp(1.25rem, 4vw, 3.5rem);
+  --gutter: clamp(1rem, 1.5vw, 2rem);
   --measure: 62ch;
 
   /* Movimento */
@@ -197,14 +197,16 @@ svg {
 /* ---------- Grade ---------- */
 
 .shell {
-  max-width: 1280px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
   padding-inline: var(--gutter);
-  transition: max-width var(--base) var(--ease);
+  box-sizing: border-box;
 }
 
 .shell.fluid {
-  max-width: 1560px;
+  width: 100%;
+  max-width: 100%;
 }
 
 /* Cabeçalho de seção assimétrico: conteúdo à esquerda, ação à direita */

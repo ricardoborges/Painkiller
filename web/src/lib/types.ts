@@ -19,6 +19,75 @@ export type HarnessType = 'agy_superpowers' | 'deepseek_superpowers' | 'maki_sup
 /** Harnesses que autenticam com a chave DeepSeek (dsh e maki compartilham a mesma). */
 export const DEEPSEEK_KEY_HARNESSES: readonly HarnessType[] = ['deepseek_superpowers', 'maki_superpowers'];
 
+export const PROJECT_TYPES = [
+  'api',
+  'web_static',
+  'web_fullstack',
+  'desktop',
+  'mobile_crossplatform',
+  'android_native'
+] as const;
+
+export type ProjectType = (typeof PROJECT_TYPES)[number];
+
+export const PROJECT_TYPE_META: Record<
+  ProjectType,
+  { label: string; coolifyDefault: boolean; category: 'web' | 'other'; description: string }
+> = {
+  api: {
+    label: 'API / Backend',
+    coolifyDefault: true,
+    category: 'web',
+    description: 'Serviço HTTP ou REST conteinerizado, compatível com Coolify'
+  },
+  web_static: {
+    label: 'Web Estática',
+    coolifyDefault: true,
+    category: 'web',
+    description: 'Site HTML/CSS/JS ou SPA estática hospedada via Nginx no Coolify'
+  },
+  web_fullstack: {
+    label: 'Web Fullstack',
+    coolifyDefault: true,
+    category: 'web',
+    description: 'Aplicação web completa com SSR/backend (Next.js, SvelteKit, etc.) no Coolify'
+  },
+  desktop: {
+    label: 'Desktop',
+    coolifyDefault: false,
+    category: 'other',
+    description: 'Aplicação para Windows/Linux/macOS (Electron, Tauri, etc.). Não usa deploy Coolify'
+  },
+  mobile_crossplatform: {
+    label: 'Mobile Cross-platform',
+    coolifyDefault: false,
+    category: 'other',
+    description: 'App mobile multi-plataforma (Flutter, React Native). Não usa deploy Coolify'
+  },
+  android_native: {
+    label: 'Android Nativo',
+    coolifyDefault: false,
+    category: 'other',
+    description: 'App nativo Android com Kotlin/Compose. Suporte planejado para builds locais/CI'
+  }
+};
+
+export interface ProjectTemplate {
+  id: string;
+  name: string;
+  description: string;
+  project_type: ProjectType;
+  coolify_compatible: boolean;
+  skill_path?: string | null;
+  skill_filename?: string | null;
+  scaffold_path?: string | null;
+  scaffold_filename?: string | null;
+  prompt: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -87,6 +156,8 @@ export interface Task {
   /** Issue espelhada no Gitea; nula enquanto o espelho não a criou. */
   issue_number?: number | null;
   issue_url?: string | null;
+  /** "Abreviar testes": o analista assume o teste manual e os riscos. */
+  skip_tests?: boolean;
   created_at: string;
   updated_at: string;
 }

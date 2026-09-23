@@ -57,6 +57,9 @@ class Task(BaseModel):
     #: Issue espelhada no Gitea (número no repositório do projeto e link web).
     issue_number: Optional[int] = None
     issue_url: Optional[str] = None
+    #: "Abreviar testes": o analista assume o teste manual; o agente não escreve
+    #: nem roda testes e o orquestrador não executa a suíte ao final.
+    skip_tests: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -83,6 +86,49 @@ class Task(BaseModel):
     def mark_failed(self) -> None:
         self.status = TaskStatus.FAILED
         self.updated_at = datetime.now(timezone.utc)
+
+
+class ProjectType(str, Enum):
+    """Categorias de projetos suportadas pelo Painkiller."""
+    API = "api"
+    WEB_STATIC = "web_static"
+    WEB_FULLSTACK = "web_fullstack"
+    DESKTOP = "desktop"
+    MOBILE_CROSSPLATFORM = "mobile_crossplatform"
+    ANDROID_NATIVE = "android_native"
+
+
+COOLIFY_COMPATIBLE_TYPES: set[ProjectType] = {
+    ProjectType.API,
+    ProjectType.WEB_STATIC,
+    ProjectType.WEB_FULLSTACK,
+}
+
+
+def is_coolify_compatible(project_type: ProjectType | str) -> bool:
+    """Verifica se o tipo de projeto pode ser implantado no Coolify."""
+    try:
+        t = ProjectType(project_type)
+        return t in COOLIFY_COMPATIBLE_TYPES
+    except ValueError:
+        return False
+
+
+class ProjectTemplate(BaseModel):
+    """Template reutilizável para inicialização de projetos padronizados."""
+    id: str
+    name: str
+    description: str = ""
+    project_type: ProjectType = ProjectType.WEB_FULLSTACK
+    coolify_compatible: bool = True
+    skill_path: Optional[str] = None
+    skill_filename: Optional[str] = None
+    scaffold_path: Optional[str] = None
+    scaffold_filename: Optional[str] = None
+    prompt: str = ""
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class HarnessType(str, Enum):

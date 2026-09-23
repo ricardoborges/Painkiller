@@ -37,27 +37,25 @@ class DeploymentService:
 
         # Resolução da branch:
         # Para TESTE:
-        # Usa prioritariamente a branch da feature (tarefa específica ou a tarefa mais recente do projeto).
+        # A branch da tarefa indicada ou, sem ela, a da última tarefa concluída.
+        # Só a conclusão faz push da feature/ para o Gitea: uma tarefa em
+        # execução (ou órfã após um restart) tem a branch só no disco, e o
+        # Coolify falha com "Remote branch ... not found". Por isso uma tarefa
+        # indicada que não esteja concluída cai na escolha automática. Sem
+        # tarefa concluída, a branch padrão.
         # Para PRODUÇÃO:
         # Sempre usa a default_branch (main).
         branch = project.default_branch or "main"
         if environment == EnvironmentType.TEST:
-            if task_id:
-                task = await self.tracker.get_task(task_id)
-                if task:
-                    branch = task.assigned_branch or f"feature/{task.id}"
+            task = await self.tracker.get_task(task_id) if task_id else None
+            if task and task.status == TaskStatus.COMPLETED:
+                branch = task.assigned_branch or f"feature/{task.id}"
             else:
+                task_id = None
                 tasks = await self.tracker.list_tasks(project_id, session_id=session_id)
-                feature_tasks = [
-                    t for t in tasks
-                    if t.assigned_branch or t.status in (TaskStatus.COMPLETED, TaskStatus.IN_REVIEW, TaskStatus.RUNNING, TaskStatus.READY)
-                ]
-                if feature_tasks:
-                    chosen_task = feature_tasks[-1]
-                    branch = chosen_task.assigned_branch or f"feature/{chosen_task.id}"
-                    task_id = chosen_task.id
-                elif tasks:
-                    chosen_task = tasks[0]
+                completed = [t for t in tasks if t.status == TaskStatus.COMPLETED]
+                if completed:
+                    chosen_task = completed[-1]
                     branch = chosen_task.assigned_branch or f"feature/{chosen_task.id}"
                     task_id = chosen_task.id
 

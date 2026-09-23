@@ -41,6 +41,7 @@ from painkiller.api.routes.usage import router as usage_router
 from painkiller.api.routes.sessions import router as sessions_router
 from painkiller.api.routes.deployments import router as deployments_router
 from painkiller.api.routes.gitea_proxy import router as gitea_proxy_router
+from painkiller.api.routes.admin_templates import router as admin_templates_router, public_router as templates_router
 
 
 logger = logging.getLogger(__name__)
@@ -173,6 +174,8 @@ def create_app(
     app.include_router(deployments_router, dependencies=signed_in)
     app.include_router(usage_router, dependencies=signed_in)
     app.include_router(project_usage_router, dependencies=signed_in)
+    app.include_router(admin_templates_router, dependencies=signed_in)
+    app.include_router(templates_router, dependencies=signed_in)
 
     @app.get("/api/health")
     async def health_check():

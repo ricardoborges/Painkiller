@@ -1,6 +1,12 @@
 <script lang="ts">
   import { api, baseName } from '$lib/api';
-  import { DEEPSEEK_KEY_HARNESSES, type HarnessType, type Project } from '$lib/types';
+  import {
+    DEEPSEEK_KEY_HARNESSES,
+    PROJECT_TYPE_META,
+    type HarnessType,
+    type Project,
+    type ProjectTemplate
+  } from '$lib/types';
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
 
@@ -59,9 +65,33 @@
   let isCustomModel = $state(false);
   let customModelText = $state('');
 
+  let templates = $state<ProjectTemplate[]>([]);
+  let selectedTemplateId = $state<string>('');
+  const selectedTemplate = $derived(templates.find((t) => t.id === selectedTemplateId) ?? null);
+
+  async function loadTemplates() {
+    try {
+      templates = await api.listActiveTemplates();
+    } catch {
+      templates = [];
+    }
+  }
+
+  function onTemplateSelect(id: string) {
+    selectedTemplateId = id;
+    const t = templates.find((x) => x.id === id);
+    if (!t) return;
+    if (!description && t.description) description = t.description;
+    if (!solution && t.prompt) solution = t.prompt;
+  }
+
   // Repopula sempre que o diálogo abre
   $effect(() => {
     if (!open) return;
+    if (!project) {
+      loadTemplates();
+      selectedTemplateId = '';
+    }
     name = project?.name ?? '';
     description = project?.description ?? '';
     purpose = project?.purpose ?? '';
@@ -181,6 +211,31 @@
 <Modal bind:open title={editing ? 'Editar projeto' : 'Novo projeto'}>
   {#snippet body()}
     <form id="project-form" onsubmit={save} novalidate>
+      {#if !editing && templates.length > 0}
+        <div class="field">
+          <label for="ptpl">Template de projeto (opcional)</label>
+          <select
+            id="ptpl"
+            class="input"
+            value={selectedTemplateId}
+            onchange={(e) => onTemplateSelect(e.currentTarget.value)}
+          >
+            <option value="">Nenhum (projeto em branco)</option>
+            {#each templates as t}
+              <option value={t.id}>
+                {t.name} ({PROJECT_TYPE_META[t.project_type]?.label || t.project_type})
+              </option>
+            {/each}
+          </select>
+          {#if selectedTemplate}
+            <span class="help mono">
+              {selectedTemplate.description || 'Template arquitetural selecionado'}
+              {#if selectedTemplate.coolify_compatible}· Compatível com Coolify{/if}
+            </span>
+          {/if}
+        </div>
+      {/if}
+
       <div class="field">
         <label for="pname">Nome <span class="req">*</span></label>
         <input

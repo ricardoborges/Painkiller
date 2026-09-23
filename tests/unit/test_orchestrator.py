@@ -224,3 +224,66 @@ async def test_stop_during_dispatch_reports_interruption_not_exit_code(mock_trac
     assert len(failed) == 1  # só o _dispatch registra; o stop não duplica
     assert "interrompida pelo usuário" in failed[0].kwargs["error"]
     assert "137" not in failed[0].kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_abbreviate_tests_restarts_live_run_without_tests(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo")
+    task = Task(id="t1", project_id="p1", title="T", description="D")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+
+    async def set_skip(task_id, skip):
+        task.skip_tests = skip
+        return task
+
+    mock_tracker.set_task_skip_tests.side_effect = set_skip
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    runs = []
+
+    async def run(*args, **kwargs):
+        runs.append(args[2])
+        if len(runs) == 1:
+            assert await orchestrator.abbreviate_tests("t1") is True
+            return ExecutionResult(exit_code=137, logs="killed")
+        return ExecutionResult(exit_code=0, logs="ok")
+
+    mock_sandbox.run_task.side_effect = run
+    await orchestrator.dispatch_task("t1")
+
+    assert len(runs) == 2
+    assert "PRIORIDADE MÁXIMA" not in runs[0]
+    # No topo: a spec e o plano que o agente lê depois não podem se sobrepor.
+    assert runs[1].index("PRIORIDADE MÁXIMA") < runs[1].index("## Descrição")
+    assert "prevalece sobre" in runs[1]
+    assert "Execução anterior interrompida" in runs[1]
+    mock_sandbox.stop_task.assert_awaited_once_with("t1")
+    mock_git.run_tests.assert_not_called()
+    statuses = [c.args[1] for c in mock_tracker.update_task_status.call_args_list]
+    assert TaskStatus.FAILED not in statuses  # o reinício não registra falha
+    assert statuses[-1] == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_abbreviate_tests_on_orphaned_task_frees_it_for_redispatch(mock_tracker, mock_sandbox, mock_git):
+    task = Task(id="t1", project_id="p1", title="T", description="D", status=TaskStatus.RUNNING)
+    mock_tracker.get_task.return_value = task
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    assert await orchestrator.abbreviate_tests("t1") is False
+
+    mock_tracker.set_task_skip_tests.assert_awaited_once_with("t1", True)
+    assert mock_tracker.update_task_status.call_args.args == ("t1", TaskStatus.FAILED)
+
+
+@pytest.mark.asyncio
+async def test_abbreviate_tests_refuses_completed_task(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(
+        id="t1", project_id="p1", title="T", description="D", status=TaskStatus.COMPLETED
+    )
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    with pytest.raises(RuntimeError):
+        await orchestrator.abbreviate_tests("t1")
+    mock_tracker.set_task_skip_tests.assert_not_called()

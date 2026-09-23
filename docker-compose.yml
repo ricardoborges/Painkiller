@@ -214,8 +214,15 @@ services:
     container_name: painkiller-coolify
     restart: unless-stopped
     depends_on:
-      - coolify-db
-      - coolify-redis
+      coolify-db:
+        condition: service_started
+      coolify-redis:
+        condition: service_started
+      coolify-ssh-init:
+        condition: service_completed_successfully
+    networks:
+      default:
+      coolify-ssh:
     ports:
       - "${COOLIFY_PORT:-8008}:8080"
     environment:
@@ -233,6 +240,40 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - coolify-data:/data/coolify
+      # O seeder do Coolify importa a chave do servidor "localhost" daqui a cada
+      # boot. Sem ela, a onboarding quebra com "getPublicKey() on null".
+      - coolify-ssh:/var/www/html/storage/app/ssh
+
+  # Gera, uma vez por maquina, a chave SSH do Coolify para o coolify-host. O
+  # nome id.root@host.docker.internal e o que o seeder procura; ao importar, o
+  # Coolify o renomeia para ssh_key@<uuid>. Por isso a authorized_keys e a
+  # fonte de verdade: existindo, nada e gerado (senao um restart trocaria a
+  # chave que o banco do Coolify ja guarda). A chave nunca vai para o git.
+  coolify-ssh-init:
+    image: alpine:3.20
+    restart: "no"
+    volumes:
+      - coolify-ssh:/ssh
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /ssh/keys /ssh/mux
+        if [ ! -s /ssh/authorized_keys ]; then
+          apk add --no-cache openssh-keygen >/dev/null
+          key=$$(find /ssh/keys -type f ! -name '*.lock' ! -name '*.pub' | head -n1)
+          if [ -z "$$key" ]; then
+            key=/ssh/keys/id.root@host.docker.internal
+            ssh-keygen -q -t ed25519 -N '' -C coolify@painkiller -f "$$key"
+            rm -f "$$key.pub"
+          fi
+          ssh-keygen -y -f "$$key" > /ssh/authorized_keys
+        fi
+        chown -R 9999:9999 /ssh
+        chmod 700 /ssh /ssh/keys /ssh/mux
+        find /ssh/keys -type f ! -name '*.lock' -exec chmod 600 {} +
+        chmod 644 /ssh/authorized_keys
 
   coolify-db:
     image: postgres:16-alpine
@@ -259,10 +300,27 @@ services:
       dockerfile: docker/coolify-host.Dockerfile
     container_name: painkiller-coolify-host
     restart: unless-stopped
+    depends_on:
+      coolify-ssh-init:
+        condition: service_completed_successfully
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - coolify-ssh:/coolify-ssh:ro
+    command:
+      - sh
+      - -c
+      - install -m 600 /coolify-ssh/authorized_keys /root/.ssh/authorized_keys && exec /usr/sbin/sshd -D -e
+    networks:
+      default:
+      # O Coolify cria o servidor "localhost" em host.docker.internal:22, que no
+      # Docker Desktop e o Windows (sem SSH). Nesta rede, so vista pelo Coolify,
+      # o nome resolve para esta ponte.
+      coolify-ssh:
+        aliases:
+          - host.docker.internal
 
 networks:
+  coolify-ssh:
   # A rede "coolify" pertence ao Coolify: ele a cria (sem labels do compose)
   # sempre que ela falta. Declara-la como gerenciada pelo compose gera o erro
   # "has incorrect label com.docker.compose.network". Externa, o compose so a
@@ -276,6 +334,7 @@ volumes:
   painkiller-db:
   gitea-data:
   coolify-data:
+  coolify-ssh:
   coolify-db-data:
   coolify-redis-data:
 

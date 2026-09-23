@@ -18,7 +18,9 @@ import type {
   User,
   DeploymentRecord,
   EnvironmentType,
-  EnvironmentStatusResponse
+  EnvironmentStatusResponse,
+  ProjectTemplate,
+  ProjectType
 } from './types';
 
 const TOKEN_KEY = 'pk_token';
@@ -260,6 +262,17 @@ export const api = {
   stopTask: (id: string) =>
     request<{ status: string; task_id: string }>(`/tasks/${id}/stop`, { method: 'POST' }),
 
+  /**
+   * O analista dispensa os testes do agente. Com a execução viva, o servidor
+   * reinicia o agente sem testes e a requisição de dispatch já aberta recebe o
+   * desfecho; `restarting: false` significa que cabe à UI despachar de novo.
+   */
+  abbreviateTests: (id: string) =>
+    request<{ task_id: string; skip_tests: boolean; restarting: boolean }>(
+      `/tasks/${id}/abbreviate-tests`,
+      { method: 'POST' }
+    ),
+
   getClarification: (taskId: string) =>
     request<Clarification | { status: 'none' }>(`/tasks/${taskId}/clarification`),
 
@@ -324,7 +337,67 @@ export const api = {
     request<EnvironmentStatusResponse>(`/projects/${projectId}/deployments/status`),
 
   getDeployment: (deploymentId: string) =>
-    request<DeploymentRecord>(`/deployments/${deploymentId}`)
+    request<DeploymentRecord>(`/deployments/${deploymentId}`),
+
+  /* ---- templates (admin & public) ---- */
+  listAdminTemplates: () => request<ProjectTemplate[]>('/admin/templates'),
+  createAdminTemplate: (data: {
+    name: string;
+    description?: string;
+    project_type: ProjectType;
+    coolify_compatible?: boolean;
+    prompt?: string;
+    is_active?: boolean;
+  }) =>
+    request<ProjectTemplate>('/admin/templates', {
+      method: 'POST',
+      ...json(data)
+    }),
+  getAdminTemplate: (id: string) => request<ProjectTemplate>(`/admin/templates/${id}`),
+  updateAdminTemplate: (
+    id: string,
+    data: {
+      name?: string;
+      description?: string;
+      project_type?: ProjectType;
+      coolify_compatible?: boolean;
+      prompt?: string;
+      is_active?: boolean;
+    }
+  ) =>
+    request<ProjectTemplate>(`/admin/templates/${id}`, {
+      method: 'PUT',
+      ...json(data)
+    }),
+  deleteAdminTemplate: (id: string) =>
+    request<{ deleted: boolean }>(`/admin/templates/${id}`, {
+      method: 'DELETE'
+    }),
+  uploadTemplateSkill: (templateId: string, file: File) => {
+    const data = new FormData();
+    data.append('file', file);
+    return request<ProjectTemplate>(`/admin/templates/${templateId}/skill`, {
+      method: 'POST',
+      body: data
+    });
+  },
+  deleteTemplateSkill: (templateId: string) =>
+    request<ProjectTemplate>(`/admin/templates/${templateId}/skill`, {
+      method: 'DELETE'
+    }),
+  uploadTemplateScaffold: (templateId: string, file: File) => {
+    const data = new FormData();
+    data.append('file', file);
+    return request<ProjectTemplate>(`/admin/templates/${templateId}/scaffold`, {
+      method: 'POST',
+      body: data
+    });
+  },
+  deleteTemplateScaffold: (templateId: string) =>
+    request<ProjectTemplate>(`/admin/templates/${templateId}/scaffold`, {
+      method: 'DELETE'
+    }),
+  listActiveTemplates: () => request<ProjectTemplate[]>('/templates')
 };
 
 /**

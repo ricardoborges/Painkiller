@@ -67,6 +67,8 @@ class PainkillerOrchestrator:
         # Tarefas cuja interrupção foi pedida durante uma execução deste processo:
         # o _dispatch registra a falha como interrupção, não como código 137.
         self._stop_requested: set[str] = set()
+        # Tarefas cujo contêiner foi morto por "Abreviar testes" e devem reiniciar.
+        self._restart_requested: set[str] = set()
 
     def _note(self, task_id: str, text: str) -> None:
         """Tell whoever watches the task what the orchestrator itself is doing."""
@@ -90,16 +92,27 @@ class PainkillerOrchestrator:
                     raise RuntimeError(f"Cannot run task {task.id}: dependency {dep_id} is not completed")
 
         self._stop_requested.discard(task.id)
+        self._restart_requested.discard(task.id)
         self.activity.start(task.id)
         try:
-            return await self._dispatch(task, project)
+            updated = await self._dispatch(task, project)
+            # "Abreviar testes" mata o contêiner e pede um reinício: roda de novo
+            # aqui mesmo, para que a requisição aberta pela UI receba o desfecho final.
+            while updated is None:
+                self._restart_requested.discard(task.id)
+                task = await self.tracker.get_task(task.id) or task
+                self._note(task.id, "Reiniciando o agente sem testes, a pedido do analista")
+                updated = await self._dispatch(task, project, resuming=True)
+            return updated
         finally:
             self.activity.finish(task.id)
             self._stop_requested.discard(task.id)
+            self._restart_requested.discard(task.id)
 
-    async def _dispatch(self, task: Task, project: Project) -> Task:
+    async def _dispatch(self, task: Task, project: Project, resuming: bool = False) -> Optional[Task]:
+        """Run the task once; None means the run was killed to be restarted."""
         # Uma nova tentativa roda na mesma branch, por cima do que ficou da anterior.
-        retrying = task.status == TaskStatus.FAILED
+        retrying = resuming or task.status == TaskStatus.FAILED
         # Ensure feature branch
         branch_name = task.assigned_branch or f"feature/{task.id}"
         await self.git.create_branch(project.repo_path, branch_name, project.default_branch)
@@ -131,6 +144,13 @@ class PainkillerOrchestrator:
         self._note(task.id, f"Agente encerrou com código {result.exit_code}")
         await self._record_usage(task, result)
 
+        if task.id in self._restart_requested and result.exit_code not in (0, 42):
+            return None
+
+        # O analista pode ter abreviado os testes enquanto o agente rodava.
+        fresh = await self.tracker.get_task(task.id)
+        skip_tests = bool(task.skip_tests or (fresh is not None and fresh.skip_tests))
+
         # Handle exit codes
         if result.exit_code == 42 and result.clarification:
             # Paused for clarification
@@ -150,9 +170,12 @@ class PainkillerOrchestrator:
                 comment=f"🤖 Paused for clarification: {result.clarification.question}",
             )
         elif result.exit_code == 0:
-            # Run test verification
-            self._note(task.id, "Executando a suíte de testes do repositório")
-            test_code, test_out = await self.git.run_tests(project.repo_path)
+            if skip_tests:
+                self._note(task.id, "Testes abreviados pelo analista: suíte não executada")
+                test_code, test_out = 0, ""
+            else:
+                self._note(task.id, "Executando a suíte de testes do repositório")
+                test_code, test_out = await self.git.run_tests(project.repo_path)
             if test_code in (0, 5):
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
                 try:
@@ -175,7 +198,9 @@ class PainkillerOrchestrator:
 
                     await self.tracker.update_task_status(task.id, TaskStatus.COMPLETED)
                     comment = f"✅ Tarefa concluída, testada e incorporada na {project.default_branch}."
-                    if test_code == 5 or "Sem testes" in test_out:
+                    if skip_tests:
+                        comment += " Testes abreviados pelo analista: o teste manual fica por conta dele."
+                    elif test_code == 5 or "Sem testes" in test_out:
                         comment += " (Sem testes coletados no repositório)"
                     await self.tracker.add_comment(
                         task.id,
@@ -268,10 +293,10 @@ class PainkillerOrchestrator:
         typically after an API restart — nothing would ever leave RUNNING, so
         the status is set here.
         """
-        run = self.activity.get(task_id)
-        live = run is not None and not run.done
+        live = self._is_live(task_id)
         if live:
             self._stop_requested.add(task_id)
+            self._restart_requested.discard(task_id)
         self._note(task_id, "Interrompendo execução da tarefa a pedido do usuário")
         await self.sandbox.stop_task(task_id)
         if live:
@@ -289,6 +314,44 @@ class PainkillerOrchestrator:
             error=message,
         )
         await self.tracker.add_comment(task.id, author="system", comment=message)
+
+    def _is_live(self, task_id: str) -> bool:
+        """Whether this process is running a dispatch of the task right now."""
+        run = self.activity.get(task_id)
+        return run is not None and not run.done
+
+    async def abbreviate_tests(self, task_id: str) -> bool:
+        """Waive the agent's tests: the analyst takes on manual testing and its risks.
+
+        The agent runs one-shot, so there is no way to tell it mid-turn. A live
+        run is killed and restarted on the same branch with the no-tests prompt
+        (returns True); otherwise the flag just applies to the next dispatch.
+        """
+        task = await self.tracker.get_task(task_id)
+        if task is None:
+            raise ValueError(f"Task {task_id} not found")
+        if task.status == TaskStatus.COMPLETED:
+            raise RuntimeError("A tarefa já foi concluída.")
+
+        if not task.skip_tests:
+            await self.tracker.set_task_skip_tests(task_id, True)
+            await self.tracker.add_comment(
+                task_id,
+                author="analyst",
+                comment="⏩ Testes abreviados: o analista assume o teste manual e os riscos.",
+            )
+
+        if task_id in self._stop_requested:
+            return False
+        if not self._is_live(task_id):
+            # Órfã de um restart: libera a tarefa para a UI despachá-la de novo.
+            if task.status == TaskStatus.RUNNING:
+                await self.stop_task(task_id)
+            return False
+        self._restart_requested.add(task_id)
+        self._note(task_id, "Testes abreviados pelo analista: reiniciando o agente sem testes")
+        await self.sandbox.stop_task(task_id)
+        return True
 
     @staticmethod
     def _describe_failure(result: ExecutionResult, timeout: int, branch: str) -> str:
@@ -309,8 +372,22 @@ class PainkillerOrchestrator:
     def _build_task_instructions(self, task: Task, project: Project, retrying: bool = False) -> str:
         instructions = [
             f"# Tarefa: {task.title}",
-            f"\n## Descrição:\n{task.description}",
         ]
+        # No topo e com precedência explícita: a spec e o plano do superpowers
+        # mandam fazer TDD e verificar tudo, e o agente os lê no meio da tarefa.
+        if task.skip_tests:
+            instructions.append(
+                "\n## PRIORIDADE MÁXIMA: testes abreviados pelo analista\n"
+                "O analista vai testar manualmente e assume os riscos. Esta instrução prevalece sobre "
+                "a spec, o plano, os critérios de aceitação e qualquer skill (inclusive "
+                "test-driven-development e verification-before-completion):\n"
+                "- NÃO leia, crie, edite nem execute arquivos de teste (tests/, test_*, *.test.*, *.spec.*).\n"
+                "- NÃO rode nada para conferir comportamento: nada de pytest, npm test, navegador, "
+                "`node -e`, `python -c` ou scripts de verificação.\n"
+                "- Critérios de aceitação que falam de testes ou verificação ficam a cargo do analista.\n"
+                "- Leia só o necessário para implementar, implemente, faça o commit e encerre."
+            )
+        instructions.append(f"\n## Descrição:\n{task.description}")
         if retrying:
             instructions.append(
                 "\n## Execução anterior interrompida:\n"
@@ -328,12 +405,23 @@ class PainkillerOrchestrator:
             for c in task.acceptance_criteria:
                 instructions.append(f"- {c}")
 
+        if task.skip_tests:
+            guidelines = (
+                "\n## Diretrizes de Execução:\n"
+                "1. Não carregue skills de teste nem de verificação; se seguir um plano, pule os passos de teste.\n"
+                "2. Implemente o código solicitado com qualidade, sem testes (veja PRIORIDADE MÁXIMA acima).\n"
+                "3. Faça commit de suas alterações no repositório git local com uma mensagem descritiva (ex: feat: ... ou fix: ...).\n"
+            )
+        else:
+            guidelines = (
+                "\n## Diretrizes de Execução:\n"
+                "1. Utilize as skills e boas práticas do plugin Superpowers disponíveis (como test-driven-development e executing-plans).\n"
+                "2. Implemente o código solicitado com qualidade e crie ou execute testes quando aplicável.\n"
+                "3. Faça commit de suas alterações no repositório git local com uma mensagem descritiva (ex: feat: ... ou fix: ...).\n"
+            )
         instructions.append(
-            "\n## Diretrizes de Execução:\n"
-            "1. Utilize as skills e boas práticas do plugin Superpowers disponíveis (como test-driven-development e executing-plans).\n"
-            "2. Implemente o código solicitado com qualidade e crie ou execute testes quando aplicável.\n"
-            "3. Faça commit de suas alterações no repositório git local com uma mensagem descritiva (ex: feat: ... ou fix: ...).\n"
-            "\n## Protocolo de Dúvidas:\n"
+            guidelines
+            + "\n## Protocolo de Dúvidas:\n"
             "Se você encontrar qualquer ambiguidade crítica ou precisar de esclarecimento do analista, "
             "NÃO adivinhe. Execute o comando no shell:\n"
             "painkiller ask \"<sua dúvida>\" --context \"<arquivo e linha>\"\n"
@@ -353,6 +441,13 @@ class PainkillerOrchestrator:
             raise ValueError(f"Project {task.project_id} not found")
 
         branch_name = task.assigned_branch or f"feature/{task.id}"
+        # A branch da tarefa continua viva no Gitea após o merge: o botão
+        # "Testar" de cada tarefa concluída faz deploy dela no Coolify.
+        try:
+            await self.git.push(project.repo_path, branch_name)
+        except Exception as e:
+            logger.debug(f"Push of {branch_name} before merge skipped or failed: {e}")
+
         code, out = await self.git.merge_branch(
             project.repo_path,
             source_branch=branch_name,

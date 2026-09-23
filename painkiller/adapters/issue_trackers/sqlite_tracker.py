@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Sequence, Any
 from sqlalchemy import (
+    Boolean,
     Column,
     String,
     DateTime,
@@ -14,12 +15,15 @@ from sqlalchemy import (
     Enum as SQLEnum,
     select,
     update,
+    delete,
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 
 from painkiller.core.domain.models import (
     Project,
+    ProjectType,
+    ProjectTemplate,
     HarnessType,
     Task,
     TaskStatus,
@@ -98,6 +102,7 @@ class TaskRecord(Base):
     error = Column(Text, nullable=True)
     issue_number = Column(Integer, nullable=True)
     issue_url = Column(String, nullable=True)
+    skip_tests = Column(Boolean, nullable=True, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -203,6 +208,24 @@ class DeploymentRecordRow(Base):
     url = Column(String, nullable=True)
     logs = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ProjectTemplateRecord(Base):
+    __tablename__ = "project_templates"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, default="")
+    project_type = Column(SQLEnum(ProjectType), nullable=False, default=ProjectType.WEB_FULLSTACK)
+    coolify_compatible = Column(Boolean, default=True, nullable=False)
+    skill_path = Column(String, nullable=True)
+    skill_filename = Column(String, nullable=True)
+    scaffold_path = Column(String, nullable=True)
+    scaffold_filename = Column(String, nullable=True)
+    prompt = Column(Text, default="")
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -547,6 +570,17 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             res = await session.execute(select(TaskRecord).where(TaskRecord.id == task_id))
             return self._to_task_domain(res.scalar_one())
 
+    async def set_task_skip_tests(self, task_id: str, skip_tests: bool) -> Task:
+        async with self.session_factory() as session:
+            await session.execute(
+                update(TaskRecord)
+                .where(TaskRecord.id == task_id)
+                .values(skip_tests=skip_tests, updated_at=datetime.now(timezone.utc))
+            )
+            await session.commit()
+            res = await session.execute(select(TaskRecord).where(TaskRecord.id == task_id))
+            return self._to_task_domain(res.scalar_one())
+
     async def add_comment(self, task_id: str, author: str, comment: str) -> None:
         now = datetime.now(timezone.utc)
         record = TaskCommentRecord(
@@ -660,6 +694,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             error=record.error,
             issue_number=getattr(record, "issue_number", None),
             issue_url=getattr(record, "issue_url", None),
+            skip_tests=bool(getattr(record, "skip_tests", False)),
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
@@ -1123,4 +1158,142 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
         if not project:
             raise ValueError(f"Project {project_id} not found")
         return project
+
+    @staticmethod
+    def _to_template_domain(row: ProjectTemplateRecord) -> ProjectTemplate:
+        ptype = row.project_type
+        if isinstance(ptype, str):
+            try:
+                ptype = ProjectType(ptype)
+            except ValueError:
+                ptype = ProjectType.WEB_FULLSTACK
+        return ProjectTemplate(
+            id=row.id,
+            name=row.name,
+            description=row.description or "",
+            project_type=ptype,
+            coolify_compatible=bool(row.coolify_compatible),
+            skill_path=row.skill_path,
+            skill_filename=row.skill_filename,
+            scaffold_path=row.scaffold_path,
+            scaffold_filename=row.scaffold_filename,
+            prompt=row.prompt or "",
+            is_active=bool(row.is_active),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    async def create_project_template(
+        self,
+        name: str,
+        project_type: ProjectType,
+        description: str = "",
+        coolify_compatible: bool = True,
+        skill_path: Optional[str] = None,
+        skill_filename: Optional[str] = None,
+        scaffold_path: Optional[str] = None,
+        scaffold_filename: Optional[str] = None,
+        prompt: str = "",
+        is_active: bool = True,
+        template_id: Optional[str] = None,
+    ) -> ProjectTemplate:
+        tid = template_id or f"tpl-{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc)
+        record = ProjectTemplateRecord(
+            id=tid,
+            name=name,
+            description=description,
+            project_type=project_type,
+            coolify_compatible=coolify_compatible,
+            skill_path=skill_path,
+            skill_filename=skill_filename,
+            scaffold_path=scaffold_path,
+            scaffold_filename=scaffold_filename,
+            prompt=prompt,
+            is_active=is_active,
+            created_at=now,
+            updated_at=now,
+        )
+        async with self.session_factory() as session:
+            session.add(record)
+            await session.commit()
+            await session.refresh(record)
+            return self._to_template_domain(record)
+
+    async def list_project_templates(self, active_only: bool = False) -> list[ProjectTemplate]:
+        async with self.session_factory() as session:
+            stmt = select(ProjectTemplateRecord).order_by(ProjectTemplateRecord.created_at.desc())
+            if active_only:
+                stmt = stmt.where(ProjectTemplateRecord.is_active == True)
+            res = await session.execute(stmt)
+            return [self._to_template_domain(r) for r in res.scalars().all()]
+
+    async def get_project_template(self, template_id: str) -> Optional[ProjectTemplate]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(ProjectTemplateRecord).where(ProjectTemplateRecord.id == template_id)
+            )
+            record = res.scalar_one_or_none()
+            if not record:
+                return None
+            return self._to_template_domain(record)
+
+    async def update_project_template(
+        self,
+        template_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        project_type: Optional[ProjectType] = None,
+        coolify_compatible: Optional[bool] = None,
+        skill_path: Optional[str] = None,
+        skill_filename: Optional[str] = None,
+        scaffold_path: Optional[str] = None,
+        scaffold_filename: Optional[str] = None,
+        prompt: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> Optional[ProjectTemplate]:
+        values: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+        if name is not None:
+            values["name"] = name
+        if description is not None:
+            values["description"] = description
+        if project_type is not None:
+            values["project_type"] = project_type
+        if coolify_compatible is not None:
+            values["coolify_compatible"] = coolify_compatible
+        if skill_path is not None:
+            values["skill_path"] = skill_path or None
+        if skill_filename is not None:
+            values["skill_filename"] = skill_filename or None
+        if scaffold_path is not None:
+            values["scaffold_path"] = scaffold_path or None
+        if scaffold_filename is not None:
+            values["scaffold_filename"] = scaffold_filename or None
+        if prompt is not None:
+            values["prompt"] = prompt
+        if is_active is not None:
+            values["is_active"] = is_active
+
+        async with self.session_factory() as session:
+            await session.execute(
+                update(ProjectTemplateRecord)
+                .where(ProjectTemplateRecord.id == template_id)
+                .values(**values)
+            )
+            await session.commit()
+            res = await session.execute(
+                select(ProjectTemplateRecord).where(ProjectTemplateRecord.id == template_id)
+            )
+            record = res.scalar_one_or_none()
+            if not record:
+                return None
+            return self._to_template_domain(record)
+
+    async def delete_project_template(self, template_id: str) -> bool:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                delete(ProjectTemplateRecord).where(ProjectTemplateRecord.id == template_id)
+            )
+            await session.commit()
+            return bool(res.rowcount and res.rowcount > 0)
 
