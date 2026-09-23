@@ -195,6 +195,13 @@ services:
       - "2222:22"
     volumes:
       - gitea-data:/data
+    # O Coolify clona e builda em containers auxiliares na rede "coolify";
+    # sem estar nela o Gitea nao resolve como gitea:3000 no clone do deploy.
+    networks:
+      default:
+      coolify:
+        aliases:
+          - gitea
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/version"]
       interval: 10s
@@ -254,6 +261,12 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  # Criada pelo Coolify ao validar o servidor. Numa instalacao nova, se o
+  # "up" reclamar que ela nao existe: docker network create coolify
+  coolify:
+    external: true
 
 volumes:
   painkiller-db:

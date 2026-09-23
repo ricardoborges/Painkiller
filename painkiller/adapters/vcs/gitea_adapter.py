@@ -422,6 +422,21 @@ class GiteaAdapter:
         if res.status_code != 201:
             raise RuntimeError(f"Gitea comment failed: {res.status_code} - {res.text}")
 
+    async def add_deploy_key(self, owner: str, repo: str, title: str, public_key: str) -> None:
+        """Register a read-only SSH deploy key on the repository."""
+        res = await self._api(
+            "POST",
+            f"/repos/{owner}/{repo}/keys",
+            json={"title": title, "key": public_key, "read_only": True},
+        )
+        if res.status_code != 201:
+            raise RuntimeError(f"Gitea deploy key failed: {res.status_code} - {res.text}")
+
+    def ssh_clone_url(self, owner: str, repo: str) -> str:
+        """scp-style SSH URL reachable inside the docker network (sshd listens on 22 there)."""
+        host = urllib.parse.urlparse(self.internal_base_url).hostname or "gitea"
+        return f"git@{host}:{owner}/{repo}.git"
+
     async def archive_repository(self, web_url: str) -> bool:
         """Archive the repository behind a project's `repo_url`; False if it is not ours.
 

@@ -18,6 +18,24 @@ from painkiller.core.ports.deployment import DeploymentPort
 logger = logging.getLogger(__name__)
 
 
+def generate_ssh_keypair() -> tuple[str, str]:
+    """Generate an ed25519 pair: (OpenSSH private key PEM, `ssh-ed25519 ...` public line)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.OpenSSH,
+        serialization.NoEncryption(),
+    ).decode()
+    public_line = key.public_key().public_bytes(
+        serialization.Encoding.OpenSSH,
+        serialization.PublicFormat.OpenSSH,
+    ).decode()
+    return private_pem, public_line
+
+
 class CoolifyAdapter(DeploymentPort):
     """Integrates with Coolify v4 REST API to provision and deploy test and production environments."""
 
@@ -29,7 +47,11 @@ class CoolifyAdapter(DeploymentPort):
         wildcard_domain: Optional[str] = None,
         gitea_internal_url: Optional[str] = None,
         gitea_external_url: Optional[str] = None,
+        vcs: Optional[Any] = None,
     ):
+        # GiteaAdapter: com ele, repositórios do nosso Gitea (sempre privados)
+        # são clonados por SSH com um deploy key; sem ele, clone público.
+        self.vcs = vcs
         self.api_url = (api_url if api_url is not None else os.environ.get("COOLIFY_API_URL", "http://localhost:8000")).rstrip("/")
         self.api_token = os.environ.get("COOLIFY_API_TOKEN", "") if api_token is None else api_token
         self.server_uuid = server_uuid or os.environ.get("COOLIFY_SERVER_UUID", "")
@@ -96,6 +118,39 @@ class CoolifyAdapter(DeploymentPort):
         if not url.endswith(".git"):
             url += ".git"
         return url
+
+    async def _ensure_deploy_key(
+        self, client: httpx.AsyncClient, owner: str, repo: str, slug: str
+    ) -> str:
+        """Return the uuid of the Coolify private key that clones this repo.
+
+        Um par por projeto, reaproveitado por teste e produção. A pública vai
+        como deploy key só-leitura no Gitea; a privada fica guardada só no
+        Coolify, então o Painkiller não precisa persistir nada.
+        """
+        key_name = f"painkiller-{slug}"
+        resp = await client.get(f"{self.api_url}/api/v1/security/keys", headers=self._headers())
+        if resp.is_success:
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("data", [])
+            for k in items:
+                if k.get("name") == key_name and k.get("uuid"):
+                    return k["uuid"]
+
+        private_pem, public_openssh = generate_ssh_keypair()
+        await self.vcs.add_deploy_key(owner, repo, key_name, public_openssh)
+        create_resp = await client.post(
+            f"{self.api_url}/api/v1/security/keys",
+            headers=self._headers(),
+            json={
+                "name": key_name,
+                "description": f"Deploy key do Painkiller para {owner}/{repo}",
+                "private_key": private_pem,
+            },
+        )
+        if not create_resp.is_success:
+            raise RuntimeError(f"Falha ao registrar chave SSH no Coolify: {create_resp.text}")
+        return create_resp.json().get("uuid", "")
 
     async def _get_or_create_project(self, client: httpx.AsyncClient, project: Project) -> str:
         """Get or create the Coolify project uuid matching Painkiller project."""
@@ -239,8 +294,19 @@ class CoolifyAdapter(DeploymentPort):
                         "ports_exposes": "80",
                         "domains": fqdn,
                     }
+                    endpoint = "public"
+                    # Repositório do nosso Gitea: privado (FORCE_PRIVATE), então
+                    # o clone anônimo falharia. Vai por SSH com deploy key.
+                    located = self.vcs.repo_from_url(project.repo_url) if self.vcs else None
+                    if located:
+                        owner, repo = located
+                        payload["private_key_uuid"] = await self._ensure_deploy_key(
+                            client, owner, repo, slug
+                        )
+                        payload["git_repository"] = self.vcs.ssh_clone_url(owner, repo)
+                        endpoint = "private-deploy-key"
                     create_app_resp = await client.post(
-                        f"{self.api_url}/api/v1/applications/public",
+                        f"{self.api_url}/api/v1/applications/{endpoint}",
                         headers=self._headers(),
                         json=payload,
                     )
@@ -320,7 +386,7 @@ class CoolifyAdapter(DeploymentPort):
                     branch=branch,
                     status=DeploymentStatus.FAILED,
                     url=fqdn,
-                    logs=f"Erro de conexão com Coolify: {str(e)}",
+                    logs=f"Erro ao provisionar no Coolify: {str(e)}",
                     created_at=now,
                     updated_at=now,
                 )

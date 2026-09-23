@@ -139,7 +139,7 @@ def create_app(
     wizard = InterrogationWizard(llm=llm, tracker=tracker)
     analysis = AnalysisOrchestrator(agent=agent, tracker=tracker, usage=usage, git=git)
 
-    deployment = deployment_adapter or CoolifyAdapter()
+    deployment = deployment_adapter or CoolifyAdapter(vcs=vcs)
     deployment_service = DeploymentService(tracker=tracker, deployment=deployment)
 
     # Attach to application state

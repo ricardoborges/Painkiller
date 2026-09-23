@@ -142,3 +142,76 @@ def test_resolve_repo_url_keeps_external_hosts():
     )
 
     assert adapter._resolve_repo_url(project) == "https://github.com/acme/app.git"
+
+
+@pytest.mark.asyncio
+async def test_coolify_private_gitea_repo_uses_deploy_key():
+    """Our Gitea forces private repos, so the app is created over SSH with a deploy key."""
+    vcs = MagicMock()
+    vcs.repo_from_url.return_value = ("ricardoborges", "damas")
+    vcs.ssh_clone_url.return_value = "git@gitea:ricardoborges/damas.git"
+    vcs.add_deploy_key = AsyncMock()
+    adapter = CoolifyAdapter(
+        api_url="http://coolify.test",
+        api_token="test-token",
+        server_uuid="srv-1",
+        wildcard_domain="coolify.local",
+        vcs=vcs,
+    )
+    project = Project(
+        id="proj-456",
+        name="damas",
+        repo_path="/tmp/damas",
+        default_branch="main",
+        repo_url="http://localhost:8000/gitea/ricardoborges/damas",
+    )
+
+    responses_get = [
+        MagicMock(is_success=True, json=lambda: [{"name": "painkiller-damas", "uuid": "proj-uuid-1"}]),
+        MagicMock(is_success=True, json=lambda: [{"name": "test"}]),
+        MagicMock(is_success=True, json=lambda: []),  # applications
+        MagicMock(is_success=True, json=lambda: []),  # security/keys
+    ]
+    responses_post = [
+        MagicMock(is_success=True, json=lambda: {"uuid": "key-uuid-1"}),
+        MagicMock(is_success=True, json=lambda: {"uuid": "app-uuid-1"}),
+        MagicMock(is_success=True, json=lambda: {"deployment_uuid": "dep-1"}),
+    ]
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_get.side_effect = responses_get
+        mock_post.side_effect = responses_post
+
+        record = await adapter.deploy_environment(
+            project=project, environment=EnvironmentType.TEST, branch="feature/t1"
+        )
+
+    assert record.status == DeploymentStatus.BUILDING
+    owner, repo, title, public_key = vcs.add_deploy_key.await_args.args
+    assert (owner, repo) == ("ricardoborges", "damas")
+    assert public_key.startswith("ssh-ed25519 ")
+
+    key_call, app_call, _ = mock_post.await_args_list
+    assert key_call.args[0].endswith("/api/v1/security/keys")
+    assert "OPENSSH PRIVATE KEY" in key_call.kwargs["json"]["private_key"]
+    assert app_call.args[0].endswith("/api/v1/applications/private-deploy-key")
+    assert app_call.kwargs["json"]["private_key_uuid"] == "key-uuid-1"
+    assert app_call.kwargs["json"]["git_repository"] == "git@gitea:ricardoborges/damas.git"
+
+
+@pytest.mark.asyncio
+async def test_coolify_reuses_existing_deploy_key():
+    vcs = MagicMock()
+    vcs.add_deploy_key = AsyncMock()
+    adapter = CoolifyAdapter(api_url="http://coolify.test", api_token="t", vcs=vcs)
+    client = MagicMock()
+    client.get = AsyncMock(
+        return_value=MagicMock(is_success=True, json=lambda: [{"name": "painkiller-damas", "uuid": "k-9"}])
+    )
+    client.post = AsyncMock()
+
+    uuid = await adapter._ensure_deploy_key(client, "ricardoborges", "damas", "damas")
+
+    assert uuid == "k-9"
+    vcs.add_deploy_key.assert_not_awaited()
+    client.post.assert_not_awaited()

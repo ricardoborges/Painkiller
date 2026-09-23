@@ -24,6 +24,9 @@ dependencies = [
     "httpx>=0.27.0",
     # Exigida pelo upload de anexos (UploadFile/File em api/routes/projects.py).
     "python-multipart>=0.0.9",
+    # Gera o par de chaves SSH do deploy key que o Coolify usa para clonar os
+    # repositórios privados do Gitea (adapters/deployment/coolify_adapter.py).
+    "cryptography>=42.0.0",
 ]
 
 [project.optional-dependencies]
