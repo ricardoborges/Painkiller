@@ -29,7 +29,7 @@ RUN mkdir -p /root/.agents && ln -s /opt/superpowers/skills /root/.agents/skills
 
 # Instala o CLI do painkiller e pytest para verificação de testes no repo target
 COPY . /tmp/painkiller
-RUN pip install --no-cache-dir --break-system-packages pytest /tmp/painkiller && rm -rf /tmp/painkiller
+RUN pip install --no-cache-dir --break-system-packages pytest pytest-asyncio lxml /tmp/painkiller && rm -rf /tmp/painkiller
 
 RUN mkdir -p /workspace
 

@@ -42,7 +42,7 @@ RUN git clone --depth 1 --branch "${SUPERPOWERS_REF}" "${SUPERPOWERS_REPO}" /opt
 # Instala o CLI do painkiller (`painkiller ask`, protocolo de interrupção limpa)
 # e pytest para verificação de testes no repo target.
 COPY . /tmp/painkiller
-RUN pip install --no-cache-dir --break-system-packages pytest /tmp/painkiller && rm -rf /tmp/painkiller
+RUN pip install --no-cache-dir --break-system-packages pytest pytest-asyncio lxml /tmp/painkiller && rm -rf /tmp/painkiller
 
 RUN mkdir -p /workspace
 

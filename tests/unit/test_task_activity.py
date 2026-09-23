@@ -157,3 +157,20 @@ async def test_stream_route_replays_finished_run_with_tool_detail(tmp_path):
     payload = json.loads(tool.split("data: ", 1)[1])
     assert payload["text"] == "run_command"
     assert payload["detail"] == "pytest -q"
+
+
+async def test_stop_task_route(tmp_path):
+    app = create_app(db_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    app.state.orchestrator.stop_task = AsyncMock()
+
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as client:
+            resp = await client.post("/api/tasks/task-test-stop/stop")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "stopping"
+    assert data["task_id"] == "task-test-stop"
+    app.state.orchestrator.stop_task.assert_awaited_once_with("task-test-stop")
+

@@ -263,10 +263,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
 networks:
-  # Criada pelo Coolify ao validar o servidor. Numa instalacao nova, se o
-  # "up" reclamar que ela nao existe: docker network create coolify
   coolify:
-    external: true
+    name: coolify
+
 
 volumes:
   painkiller-db:

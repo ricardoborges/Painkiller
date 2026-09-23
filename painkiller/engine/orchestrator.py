@@ -116,6 +116,7 @@ class PainkillerOrchestrator:
             on_event=self.activity.publisher(task.id, asyncio.get_running_loop()),
             harness=project.harness,
             api_key=project.api_key,
+            model=project.model,
         )
         self._note(task.id, f"Agente encerrou com código {result.exit_code}")
         await self._record_usage(task, result)
@@ -245,6 +246,11 @@ class PainkillerOrchestrator:
             comment=f"💬 Analyst clarified: {answer}",
         )
         return await self.dispatch_task(clar.task_id)
+
+    async def stop_task(self, task_id: str) -> None:
+        """Stop a running task by stopping its container."""
+        self._note(task_id, "Interrompendo execução da tarefa a pedido do usuário")
+        await self.sandbox.stop_task(task_id)
 
     @staticmethod
     def _describe_failure(result: ExecutionResult, timeout: int, branch: str) -> str:

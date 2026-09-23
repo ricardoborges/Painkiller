@@ -65,6 +65,7 @@ class ProjectRecord(Base):
     production_url = Column(String, nullable=True)
     harness = Column(String, default="agy_superpowers", nullable=False)
     api_key = Column(String, nullable=True)
+    model = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -256,6 +257,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
         owner_id: Optional[str] = None,
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> Project:
         proj_id = project_id or f"proj-{uuid.uuid4().hex[:8]}"
@@ -273,6 +275,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             owner_id=owner_id,
             harness=harness_val,
             api_key=api_key or None,
+            model=model or None,
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
@@ -308,6 +311,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
         repo_url: Optional[str] = None,
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Project:
         values: dict[str, Any] = {}
         if name is not None:
@@ -326,6 +330,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             values["harness"] = harness.value if isinstance(harness, HarnessType) else harness
         if api_key is not None:
             values["api_key"] = api_key or None
+        if model is not None:
+            values["model"] = model or None
 
         async with self.session_factory() as session:
             if values:
@@ -372,6 +378,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
             production_url=getattr(record, "production_url", None) or None,
             harness=HarnessType(getattr(record, "harness", None) or "agy_superpowers") if getattr(record, "harness", None) in [h.value for h in HarnessType] else HarnessType.AGY_SUPERPOWERS,
             api_key=getattr(record, "api_key", None) or None,
+            model=getattr(record, "model", None) or None,
             created_at=record.created_at,
         )
 

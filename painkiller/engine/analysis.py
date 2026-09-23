@@ -219,6 +219,7 @@ class AnalysisOrchestrator:
                 claude_session_id=claude_session_id,
                 harness=project.harness,
                 api_key=project.api_key,
+                model=project.model,
             )
         except Exception as e:
             session.status = AnalysisStatus.FAILED
@@ -267,6 +268,7 @@ class AnalysisOrchestrator:
                     claude_session_id=session.claude_session_id,
                     harness=project.harness,
                     api_key=project.api_key,
+                    model=project.model,
                 )
                 session.status = AnalysisStatus.WAITING_ANALYST
                 await self.tracker.save_analysis_session(session)

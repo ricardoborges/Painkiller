@@ -34,6 +34,7 @@ class IssueTrackerPort(ABC):
         owner_id: Optional[str] = None,
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> Project:
         """Create or register a project."""
@@ -56,6 +57,7 @@ class IssueTrackerPort(ABC):
         repo_url: Optional[str] = None,
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Project:
         """Update an existing project."""
         pass

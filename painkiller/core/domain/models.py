@@ -111,6 +111,7 @@ class Project(BaseModel):
     production_url: Optional[str] = None
     harness: HarnessType = HarnessType.AGY_SUPERPOWERS
     api_key: Optional[str] = None
+    model: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property

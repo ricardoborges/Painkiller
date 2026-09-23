@@ -54,7 +54,7 @@ DEEPSEEK_KEY_HARNESSES = frozenset({"deepseek_superpowers", "maki_superpowers"})
 
 def maki_model() -> str:
     """Model spec (provider/model-id) for maki; DeepSeek, as its key is the one passed."""
-    return os.environ.get("PAINKILLER_MAKI_MODEL") or "deepseek/deepseek-v4-flash"
+    return os.environ.get("PAINKILLER_MAKI_MODEL") or "deepseek/deepseek-v4-pro"
 
 
 #: Log JSON do maki; no modo SDK é o único lugar onde uma chave recusada aparece.
@@ -116,6 +116,7 @@ class DockerAgentSession(AgentSessionPort):
         claude_session_id: Optional[str] = None,
         harness: Optional[Any] = "agy_superpowers",
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> str:
         harness_type = getattr(harness, "value", harness) or "agy_superpowers"
         env_vars = {k: os.environ[k] for k in FORWARDED_ENV if k in os.environ}
@@ -159,6 +160,8 @@ class DockerAgentSession(AgentSessionPort):
 
         if harness_type == "deepseek_superpowers":
             image = os.environ.get("PAINKILLER_AGENT_DEEPSEEK_IMAGE") or "painkiller-agent-deepseek:latest"
+            if model:
+                env_vars["PAINKILLER_DEEPSEEK_MODEL"] = model
             # `painkiller acp-run` mantém uma sessão ACP do dsh viva e emite o
             # mesmo stream-json do agy. A chave da sessão do Painkiller acha a
             # sessão ACP de novo quando o contêiner é religado.
@@ -197,7 +200,7 @@ class DockerAgentSession(AgentSessionPort):
                 "--input-format", "stream-json",
                 "--output-format", "stream-json",
                 "--include-partial-messages",
-                "--model", maki_model(),
+                "--model", model or maki_model(),
             ]
             if claude_session_id:
                 # Retomar exige que a sessão exista; se o contêiner caiu antes
@@ -225,7 +228,7 @@ class DockerAgentSession(AgentSessionPort):
         else:
             image = self.image_name
             agent_args = [
-                "--model", self.model,
+                "--model", model or self.model,
                 "--effort", self.effort,
                 "--dangerously-skip-permissions",
                 "--input-format", "stream-json",

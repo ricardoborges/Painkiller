@@ -37,6 +37,16 @@ async def dispatch_task(task_id: str, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post("/{task_id}/stop")
+async def stop_task(task_id: str, request: Request):
+    orchestrator = request.app.state.orchestrator
+    try:
+        await orchestrator.stop_task(task_id)
+        return {"status": "stopping", "task_id": task_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # Chaves onde o stream-json costuma pôr o alvo de uma ferramenta (comando,
 # arquivo). O formato do `agy` não é contrato estável: sem acerto, fica só o nome.
 _TOOL_DETAIL_KEYS = (

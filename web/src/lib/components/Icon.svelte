@@ -21,7 +21,8 @@
     | 'copy'
     | 'info'
     | 'sidebar'
-    | 'download';
+    | 'download'
+    | 'square';
 
   let { name, size = 14 }: { name: Name; size?: number } = $props();
 </script>
@@ -77,5 +78,7 @@
     <path d="M6 2.5v11" />
   {:else if name === 'download'}
     <path d="M8 2.5V11M4.5 7.5 8 11l3.5-3.5M2.5 13.5h11" />
+  {:else if name === 'square'}
+    <rect x="3.5" y="3.5" width="9" height="9" />
   {/if}
 </svg>

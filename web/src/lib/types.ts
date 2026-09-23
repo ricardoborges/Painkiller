@@ -33,6 +33,7 @@ export interface Project {
   test_url?: string | null;
   production_url?: string | null;
   harness?: HarnessType;
+  model?: string | null;
   has_api_key?: boolean;
   masked_api_key?: string | null;
   created_at: string;

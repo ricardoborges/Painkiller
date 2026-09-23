@@ -33,6 +33,32 @@
   const editing = $derived(project !== null);
   const existing = $derived(project?.attachments ?? []);
 
+  const MODEL_PRESETS: Record<HarnessType, { id: string; label: string }[]> = {
+    maki_superpowers: [
+      { id: 'deepseek/deepseek-v4-pro', label: 'deepseek/deepseek-v4-pro (Padrão / Recomendado)' },
+      { id: 'deepseek/deepseek-v4-flash', label: 'deepseek/deepseek-v4-flash' },
+      { id: 'deepseek/deepseek-flash', label: 'deepseek/deepseek-flash' }
+    ],
+    agy_superpowers: [
+      { id: 'gemini-3.8-flash', label: 'gemini-3.8-flash (Padrão)' },
+      { id: 'gemini-3.8-pro', label: 'gemini-3.8-pro' },
+      { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+      { id: 'gemini-2.5-pro', label: 'gemini-2.5-pro' }
+    ],
+    deepseek_superpowers: [
+      { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (Recomendado)' },
+      { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash' }
+    ]
+  };
+
+  function defaultModelFor(h: HarnessType): string {
+    return MODEL_PRESETS[h]?.[0]?.id ?? '';
+  }
+
+  let model = $state('');
+  let isCustomModel = $state(false);
+  let customModelText = $state('');
+
   // Repopula sempre que o diálogo abre
   $effect(() => {
     if (!open) return;
@@ -41,11 +67,44 @@
     purpose = project?.purpose ?? '';
     solution = project?.solution_description ?? '';
     harness = project?.harness ?? 'agy_superpowers';
+    const currentModel = project?.model || defaultModelFor(harness);
+    const presets = MODEL_PRESETS[harness] || [];
+    if (presets.some((p) => p.id === currentModel)) {
+      model = currentModel;
+      isCustomModel = false;
+      customModelText = '';
+    } else {
+      model = '__custom__';
+      isCustomModel = true;
+      customModelText = currentModel;
+    }
     apiKey = '';
     files = [];
     error = null;
     touched = false;
   });
+
+  let previousHarness = $state<HarnessType>('agy_superpowers');
+  $effect(() => {
+    if (harness !== previousHarness) {
+      previousHarness = harness;
+      if (!isCustomModel) {
+        model = defaultModelFor(harness);
+      }
+    }
+  });
+
+  function onModelSelect(val: string) {
+    if (val === '__custom__') {
+      isCustomModel = true;
+      model = '__custom__';
+    } else {
+      isCustomModel = false;
+      model = val;
+    }
+  }
+
+  const effectiveModel = $derived(isCustomModel ? customModelText.trim() : model);
 
   const missing = $derived({
     name: !name.trim(),
@@ -87,12 +146,14 @@
         solution_description: string;
         harness: HarnessType;
         api_key?: string;
+        model?: string;
       } = {
         name: name.trim(),
         description: description.trim(),
         purpose: purpose.trim(),
         solution_description: solution.trim(),
-        harness: harness
+        harness: harness,
+        model: effectiveModel || undefined
       };
       if (apiKey.trim()) {
         body.api_key = apiKey.trim();
@@ -210,6 +271,36 @@
               <span class="radio-desc">DeepSeek V4 via maki.sh, com a mesma chave DeepSeek</span>
             </div>
           </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="pmodel">Modelo de IA</label>
+        <p class="help">
+          Modelo que o harness executará. Para o Maki, o padrão selecionado é <span class="mono">deepseek/deepseek-v4-pro</span>.
+        </p>
+        <div class="model-select-wrap">
+          <select
+            id="pmodel"
+            class="input mono select-input"
+            value={isCustomModel ? '__custom__' : model}
+            onchange={(e) => onModelSelect(e.currentTarget.value)}
+          >
+            {#each MODEL_PRESETS[harness] ?? [] as preset (preset.id)}
+              <option value={preset.id}>
+                {preset.label}
+              </option>
+            {/each}
+            <option value="__custom__">Outro modelo (personalizado)…</option>
+          </select>
+          {#if isCustomModel}
+            <input
+              type="text"
+              class="input mono custom-model-input"
+              placeholder={harness === 'maki_superpowers' ? 'deepseek/deepseek-v4-pro' : 'nome-do-modelo'}
+              bind:value={customModelText}
+            />
+          {/if}
         </div>
       </div>
 
@@ -469,6 +560,21 @@
     color: var(--ink-3);
     font-weight: normal;
     font-size: var(--t-micro);
+  }
+
+  .model-select-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+
+  .select-input {
+    background-color: var(--paper);
+    cursor: pointer;
+  }
+
+  .custom-model-input {
+    margin-top: var(--s1);
   }
 
   @media (max-width: 640px) {

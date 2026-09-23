@@ -312,6 +312,17 @@ svg {
   border-color: var(--accent-ink);
 }
 
+.btn-line.danger {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn-line.danger:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 .btn-sm {
   padding: 0.3125rem 0.625rem;
   font-size: var(--t-micro);

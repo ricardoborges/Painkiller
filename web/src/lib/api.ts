@@ -110,6 +110,7 @@ export const api = {
     solution_description?: string;
     harness?: string;
     api_key?: string;
+    model?: string;
   }) => request<Project>('/projects', { method: 'POST', ...json(body) }),
 
   updateProject: (
@@ -121,6 +122,7 @@ export const api = {
       solution_description?: string;
       harness?: string;
       api_key?: string;
+      model?: string;
     }
   ) => request<Project>(`/projects/${id}`, { method: 'PUT', ...json(body) }),
 
@@ -254,6 +256,9 @@ export const api = {
    * durante toda a execução do agente no contêiner. Pode levar minutos.
    */
   dispatchTask: (id: string) => request<Task>(`/tasks/${id}/dispatch`, { method: 'POST' }),
+
+  stopTask: (id: string) =>
+    request<{ status: string; task_id: string }>(`/tasks/${id}/stop`, { method: 'POST' }),
 
   getClarification: (taskId: string) =>
     request<Clarification | { status: 'none' }>(`/tasks/${taskId}/clarification`),

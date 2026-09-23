@@ -36,6 +36,7 @@
   let dispatching = $state<string | null>(null);
   let dispatchError = $state<{ id: string; message: string } | null>(null);
   let merging = $state<string | null>(null);
+  let stoppingTaskId = $state<string | null>(null);
 
   // Fila sequencial (Executar Todas)
   let isQueueRunning = $state(false);
@@ -351,6 +352,25 @@
       return null;
     } finally {
       merging = null;
+    }
+  }
+
+  async function stopTask(id: string) {
+    if (stoppingTaskId === id) return;
+    stoppingTaskId = id;
+    if (isQueueRunning) {
+      isQueueRunning = false;
+      queueMessage = 'Fila interrompida pelo usuário.';
+    }
+    try {
+      await api.stopTask(id);
+    } catch (e) {
+      console.error('Falha ao interromper tarefa:', e);
+    } finally {
+      setTimeout(() => {
+        if (stoppingTaskId === id) stoppingTaskId = null;
+        load();
+      }, 1500);
     }
   }
 
@@ -903,17 +923,26 @@
             <span class="completed-tag label mono">
               <span class="spinner-inline" aria-hidden="true"></span> Incorporando…
             </span>
+          {:else if isRunning}
+            <button
+              type="button"
+              class="btn btn-line btn-sm danger"
+              onclick={() => stopTask(task.id)}
+              disabled={stoppingTaskId === task.id}
+              title="Interromper execução da tarefa imediatamente"
+            >
+              <Icon name="square" size={10} />
+              <span>{stoppingTaskId === task.id ? 'Interrompendo…' : 'Interromper'}</span>
+            </button>
           {:else}
             <button
               type="button"
               class="btn btn-line btn-sm"
               onclick={() => dispatch(task)}
               disabled={!canDispatch(task)}
-              title={stuck.length ? 'Aguardando dependências' : isRunning ? 'Executando' : 'Executar individualmente'}
+              title={stuck.length ? 'Aguardando dependências' : 'Executar individualmente'}
             >
-              {#if isRunning}
-                Executando…
-              {:else if task.status === 'FAILED'}
+              {#if task.status === 'FAILED'}
                 <Icon name="play" size={11} /> Repetir
               {:else}
                 <Icon name="play" size={11} /> Executar

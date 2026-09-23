@@ -26,6 +26,7 @@ class AgentSessionPort(ABC):
         claude_session_id: Optional[str] = None,
         harness: Optional[Any] = None,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> str:
         """Start or resume the session and return the container (or process) name."""
 

@@ -28,6 +28,7 @@ class CreateProjectRequest(BaseModel):
     default_branch: Optional[str] = "main"
     harness: Optional[str] = "agy_superpowers"
     api_key: Optional[str] = None
+    model: Optional[str] = None
 
 
 class UpdateProjectRequest(BaseModel):
@@ -37,6 +38,7 @@ class UpdateProjectRequest(BaseModel):
     solution_description: Optional[str] = None
     harness: Optional[str] = None
     api_key: Optional[str] = None
+    model: Optional[str] = None
 
 
 class CreateTaskRequest(BaseModel):
@@ -120,6 +122,7 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         owner_id=None if user.is_admin else user.id,
         harness=req.harness,
         api_key=req.api_key,
+        model=req.model,
         project_id=identity.project_id,
     )
     return _format_project(project)
@@ -146,6 +149,7 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
             solution_description=req.solution_description,
             harness=req.harness,
             api_key=req.api_key,
+            model=req.model,
         )
         return _format_project(updated)
     except ValueError as e:

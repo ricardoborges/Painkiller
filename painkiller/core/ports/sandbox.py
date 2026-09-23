@@ -22,6 +22,7 @@ class SandboxPort(ABC):
         on_event: Optional[AgentEventCallback] = None,
         harness: Optional[Any] = None,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> ExecutionResult:
         """Run an isolated worker on a task and return the execution result.
 

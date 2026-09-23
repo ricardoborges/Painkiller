@@ -25,8 +25,10 @@ RUN npm run build
 FROM python:3.11-slim
 
 # git: o GitCliAdapter cria branches e commita nos repositorios dos projetos.
+# nodejs: testes estáticos e executores de DOM em projetos web/JS.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    nodejs \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,7 +40,7 @@ COPY painkiller/__init__.py ./painkiller/
 RUN pip install --no-cache-dir -e . \
     # GitPort.run_tests roda `pytest` dentro do repositorio alvo, a partir
     # deste contentor.
-    && pip install --no-cache-dir pytest
+    && pip install --no-cache-dir pytest pytest-asyncio lxml
 
 COPY painkiller/ ./painkiller/
 COPY --from=web /src/painkiller/api/static/ ./painkiller/api/static/

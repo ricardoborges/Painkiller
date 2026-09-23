@@ -7,9 +7,23 @@
    * importa é "última atividade há N s": deltas de texto e de raciocínio
    * contam como atividade mesmo sem virar linha no log.
    */
-  import { openTaskStream } from '$lib/api';
+  import { openTaskStream, api } from '$lib/api';
   import type { AgentEvent } from '$lib/types';
   import Elapsed from './Elapsed.svelte';
+  import Icon from './Icon.svelte';
+
+  let stopping = $state(false);
+
+  async function handleStop() {
+    if (stopping) return;
+    stopping = true;
+    try {
+      await api.stopTask(taskId);
+    } catch (err) {
+      console.error('Falha ao interromper tarefa:', err);
+      stopping = false;
+    }
+  }
 
   let {
     taskId,
@@ -180,6 +194,19 @@
         </span>
       {/if}
     {/if}
+
+    {#if active}
+      <button
+        type="button"
+        class="stop-btn label mono"
+        disabled={stopping}
+        onclick={handleStop}
+        title="Interromper execução da tarefa"
+      >
+        <Icon name="square" size={9} />
+        <span>{stopping ? 'Interrompendo…' : 'Interromper'}</span>
+      </button>
+    {/if}
   </div>
 
   {#if lines.length || partial}
@@ -236,6 +263,30 @@
   .last {
     font-variant-numeric: tabular-nums;
     color: var(--ink-3);
+  }
+
+  .stop-btn {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.5rem;
+    font-size: var(--t-micro);
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--accent);
+    cursor: pointer;
+    transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+
+  .stop-btn:hover:not(:disabled) {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .stop-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .last.warn {

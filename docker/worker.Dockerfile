@@ -25,7 +25,7 @@ RUN if [ ! -f /opt/superpowers/plugin.json ]; then echo '{"name": "superpowers"}
 
 # Instala o CLI do painkiller e pytest para verificação
 COPY . /tmp/painkiller
-RUN pip install --no-cache-dir --break-system-packages pytest /tmp/painkiller && rm -rf /tmp/painkiller
+RUN pip install --no-cache-dir --break-system-packages pytest pytest-asyncio lxml /tmp/painkiller && rm -rf /tmp/painkiller
 
 # Prepara diretórios, configura autenticação direta via GEMINI_API_KEY e copia o plugin para o Antigravity
 RUN mkdir -p /workspace /root/.gemini/config/plugins /root/.gemini/antigravity-cli \

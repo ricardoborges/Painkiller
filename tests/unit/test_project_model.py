@@ -68,9 +68,30 @@ async def test_sqlite_tracker_project_harness_persistence(tmp_path):
         p2.id,
         harness=HarnessType.AGY_SUPERPOWERS,
         api_key="sk-new-key-456",
+        model="gemini-3.8-pro",
     )
     assert updated.harness == HarnessType.AGY_SUPERPOWERS
     assert updated.api_key == "sk-new-key-456"
+    assert updated.model == "gemini-3.8-pro"
+
+    # Verify reload
+    reloaded = await tracker.get_project(p2.id)
+    assert reloaded is not None
+    assert reloaded.model == "gemini-3.8-pro"
+
+    # Create with model
+    p3 = await tracker.create_project(
+        name="Maki Pro Project",
+        repo_path="/tmp/p3",
+        harness=HarnessType.MAKI_SUPERPOWERS,
+        model="deepseek/deepseek-v4-pro",
+    )
+    assert p3.harness == HarnessType.MAKI_SUPERPOWERS
+    assert p3.model == "deepseek/deepseek-v4-pro"
+
+    loaded_p3 = await tracker.get_project(p3.id)
+    assert loaded_p3 is not None
+    assert loaded_p3.model == "deepseek/deepseek-v4-pro"
 
     await tracker.close()
 

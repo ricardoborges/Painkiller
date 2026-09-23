@@ -48,6 +48,7 @@ class DockerSandboxRunner(SandboxPort):
         on_event: Optional[AgentEventCallback] = None,
         harness: Optional[str] = None,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> ExecutionResult:
         """Run the task in a detached Docker container, waiting for completion or clarification."""
         loop = asyncio.get_running_loop()
@@ -61,6 +62,7 @@ class DockerSandboxRunner(SandboxPort):
             on_event,
             harness,
             api_key,
+            model,
         )
 
     def _run_task_sync(
@@ -72,6 +74,7 @@ class DockerSandboxRunner(SandboxPort):
         on_event: Optional[AgentEventCallback] = None,
         harness: Optional[str] = None,
         api_key: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> ExecutionResult:
         container_name = f"pk-task-{task.id}-{uuid.uuid4().hex[:6]}"
 
@@ -98,6 +101,7 @@ class DockerSandboxRunner(SandboxPort):
             image = os.environ.get("PAINKILLER_WORKER_MAKI_IMAGE") or "painkiller-worker-maki:latest"
             if api_key:
                 env_vars["DEEPSEEK_API_KEY"] = api_key
+            chosen_model = model or maki_model()
             # Um turno só, como o `agy --print`; saída no stream-json do Claude Code.
             command = [
                 "maki",
@@ -108,13 +112,15 @@ class DockerSandboxRunner(SandboxPort):
                 "stream-json",
                 "--include-partial-messages",
                 "--model",
-                maki_model(),
+                chosen_model,
                 task_instructions,
             ]
         elif harness_type == "deepseek_superpowers":
             image = os.environ.get("PAINKILLER_WORKER_DEEPSEEK_IMAGE") or "painkiller-worker-deepseek:latest"
             if api_key:
                 env_vars["DEEPSEEK_API_KEY"] = api_key
+            if model:
+                env_vars["PAINKILLER_DEEPSEEK_MODEL"] = model
             # Um turno só, como o `agy --print`; a ponte emite o mesmo stream-json.
             command = [
                 "painkiller",
@@ -128,8 +134,9 @@ class DockerSandboxRunner(SandboxPort):
                 env_vars["GEMINI_API_KEY"] = api_key
                 env_vars["GOOGLE_API_KEY"] = api_key
 
-            model = (
-                env_vars.get("PAINKILLER_AGENT_MODEL")
+            chosen_model = (
+                model
+                or env_vars.get("PAINKILLER_AGENT_MODEL")
                 or env_vars.get("PAINKILLER_LLM_MODEL")
                 or "gemini-3.8-flash"
             )
@@ -138,7 +145,7 @@ class DockerSandboxRunner(SandboxPort):
             command = [
                 "agy",
                 "--model",
-                model,
+                chosen_model,
                 "--effort",
                 effort,
                 "--dangerously-skip-permissions",
@@ -331,10 +338,27 @@ class DockerSandboxRunner(SandboxPort):
                 pass
 
     async def stop_task(self, task_id: str) -> None:
+        loop = asyncio.get_running_loop()
         container = self._running_containers.get(task_id)
         if container:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, container.stop)
+            try:
+                await loop.run_in_executor(None, lambda: container.kill())
+            except Exception as e:
+                logger.debug(f"Falha ao matar contêiner ativo para task {task_id}: {e}")
+
+        # Fallback: buscar e parar qualquer contêiner ativo associado a esta task
+        def _stop_by_name():
+            try:
+                containers = self.client.containers.list(filters={"name": f"pk-task-{task_id}"})
+                for c in containers:
+                    try:
+                        c.kill()
+                    except Exception:
+                        pass
+            except Exception as ex:
+                logger.debug(f"Falha ao buscar contêineres por nome para task {task_id}: {ex}")
+
+        await loop.run_in_executor(None, _stop_by_name)
 
     async def cleanup_orphaned_containers(self) -> list[str]:
         """Remove contêineres pk-task-* que já finalizaram ou estão mortos."""
