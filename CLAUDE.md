@@ -157,12 +157,17 @@ A project with `harness = deepseek_superpowers` runs the same two flows on `pain
 
 ### Unreal Agent harness (`unreal-agent-runner`, OpenAI Responses API over DeepSeek)
 
-`harness = unreal_superpowers` runs on `painkiller-agent-unreal` / `painkiller-worker-unreal`. Built from [unreallabsai/unreal-agent](https://github.com/unreallabsai/unreal-agent) via multi-stage Go 1.24 build, compiling `cmd/unreal-agent-runner`. It interacts with DeepSeek via OpenAI Responses API format (`UNREAL_HARNESS_LLM_PROVIDER=openai`, `UNREAL_HARNESS_LLM_BASE_URL=https://api.deepseek.com`, model `deepseek/deepseek-v4-pro`).
+`harness = unreal_superpowers` runs on `painkiller-agent-unreal` / `painkiller-worker-unreal`, which compile `cmd/unreal-agent-runner` from [unreallabsai/unreal-agent](https://github.com/unreallabsai/unreal-agent) at a **pinned commit** (`UNREAL_AGENT_COMMIT`) with **Go 1.27** — its `go.mod` requires it and the official image sets `GOTOOLCHAIN=local`. The runner's `openai` provider speaks the Responses API, pointed at DeepSeek (`UNREAL_HARNESS_LLM_BASE_URL=https://api.deepseek.com`), which serves `/responses` statelessly — fine, since the runner resends the whole history each call.
 
-- **CLI Bridge**: [cli/unreal_run.py](painkiller/cli/unreal_run.py) (`painkiller unreal-run`) drives the agent, feeds analyst turns from `.painkiller/agent-stdin.jsonl`, maintains session history in `/root/.local/state/unreal-agent/sessions`, and translates emitted JSON lines (`model_response`, `tool_call_status`, `turn`, `error`) into domain `AgentEvent` objects (`init`, `assistant`, `tool_use`, `result`).
-- **Skills**: Natively discovered at `<workspace>/.harness/skills`. Automatically linked from `/opt/superpowers/skills` to `/workspace/.harness/skills`.
-- **Tasks & Clarification**: Runs one-shot via `unreal-agent-runner -workspace /workspace -p <instructions>`. Supports clean interruption (exit 42) via `painkiller ask` executed in the Bash tool.
-- **Key & Model**: Uses `DEEPSEEK_API_KEY` (shared via `DEEPSEEK_KEY_HARNESSES`), defaulting to `deepseek/deepseek-v4-pro`.
+The runner executes **one JSON request per process** (`{"messages": [...], "session_id": ...}`, read from stdin; unknown fields are rejected) and prints every persisted session item as JSONL (`{Sequence, Kind, Data}`: `input`, `turn`, `model_response`, `tool_call_status`). The same `session_id` resumes the same history from disk. So, like `dsh`, it goes through a bridge that re-emits the **Antigravity envelope** — [cli/unreal_run.py](painkiller/cli/unreal_run.py) (`painkiller unreal-run`) — and nothing downstream knows about Unreal.
+
+- **Turn end**: the bridge emits `result` when the runner process exits, never on a `message` item (an intermediate message can be followed by more tool calls). The `result` carries the summed `Usage` of the turn's `model_response`s and the model, so `parse_agent_usage`/`parse_task_usage` work unchanged.
+- **Analysis**: `unreal-run --stdin-file … --session-id <claude_session_id>` polls the NDJSON queue, one runner process per analyst line. Sessions live in `.painkiller/unreal_home` → `/root/.local/state/unreal-agent`. `resume` passes `--stdin-offset <bytes>` measured by the API, as for `dsh`.
+- **Tasks**: `unreal-run --prompt <instructions>`, one turn then exit. Clarification (exit 42) works unchanged via `painkiller ask` in the runner's Bash tool.
+- **Skills**: the runner only reads `<workspace>/.harness/skills`, i.e. inside the user's repo. The bridge links (or, where a bind mount refuses symlinks, copies) `/opt/superpowers/skills` there and adds `/.harness/` to `.git/info/exclude`, so `git add -A` never commits it.
+- **Errors**: the runner exits 1 and prints `{"type":"error","message":…}`; an LLM failure can also come as `Response.Failure` in a `model_response`. The bridge turns either into a stream-json `result` with `is_error` (so `parse_agent_line` yields an ERROR with `raw.harness_error`, the "O agente parou" path) and exits 1. Runner stderr is relayed as `unreal: …` lines, parsed as `SYSTEM`.
+- **Key and model**: the DeepSeek key (`DEEPSEEK_KEY_HARNESSES`) as `UNREAL_HARNESS_LLM_API_KEY`; model via `unreal_model()` — the project's model, else `PAINKILLER_UNREAL_MODEL`, else `deepseek-v4-pro`. DeepSeek rejects maki's `provider/` prefix, so a leading `deepseek/` is stripped.
+- The runner also loads a `.env` at the workspace root (without overriding variables already set), so a target repo's `.env` reaches the agent's environment.
 
 ### Gitea issues (one-way mirror of the backlog)
 

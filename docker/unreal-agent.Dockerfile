@@ -1,14 +1,21 @@
 # Imagem do agente de análise inicial: Unreal Agent + superpowers
 # Compila o unreal-agent-runner em Go e mantém um processo vivo lendo a fila de stdin montada em /workspace/.painkiller/.
 
-FROM golang:1.24-bookworm AS builder
+# O go.mod do unreal-agent exige Go 1.27 (encoding/json/v2, uuid da stdlib), e
+# a imagem oficial fixa GOTOOLCHAIN=local: uma versão menor não compila.
+FROM golang:1.27.1-trixie AS builder
 
 ARG UNREAL_AGENT_REPO=https://github.com/unreallabsai/unreal-agent.git
-ARG UNREAL_AGENT_REF=main
+# Commit fixado: a saída JSONL do runner não é um contrato estável, e é ela que
+# `painkiller unreal-run` traduz. Atualize junto com os testes da ponte.
+ARG UNREAL_AGENT_COMMIT=1b9f778453f411c029b39b85102aaefb95e7e48d
 
-RUN git clone --depth 1 --branch "${UNREAL_AGENT_REF}" "${UNREAL_AGENT_REPO}" /src/unreal-agent \
+RUN git init -q /src/unreal-agent \
     && cd /src/unreal-agent \
-    && CGO_ENABLED=0 go build -ldflags="-s -w" -o /usr/local/bin/unreal-agent-runner ./cmd/unreal-agent-runner
+    && git fetch -q --depth 1 "${UNREAL_AGENT_REPO}" "${UNREAL_AGENT_COMMIT}" \
+    && git checkout -q FETCH_HEAD \
+    && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" \
+       -o /usr/local/bin/unreal-agent-runner ./cmd/unreal-agent-runner
 
 FROM node:22-slim
 
@@ -29,8 +36,11 @@ COPY --from=builder /usr/local/bin/unreal-agent-runner /usr/local/bin/unreal-age
 RUN git clone --depth 1 --branch "${SUPERPOWERS_REF}" "${SUPERPOWERS_REPO}" /opt/superpowers \
     && rm -rf /opt/superpowers/.git
 
-# Publica as skills para que estejam disponíveis tanto em /root/.agents quanto para o unreal-agent
-RUN mkdir -p /root/.agents && ln -s /opt/superpowers/skills /root/.agents/skills
+# O runner só descobre skills em <workspace>/.harness/skills; `painkiller unreal-run`
+# as publica lá a cada partida (e as tira do git via .git/info/exclude).
+
+# A ferramenta Bash do runner usa $SHELL (padrão /bin/sh).
+ENV SHELL=/bin/bash
 
 # Instala o CLI do painkiller, que fornece `painkiller unreal-run` (ponte de stdin)
 # e `painkiller ask` (protocolo de interrupção limpa).

@@ -1,191 +1,316 @@
 """Drive Unreal Agent (`unreal-agent-runner`) as a Painkiller agent.
 
-This runs inside the Unreal Agent containers and plays the same role that
-`agy --output-format stream-json` and `painkiller acp-run` play: it keeps
-one persistent agent session alive across turns, feeds it the analyst's messages,
-and translates the session events into Painkiller's domain event stream
-(`init`, `assistant`, `tool_use`, `result`).
+This runs inside the Unreal Agent containers and plays the role `painkiller
+acp-run` plays for `dsh`. The runner executes one JSON request per process and
+writes every persisted session item (`Kind`/`Data`) to stdout; a `session_id`
+makes the next process resume the same history, so one process per analyst
+message still gives the interview its memory.
+
+Everything is re-emitted in the Antigravity stream-json envelope (`init`,
+`step_update`, `result`), so `parse_agent_line`, the analysis pump, the task
+hub and usage accounting need nothing Unreal-specific. The `result` closing a
+turn is emitted when the runner exits — only then is the turn really over; a
+message item can be followed by more tool calls.
 """
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import threading
 import time
-from typing import List, Optional
+from typing import Optional
 
 import click
 
-from painkiller.cli.agent_run import EOF_SENTINEL, POLL_INTERVAL_SECONDS, _extract_prompt, _is_eof
-from painkiller.core.domain.models import AgentEvent, AgentEventType
+from painkiller.cli.agent_run import POLL_INTERVAL_SECONDS, _extract_prompt, _is_eof
+
+#: Onde as imagens instalam as skills do superpowers.
+SKILLS_SOURCE = "/opt/superpowers/skills"
+
+#: O runner só descobre skills em `<workspace>/.harness/skills`.
+SKILLS_RELATIVE = os.path.join(".harness", "skills")
+
+_emit_lock = threading.Lock()
 
 
-def parse_unreal_line(line: str) -> List[AgentEvent]:
-    """Parse one JSON line emitted by unreal-agent-runner into AgentEvent domain objects."""
-    line = line.strip()
-    if not line:
-        return []
-    try:
-        data = json.loads(line)
-    except Exception:
-        return []
+def _emit(event: dict) -> None:
+    line = json.dumps(event, ensure_ascii=False)
+    with _emit_lock:
+        print(line, flush=True)
 
-    events: List[AgentEvent] = []
 
-    # Erro de execução (ex: authentication failed, invalid flag)
-    if data.get("type") == "error" or data.get("Type") == "error":
-        msg = data.get("message") or data.get("Message") or "erro"
-        events.append(AgentEvent(type=AgentEventType.ERROR, text=msg, raw=data))
-        return events
+def _emit_step(step: dict) -> None:
+    _emit({"event": "step_update", "step_update": step})
 
-    kind = data.get("Kind")
-    if not kind:
-        # Se for um evento já envelopado
-        if "type" in data and data.get("type") in ("assistant", "result", "system"):
-            events.append(AgentEvent(type=AgentEventType(data["type"].upper()), text=data.get("text", ""), raw=data))
-        return events
 
-    data_payload = data.get("Data") or {}
+def _emit_failure(detail: str) -> None:
+    """Report a failed turn as a stream-json `result` with is_error.
 
-    if kind == "model_response":
-        resp = data_payload.get("Response") or {}
-        output_items = resp.get("Output") or []
-        for item in output_items:
-            itype = item.get("Type")
-            item_data = item.get("Data") or {}
-            if itype == "message":
-                text = item_data.get("Text") or ""
-                events.append(AgentEvent(type=AgentEventType.ASSISTANT, text=text, raw=data))
-                # Todo turno finalizado com texto produz também o evento RESULT
-                events.append(AgentEvent(type=AgentEventType.RESULT, text=text, raw=data))
-            elif itype == "tool_call":
+    `parse_agent_line` já transforma esse formato num ERROR com
+    `raw.harness_error` (chave recusada, sem saldo...), o mesmo caminho do maki.
+    """
+    _emit({"type": "result", "is_error": True, "result": detail})
+
+
+class TurnTranslator:
+    """Translate the runner's session items of one turn into Antigravity events."""
+
+    def __init__(self) -> None:
+        self.text = ""
+        self.failure: Optional[str] = None
+        self.usage = {"input_tokens": 0, "output_tokens": 0}
+        self._tools: dict[str, str] = {}
+
+    def feed(self, line: str) -> None:
+        line = line.strip()
+        if not line:
+            return
+        try:
+            data = json.loads(line)
+        except ValueError:
+            _emit_system(line)
+            return
+        if not isinstance(data, dict):
+            return
+        if data.get("type") == "error":
+            # O runner emite isto e sai com 1 quando a execução falha.
+            self.failure = str(data.get("message") or "erro")
+            return
+        kind = data.get("Kind")
+        payload = data.get("Data") if isinstance(data.get("Data"), dict) else {}
+        if kind == "model_response":
+            self._model_response(payload.get("Response") or {})
+        elif kind == "tool_call_status":
+            self._tool_status(payload)
+
+    def _model_response(self, response: dict) -> None:
+        usage = response.get("Usage") or {}
+        # InputTokens já inclui os tokens de cache; OutputTokens, os de raciocínio.
+        self.usage["input_tokens"] += int(usage.get("InputTokens") or 0)
+        self.usage["output_tokens"] += int(usage.get("OutputTokens") or 0)
+        failure = response.get("Failure")
+        if isinstance(failure, dict) and (failure.get("Message") or failure.get("Code")):
+            code = failure.get("Code") or ""
+            message = failure.get("Message") or ""
+            self.failure = f"{code}: {message}" if code and message else (message or code)
+        for item in response.get("Output") or []:
+            item_type = item.get("Type")
+            item_data = item.get("Data") if isinstance(item.get("Data"), dict) else {}
+            if item_type == "message":
+                text = (item_data.get("Text") or "").strip()
+                if text:
+                    self.text = text
+                    _emit_step({"step_type": "agent_response", "state": "DONE", "response": text})
+            elif item_type == "tool_call":
                 name = item_data.get("Name") or ""
-                events.append(AgentEvent(type=AgentEventType.TOOL_USE, text=name, raw=data))
-            elif itype == "reasoning":
+                self._tools[item_data.get("CallID") or ""] = name
+                _emit_step({"step_type": "tool", "state": "RUNNING", "tool_name": name})
+            elif item_type == "reasoning":
                 summary = item_data.get("Summary") or []
-                text = " ".join(summary) if isinstance(summary, list) else str(summary)
-                events.append(AgentEvent(type=AgentEventType.THINKING_DELTA, text=text, raw=data))
+                text = "\n".join(summary) if isinstance(summary, list) else str(summary)
+                if text.strip():
+                    _emit_step({"step_type": "agent_response", "thinking_delta": text + "\n"})
 
-    elif kind == "tool_call_status":
-        call_id = data_payload.get("CallID") or ""
-        events.append(AgentEvent(type=AgentEventType.TOOL_RESULT, text=call_id, raw=data))
+    def _tool_status(self, payload: dict) -> None:
+        status = payload.get("Status") if isinstance(payload.get("Status"), dict) else {}
+        if status.get("WaitingFor"):
+            # Ainda esperando operações: não terminou.
+            return
+        name = self._tools.get(payload.get("CallID") or "", "")
+        state = "ERROR" if status.get("Error") else "DONE"
+        _emit_step({"step_type": "tool", "state": state, "tool_name": name})
 
-    return events
+
+def _emit_system(line: str) -> None:
+    """Runner diagnostics (stderr, stray lines): `parse_agent_line` shows them as SYSTEM."""
+    with _emit_lock:
+        print(f"unreal: {line}", flush=True)
 
 
 def _setup_superpowers_skills(workspace: str) -> None:
-    """Ensure .harness/skills in the workspace is populated with Superpowers skills."""
-    opt_superpowers = "/opt/superpowers/skills"
-    harness_skills = os.path.join(workspace, ".harness", "skills")
-    if os.path.exists(opt_superpowers) and not os.path.exists(harness_skills):
+    """Publish the superpowers skills where the runner looks, and keep them out of git.
+
+    O workspace é o repositório do usuário: sem o exclude, o `git add -A` do
+    `painkiller ask` e do orquestrador commitaria o link (ou a cópia).
+    """
+    target = os.path.join(workspace, SKILLS_RELATIVE)
+    if os.path.isdir(SKILLS_SOURCE) and not os.path.lexists(target):
         try:
-            os.makedirs(os.path.dirname(harness_skills), exist_ok=True)
-            os.symlink(opt_superpowers, harness_skills)
-        except Exception:
-            pass
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            os.symlink(SKILLS_SOURCE, target)
+        except OSError:
+            # Bind mount do Windows pode recusar symlink: copia.
+            try:
+                shutil.copytree(SKILLS_SOURCE, target, dirs_exist_ok=True)
+            except OSError as e:
+                _emit_system(f"não foi possível publicar as skills: {e}")
+
+    exclude = os.path.join(workspace, ".git", "info", "exclude")
+    if not os.path.isdir(os.path.join(workspace, ".git")):
+        return
+    try:
+        existing = ""
+        if os.path.exists(exclude):
+            with open(exclude, "r", encoding="utf-8") as f:
+                existing = f.read()
+        if "/.harness/" not in existing.splitlines():
+            os.makedirs(os.path.dirname(exclude), exist_ok=True)
+            with open(exclude, "a", encoding="utf-8") as f:
+                if existing and not existing.endswith("\n"):
+                    f.write("\n")
+                f.write("/.harness/\n")
+    except OSError as e:
+        _emit_system(f"não foi possível atualizar .git/info/exclude: {e}")
 
 
-@click.command(context_settings={"ignore_unknown_options": True})
-@click.option("--stdin-file", default=None, help="JSONL file polled for agent input in interactive session.")
-@click.option("--session-id", default=None, help="Unique session ID for conversation history.")
+def _run_turn(
+    agent_bin: str,
+    workspace: str,
+    session_directory: str,
+    session_id: Optional[str],
+    model: str,
+    text: str,
+) -> bool:
+    """Run one runner process for one user message; True when the turn succeeded."""
+    request: dict = {"messages": [{"role": "user", "content": text}]}
+    if session_id:
+        request["session_id"] = session_id
+    cmd = [agent_bin, "-workspace", workspace, "-session-directory", session_directory]
+
+    translator = TurnTranslator()
+    try:
+        # A requisição vai pelo stdin: as instruções de uma tarefa podem passar
+        # do limite de tamanho de um argumento.
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as e:
+        _emit_failure(f"não foi possível iniciar {agent_bin}: {e}")
+        return False
+
+    def drain_stderr() -> None:
+        assert proc.stderr is not None
+        for err_line in proc.stderr:
+            if err_line.strip():
+                _emit_system(err_line.rstrip())
+
+    stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    assert proc.stdin is not None and proc.stdout is not None
+    try:
+        proc.stdin.write(json.dumps(request, ensure_ascii=False))
+        proc.stdin.close()
+    except OSError:
+        pass
+    for out_line in proc.stdout:
+        translator.feed(out_line)
+    proc.wait()
+    stderr_thread.join(timeout=5)
+
+    if proc.returncode != 0 or translator.failure:
+        _emit_failure(translator.failure or f"unreal-agent-runner saiu com código {proc.returncode}")
+        return False
+
+    payload: dict = {"response": translator.text}
+    if any(translator.usage.values()):
+        payload["usage"] = translator.usage
+    _emit({"event": "result", "result": payload, "model": model})
+    return True
+
+
+@click.command()
+@click.option("--stdin-file", default=None, help="JSONL file polled for analyst messages (interactive mode).")
+@click.option("--prompt", default=None, help="Run a single turn with this text and exit (one-shot mode).")
+@click.option("--session-id", default=None, help="Runner session id; the same id resumes the same history.")
 @click.option("--workspace", default="/workspace", show_default=True, help="Workspace directory.")
-@click.option("--session-directory", default="/root/.local/state/unreal-agent/sessions", help="Directory where sessions are persisted.")
+@click.option(
+    "--session-directory",
+    default="/root/.local/state/unreal-agent/sessions",
+    show_default=True,
+    help="Directory where the runner persists sessions.",
+)
 @click.option("--agent-bin", default="unreal-agent-runner", show_default=True, help="Binary to run.")
-@click.option("--idle-timeout", default=3600, type=int, help="Seconds before idle timeout.")
-@click.option("--prompt", default=None, help="Single-shot prompt to run (task execution mode).")
+@click.option("--stdin-offset", default=0, type=int, help="Byte offset in --stdin-file where unanswered input starts.")
+@click.option("--idle-timeout", default=3600, type=int, help="Seconds without input before giving up.")
 def unreal_run(
     stdin_file: Optional[str],
+    prompt: Optional[str],
     session_id: Optional[str],
     workspace: str,
     session_directory: str,
     agent_bin: str,
+    stdin_offset: int,
     idle_timeout: int,
-    prompt: Optional[str],
 ):
-    """Run Unreal Agent, bridging stdin messages or one-shot prompt."""
+    """Run Unreal Agent, emitting Antigravity-style stream-json."""
+    if not stdin_file and prompt is None:
+        raise click.UsageError("informe --stdin-file ou --prompt")
+
     _setup_superpowers_skills(workspace)
     os.makedirs(session_directory, exist_ok=True)
+    model = os.environ.get("UNREAL_HARNESS_LLM_MODEL") or ""
+    _emit({"event": "init", "init": {"conversation_id": session_id or "", "model": model}})
 
-    # 1. Modo One-Shot (execução direta de tarefa no worker)
-    if prompt:
-        cmd = [agent_bin, "-workspace", workspace, "-session-directory", session_directory, "-p", prompt]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            sys.stdout.write(line)
-            sys.stdout.flush()
-        proc.wait()
-        sys.exit(proc.returncode)
-
-    # 2. Modo Interativo (análise inicial com fila .painkiller/agent-stdin.jsonl)
-    if not stdin_file:
-        click.echo("Erro: forneça --stdin-file ou --prompt", err=True)
-        sys.exit(1)
+    if prompt is not None:
+        ok = _run_turn(agent_bin, workspace, session_directory, session_id, model, prompt)
+        return sys.exit(0 if ok else 1)
 
     os.makedirs(os.path.dirname(stdin_file) or ".", exist_ok=True)
     if not os.path.exists(stdin_file):
         with open(stdin_file, "w", encoding="utf-8"):
             pass
 
-    offset = 0
-    sid = session_id or "unreal-session"
-    last_activity = time.time()
+    # Retomando, o que está antes do offset já foi respondido pelo contêiner
+    # anterior. Quem mede é a API, no momento da religada: medir aqui perderia
+    # uma mensagem enviada enquanto o contêiner ainda subia.
+    offset = stdin_offset
+    pending = ""
+    deadline = time.monotonic() + idle_timeout if idle_timeout > 0 else 0
 
-    # Informa início do agente
-    model_name = os.environ.get("UNREAL_HARNESS_LLM_MODEL") or os.environ.get("PAINKILLER_MAKI_MODEL") or "deepseek/deepseek-v4-pro"
-    init_event = {"event": "init", "init": {"model": model_name}}
-    sys.stdout.write(json.dumps(init_event) + "\n")
-    sys.stdout.flush()
+    try:
+        while True:
+            if idle_timeout > 0 and time.monotonic() > deadline:
+                return sys.exit(124)
 
-    while True:
-        if not os.path.exists(stdin_file):
+            try:
+                size = os.path.getsize(stdin_file)
+            except OSError:
+                size = offset
+
+            if size > offset:
+                with open(stdin_file, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(offset)
+                    chunk = f.read()
+                    offset = f.tell()
+                pending += chunk
+
+                # Só linhas completas: um append parcial do host não vira JSON truncado.
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if _is_eof(line):
+                        return sys.exit(0)
+                    text = _extract_prompt(line)
+                    if not text:
+                        continue
+                    if not _run_turn(agent_bin, workspace, session_directory, session_id, model, text):
+                        # Sem saldo, chave recusada...: a sessão continua gravada e
+                        # pode ser retomada depois que o problema for resolvido.
+                        return sys.exit(1)
+                    if idle_timeout > 0:
+                        deadline = time.monotonic() + idle_timeout
+
             time.sleep(POLL_INTERVAL_SECONDS)
-            continue
-
-        with open(stdin_file, "r", encoding="utf-8") as f:
-            f.seek(offset)
-            lines = f.readlines()
-            offset = f.tell()
-
-        if not lines:
-            if time.time() - last_activity > idle_timeout:
-                break
-            time.sleep(POLL_INTERVAL_SECONDS)
-            continue
-
-        last_activity = time.time()
-
-        for line in lines:
-            line_str = line.strip()
-            if not line_str:
-                continue
-            if _is_eof(line_str):
-                sys.exit(0)
-
-            user_prompt = _extract_prompt(line_str)
-            if not user_prompt:
-                continue
-
-            # Prepara requisição JSON para o unreal-agent-runner
-            req = {
-                "session_id": sid,
-                "messages": [{"role": "user", "content": user_prompt}],
-            }
-            req_json = json.dumps(req)
-
-            cmd = [agent_bin, "-workspace", workspace, "-session-directory", session_directory, req_json]
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-
-            assert proc.stdout is not None
-            for out_line in proc.stdout:
-                # Transmite as linhas diretamente para que parse_agent_line processe
-                sys.stdout.write(out_line)
-                sys.stdout.flush()
-
-            proc.wait()
+    except KeyboardInterrupt:
+        return sys.exit(130)

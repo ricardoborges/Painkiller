@@ -11,7 +11,7 @@ import docker
 
 from painkiller.core.domain.models import AgentEventType, Task, ExecutionResult, ClarificationRequest
 from painkiller.core.ports.sandbox import AgentEventCallback, SandboxPort
-from painkiller.adapters.sandbox.docker_agent_session import maki_model, parse_agent_line
+from painkiller.adapters.sandbox.docker_agent_session import maki_model, parse_agent_line, unreal_env
 from painkiller.adapters.sandbox.paths import daemon_path
 
 logger = logging.getLogger(__name__)
@@ -132,17 +132,13 @@ class DockerSandboxRunner(SandboxPort):
             image = os.environ.get("PAINKILLER_WORKER_UNREAL_IMAGE") or "painkiller-worker-unreal:latest"
             if api_key:
                 env_vars["DEEPSEEK_API_KEY"] = api_key
-            env_vars["UNREAL_HARNESS_LLM_PROVIDER"] = "openai"
-            env_vars["UNREAL_HARNESS_LLM_BASE_URL"] = "https://api.deepseek.com"
-            env_vars["UNREAL_HARNESS_LLM_API_KEY"] = env_vars.get("DEEPSEEK_API_KEY", "")
-            chosen_model = model or maki_model()
-            env_vars["UNREAL_HARNESS_LLM_MODEL"] = chosen_model
-
+            unreal_env(env_vars, model)
+            # Um turno só, como o `agy --print`; a ponte publica as skills e
+            # emite o mesmo stream-json.
             command = [
-                "unreal-agent-runner",
-                "-workspace",
-                "/workspace",
-                "-p",
+                "painkiller",
+                "unreal-run",
+                "--prompt",
                 task_instructions,
             ]
         else:

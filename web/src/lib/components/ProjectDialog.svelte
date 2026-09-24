@@ -55,10 +55,10 @@
       { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (Recomendado)' },
       { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash' }
     ],
+    // A Responses API da DeepSeek recebe o id sem o prefixo `provider/` do maki.
     unreal_superpowers: [
-      { id: 'deepseek/deepseek-v4-pro', label: 'deepseek/deepseek-v4-pro (Padrão / Recomendado)' },
-      { id: 'deepseek/deepseek-v4-flash', label: 'deepseek/deepseek-v4-flash' },
-      { id: 'deepseek/deepseek-flash', label: 'deepseek/deepseek-flash' }
+      { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (Padrão / Recomendado)' },
+      { id: 'deepseek-flash', label: 'deepseek-flash' }
     ]
   };
 
@@ -353,7 +353,7 @@
       <div class="field">
         <label for="pmodel">Modelo de IA</label>
         <p class="help">
-          Modelo que o harness executará. Para Maki e Unreal Agent, o padrão selecionado é <span class="mono">deepseek/deepseek-v4-pro</span>.
+          Modelo que o harness executará. Para o Maki, o padrão selecionado é <span class="mono">deepseek/deepseek-v4-pro</span>; para o Unreal Agent, <span class="mono">deepseek-v4-pro</span>.
         </p>
         <div class="model-select-wrap">
           <select
@@ -373,7 +373,7 @@
             <input
               type="text"
               class="input mono custom-model-input"
-              placeholder={harness === 'maki_superpowers' || harness === 'unreal_superpowers' ? 'deepseek/deepseek-v4-pro' : 'nome-do-modelo'}
+              placeholder={harness === 'maki_superpowers' ? 'deepseek/deepseek-v4-pro' : harness === 'unreal_superpowers' ? 'deepseek-v4-pro' : 'nome-do-modelo'}
               bind:value={customModelText}
             />
           {/if}

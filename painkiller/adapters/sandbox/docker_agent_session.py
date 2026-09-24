@@ -57,6 +57,24 @@ def maki_model() -> str:
     return os.environ.get("PAINKILLER_MAKI_MODEL") or "deepseek/deepseek-v4-pro"
 
 
+def unreal_model(model: Optional[str] = None) -> str:
+    """Model id for the Unreal Agent, sent as-is to DeepSeek's Responses API.
+
+    A API da DeepSeek não conhece o prefixo `provider/` do maki; projetos
+    gravados com `deepseek/...` continuam funcionando.
+    """
+    chosen = model or os.environ.get("PAINKILLER_UNREAL_MODEL") or "deepseek-v4-pro"
+    return chosen.split("/", 1)[1] if chosen.startswith("deepseek/") else chosen
+
+
+def unreal_env(env_vars: dict[str, str], model: Optional[str]) -> None:
+    """Point the Unreal Agent's `openai` provider at DeepSeek with the project's key."""
+    env_vars["UNREAL_HARNESS_LLM_PROVIDER"] = "openai"
+    env_vars["UNREAL_HARNESS_LLM_BASE_URL"] = "https://api.deepseek.com"
+    env_vars["UNREAL_HARNESS_LLM_API_KEY"] = env_vars.get("DEEPSEEK_API_KEY", "")
+    env_vars["UNREAL_HARNESS_LLM_MODEL"] = unreal_model(model)
+
+
 #: Log JSON do maki; no modo SDK é o único lugar onde uma chave recusada aparece.
 MAKI_LOG = "/root/.local/logs/maki/maki.log"
 
@@ -227,23 +245,23 @@ class DockerAgentSession(AgentSessionPort):
             }
         elif harness_type == "unreal_superpowers":
             image = os.environ.get("PAINKILLER_AGENT_UNREAL_IMAGE") or "painkiller-agent-unreal:latest"
-            env_vars["UNREAL_HARNESS_LLM_PROVIDER"] = "openai"
-            env_vars["UNREAL_HARNESS_LLM_BASE_URL"] = "https://api.deepseek.com"
-            env_vars["UNREAL_HARNESS_LLM_API_KEY"] = env_vars.get("DEEPSEEK_API_KEY", "")
-            env_vars["UNREAL_HARNESS_LLM_MODEL"] = model or maki_model()
+            unreal_env(env_vars, model)
 
+            # Sessões do runner fora do contêiner, para a entrevista sobreviver
+            # a um restart; o mesmo --session-id retoma o mesmo histórico.
             unreal_state = os.path.join(repo_path, ".painkiller", "unreal_home")
             os.makedirs(os.path.join(unreal_state, "sessions"), exist_ok=True)
 
             command = [
                 "painkiller", "unreal-run",
                 "--stdin-file", "/workspace/" + STDIN_RELATIVE,
-                "--session-id", claude_session_id or "unreal-session",
+                "--session-id", claude_session_id or session_id,
                 "--session-directory", "/root/.local/state/unreal-agent/sessions",
                 "--idle-timeout", str(timeout_seconds),
             ]
             if resume:
-                command.extend(["--resume", "--stdin-offset", str(os.path.getsize(stdin_path))])
+                # Como no dsh: a fila já respondida não é reenviada.
+                command.extend(["--stdin-offset", str(os.path.getsize(stdin_path))])
             volumes = {
                 daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
                 daemon_path(unreal_state): {"bind": "/root/.local/state/unreal-agent", "mode": "rw"},
@@ -528,6 +546,10 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
             # `cwd_latest.json` (só usado por --continue); a sessão em si é
             # gravada e retomada normalmente por `--session`.
             return AgentEvent(type=AgentEventType.SYSTEM, text=line, raw={"line": line})
+        if line.startswith("unreal:"):
+            # Diagnóstico do unreal-agent-runner repassado pelo `unreal-run`; a
+            # falha do turno chega à parte, como `result` com is_error.
+            return AgentEvent(type=AgentEventType.SYSTEM, text=line, raw={"line": line})
         # Ruído de stderr não é fatal.
         return AgentEvent(type=AgentEventType.ERROR, text=line, raw={"line": line})
 
@@ -559,13 +581,6 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
             res = data.get("result") or {}
             text = res.get("response") or ""
             return AgentEvent(type=AgentEventType.RESULT, text=text, raw=data)
-
-    # Eventos nativos do Unreal Agent (`unreal-agent-runner`)
-    if "Kind" in data or (data.get("type") == "error" and "message" in data and "response" not in data):
-        from painkiller.cli.unreal_run import parse_unreal_line
-        unreal_events = parse_unreal_line(line)
-        if unreal_events:
-            return unreal_events[0]
 
     # Eventos legados do Claude Code e DeepSeek Harness (`dsh`)
     kind = data.get("type")
