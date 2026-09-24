@@ -23,6 +23,17 @@ export const DEEPSEEK_KEY_HARNESSES: readonly HarnessType[] = [
   'unreal_superpowers'
 ];
 
+export type EffortLevel = 'low' | 'medium' | 'high';
+
+/** Harnesses com nível de esforço ajustável (agy e dsh); Maki e Unreal não têm. */
+export const EFFORT_HARNESSES: readonly HarnessType[] = ['agy_superpowers', 'deepseek_superpowers'];
+
+export const EFFORT_LEVELS: { id: EffortLevel; label: string }[] = [
+  { id: 'low', label: 'Baixo — mais rápido e barato' },
+  { id: 'medium', label: 'Médio (padrão)' },
+  { id: 'high', label: 'Alto — pensa mais antes de agir' }
+];
+
 export const PROJECT_TYPES = [
   'api',
   'web_static',
@@ -107,6 +118,7 @@ export interface Project {
   production_url?: string | null;
   harness?: HarnessType;
   model?: string | null;
+  effort?: EffortLevel | null;
   has_api_key?: boolean;
   masked_api_key?: string | null;
   created_at: string;
@@ -408,6 +420,8 @@ export interface SetupImageRow {
 export interface SetupEnvironment {
   public_url: string;
   public_url_saved: boolean;
+  /** Validade das sessões, em horas. */
+  session_ttl_hours: number;
   in_container: boolean;
   host_root: string | null;
   /** De onde veio o valor: salvo no wizard ou detectado no contêiner. */

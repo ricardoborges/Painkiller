@@ -115,24 +115,18 @@ flowchart TD
 powershell -ExecutionPolicy Bypass -File .\win-run.ps1   # Windows
 ```
 
-The script checks Docker/Compose, creates `.env` from `.env.example`, generates the Gitea service-account password, builds **every** image (including each harness's worker and agent), verifies them and waits for the API. Use `--skip-build` / `-SkipBuild` to only start.
+The script checks Docker/Compose, creates the `coolify` network, builds **every** image (including each harness's worker and agent), verifies them and waits for the API. No `.env` is needed. Use `--skip-build` / `-SkipBuild` to only start.
 
 ### Running with Docker Compose manually
 
-1. Clone the repo and configure `.env`:
-   ```bash
-   cp .env.example .env
-   # Set PAINKILLER_GITEA_PASSWORD in .env (everything else is configured in the browser)
-   ```
-
-2. Build and start the services:
+1. Build and start the services (no `.env` needed):
    ```bash
    docker network create coolify   # once per machine; owned by Coolify, external to compose
    docker compose --profile build build
    docker compose up -d
    ```
 
-3. Open `http://localhost:8000` right away: a fresh install asks you to **create the administrator** (username and password, stored hashed in the database). Whoever gets there first owns the instance. Forgot the password? `docker compose exec api painkiller admin-reset && docker compose restart api` reopens the first access.
+2. Open `http://localhost:8000` right away: a fresh install asks you to **create the administrator** (username and password, stored hashed in the database). Whoever gets there first owns the instance. Forgot the password? `docker compose exec api painkiller admin-reset && docker compose restart api` reopens the first access.
 
 ### First-run setup wizard
 
@@ -142,5 +136,5 @@ Right after the first access, the admin lands on a wizard (`/setup`, later at **
 2. **Login com Google** (optional, skippable) — a step-by-step for the Google Cloud Console with both redirect URIs ready to copy.
 3. **Coolify** (optional, skippable) — **"Configurar automaticamente"** creates Coolify's root account, enables its API and issues a root token by running `php artisan tinker` inside `painkiller-coolify` through the Docker socket; the generated credentials are shown once and kept encrypted. A manual path with direct links to Coolify's register, Settings → Advanced and API Tokens pages is there as a fallback.
 
-All of it lives in the SQLite database, never in the `.env`, and applies without a restart. A random key generated on first boot signs sessions and encrypts the stored secrets. The `.env` keeps only infrastructure settings (images, ports, the Gitea service-account password).
+All of it lives in the SQLite database and applies without a restart; there is no `.env` to fill in. A random key generated on first boot signs sessions and encrypts the stored secrets, and the Gitea service-account password is generated the same way. Optional infrastructure overrides (ports such as `PAINKILLER_GITEA_PORT`/`COOLIFY_PORT`, `PAINKILLER_TASK_TIMEOUT`) can still be exported or put in an optional `.env`.
 

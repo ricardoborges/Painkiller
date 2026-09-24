@@ -28,7 +28,6 @@ npm-debug.log*
 # Segredos: chaves de LLM
 .env
 .env.*
-!.env.example
 
 # Repositorios dos projetos e anexos enviados. O conteudo e gerado em runtime
 # e storage/projects/<id>/repo chega a ser um repositorio git aninhado.

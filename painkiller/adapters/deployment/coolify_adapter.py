@@ -62,10 +62,8 @@ class CoolifyAdapter(DeploymentPort):
             or os.environ.get("COOLIFY_GITEA_URL")
             or os.environ.get("PAINKILLER_GITEA_INTERNAL_URL", "http://painkiller-gitea:3000")
         ).rstrip("/")
-        self.gitea_external_url = (
-            gitea_external_url
-            or os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL", "http://localhost:8000/gitea")
-        ).rstrip("/")
+        # URL pública + /gitea, aplicada por PlatformConfig.
+        self.gitea_external_url = (gitea_external_url or "http://localhost:8000/gitea").rstrip("/")
 
     def configure(
         self,
@@ -80,6 +78,9 @@ class CoolifyAdapter(DeploymentPort):
             self.server_uuid = server_uuid
         if wildcard_domain:
             self.wildcard_domain = wildcard_domain.strip().strip(".")
+
+    def set_gitea_external_url(self, url: str) -> None:
+        self.gitea_external_url = url.rstrip("/")
 
     async def check(self, api_token: Optional[str] = None) -> dict:
         """Reachability and token check for the setup wizard.

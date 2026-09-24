@@ -74,6 +74,7 @@ class ProjectRecord(Base):
     harness = Column(String, default="agy_superpowers", nullable=False)
     api_key = Column(String, nullable=True)
     model = Column(String, nullable=True)
+    effort = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -241,7 +242,7 @@ USAGE_SETTINGS_KEY = "usage"
 PLATFORM_SETTINGS_KEY = "platform"
 #: Chave aleatória da instalação: assina as sessões e cifra os segredos.
 PLATFORM_SECRET_KEY = "platform:secret-key"
-PLATFORM_SECRET_FIELDS = ("google_client_secret", "coolify_api_token", "coolify_root_password")
+PLATFORM_SECRET_FIELDS = ("google_client_secret", "coolify_api_token", "coolify_root_password", "gitea_password")
 
 
 def _budget_key(project_id: str) -> str:
@@ -292,6 +293,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> Project:
         proj_id = project_id or f"proj-{uuid.uuid4().hex[:8]}"
@@ -310,6 +312,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             harness=harness_val,
             api_key=api_key or None,
             model=model or None,
+            effort=effort or None,
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
@@ -346,6 +349,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> Project:
         values: dict[str, Any] = {}
         if name is not None:
@@ -366,6 +370,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             values["api_key"] = api_key or None
         if model is not None:
             values["model"] = model or None
+        if effort is not None:
+            values["effort"] = effort or None
 
         async with self.session_factory() as session:
             if values:
@@ -413,6 +419,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             harness=HarnessType(getattr(record, "harness", None) or "agy_superpowers") if getattr(record, "harness", None) in [h.value for h in HarnessType] else HarnessType.AGY_SUPERPOWERS,
             api_key=getattr(record, "api_key", None) or None,
             model=getattr(record, "model", None) or None,
+            effort=getattr(record, "effort", None) or None,
             created_at=record.created_at,
         )
 

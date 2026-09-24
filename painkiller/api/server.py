@@ -66,6 +66,18 @@ async def _align_project_repo_urls(tracker: SQLiteIssueTracker, vcs: GiteaAdapte
         logger.debug(f"Could not align project repo URLs: {e}")
 
 
+async def _sync_gitea_root_url(platform: PlatformConfig) -> None:
+    """Wait for Gitea to answer, then align its ROOT_URL with the public URL."""
+    vcs = getattr(platform.state, "vcs", None)
+    if vcs is None or not hasattr(vcs, "is_available"):
+        return
+    for _ in range(30):
+        if await vcs.is_available():
+            await platform.sync_gitea_root_url()
+            return
+        await asyncio.sleep(2)
+
+
 async def _scrub_remote_credentials(tracker: SQLiteIssueTracker, git: GitCliAdapter) -> None:
     """Remove the service-account password from remotes written by older versions."""
     try:
@@ -103,6 +115,7 @@ def create_app(
         # Initialize Gitea admin user in background if service is reachable
         vcs: GiteaAdapter = app.state.vcs
         asyncio.create_task(vcs.ensure_admin_user())
+        asyncio.create_task(_sync_gitea_root_url(app.state.platform))
         asyncio.create_task(_align_project_repo_urls(tracker, vcs))
         asyncio.create_task(_scrub_remote_credentials(tracker, app.state.git))
 

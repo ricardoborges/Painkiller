@@ -38,8 +38,8 @@ services:
     ports:
       - "8000:8000"
 
-    # Admin, segredos e ajustes finos. As chaves de LLM sao por projeto (na UI),
-    # e Google/Coolify sao configurados no wizard de setup do primeiro acesso.
+    # Opcional e normalmente ausente: tudo e configurado no navegador e fica no
+    # banco. Serve so para sobrescrever um ajuste de infraestrutura.
     env_file:
       - path: .env
         required: false
@@ -58,10 +58,6 @@ services:
       PAINKILLER_WORKER_UNREAL_IMAGE: painkiller-worker-unreal:latest
       PAINKILLER_AGENT_UNREAL_IMAGE: painkiller-agent-unreal:latest
 
-      # Backend do agente de analise inicial: Antigravity CLI + superpowers + Gemini 3.8 Flash.
-      # Autentica com a chave do projeto, repassada pela api a cada contentor.
-      PAINKILLER_AGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-gemini-3.8-flash}
-      PAINKILLER_AGENT_EFFORT: ${PAINKILLER_AGENT_EFFORT:-medium}
 
       # O contentor do agente nasce IRMAO, pelo socket do host, entao nao entra
       # na rede do compose sozinho.
@@ -72,18 +68,12 @@ services:
       PAINKILLER_CONTAINER_ROOT: /app/storage
 
       # Gitea embutido para versionamento e visualizador de codigo
+      # Conta de servico, senha e URL externa do Gitea sao geridas pela api
+      # (senha gerada e guardada no banco; URL = URL publica + /gitea).
       PAINKILLER_GITEA_INTERNAL_URL: http://gitea:3000
-      PAINKILLER_GITEA_EXTERNAL_URL: ${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:8000/gitea}
-      PAINKILLER_GITEA_USER: ${PAINKILLER_GITEA_USER:-painkiller}
-      # Sem padrao de proposito: a conta de servico e admin do Gitea inteiro.
-      PAINKILLER_GITEA_PASSWORD: ${PAINKILLER_GITEA_PASSWORD:?defina PAINKILLER_GITEA_PASSWORD no .env}
-      PAINKILLER_GITEA_EMAIL: ${PAINKILLER_GITEA_EMAIL:-bot@painkiller.local}
 
       # Integracao com Coolify on-premise
       COOLIFY_API_URL: ${COOLIFY_API_URL:-http://coolify:8080}
-      COOLIFY_API_TOKEN: ${COOLIFY_API_TOKEN:-}
-      COOLIFY_SERVER_UUID: ${COOLIFY_SERVER_UUID:-}
-      COOLIFY_WILDCARD_DOMAIN: ${COOLIFY_WILDCARD_DOMAIN:-127.0.0.1.nip.io}
       COOLIFY_GITEA_URL: ${COOLIFY_GITEA_URL:-http://gitea:3000}
 
     volumes:
@@ -191,7 +181,8 @@ services:
       - GITEA__database__PATH=/data/gitea/gitea.db
       - GITEA__security__INSTALL_LOCK=true
       - GITEA__security__SECRET_KEY=painkiller-secret-key-2026
-      - GITEA__server__ROOT_URL=${PAINKILLER_GITEA_EXTERNAL_URL:-http://localhost:8000/gitea/}
+      # ROOT_URL nao fica aqui: o entrypoint regravaria o app.ini a cada start.
+      # A api o alinha com a URL publica (environment-to-ini + restart).
       - GITEA__server__HTTP_PORT=3000
       - GITEA__server__SSH_PORT=2222
       - GITEA__service__DISABLE_REGISTRATION=true

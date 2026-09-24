@@ -23,6 +23,7 @@ class SandboxPort(ABC):
         harness: Optional[Any] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> ExecutionResult:
         """Run an isolated worker on a task and return the execution result.
 

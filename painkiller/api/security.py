@@ -16,7 +16,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import secrets
 import time
 from typing import Optional
@@ -38,6 +37,9 @@ OAUTH_STATE_KIND = "oauth_state"
 # administrador, o que só acontece antes do primeiro acesso.
 _auth_secret: bytes = secrets.token_urlsafe(32).encode("utf-8")
 _admin: Optional[tuple[str, str]] = None
+#: Validade das sessões, instalada a partir das configurações da plataforma.
+DEFAULT_SESSION_TTL_HOURS = 12
+_session_ttl_seconds = DEFAULT_SESSION_TTL_HOURS * 3600
 
 #: Parâmetros do scrypt: ~16 MB e algumas dezenas de ms por verificação.
 _SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
@@ -53,6 +55,11 @@ def set_admin_account(username: Optional[str], password_hash: Optional[str]) -> 
     """Install the administrator account; None = first access still pending."""
     global _admin
     _admin = (username, password_hash) if username and password_hash else None
+
+
+def set_session_ttl(hours: Optional[int]) -> None:
+    global _session_ttl_seconds
+    _session_ttl_seconds = int((hours or DEFAULT_SESSION_TTL_HOURS) * 3600)
 
 
 def admin_account() -> Optional[tuple[str, str]]:
@@ -92,7 +99,7 @@ def _unb64(text: str) -> bytes:
 def issue_token(subject: str, kind: str = SESSION_KIND, ttl_seconds: Optional[int] = None, **claims) -> str:
     """Sign a compact `payload.signature` token (HMAC-SHA256)."""
     if ttl_seconds is None:
-        ttl_seconds = int(float(os.environ.get("PAINKILLER_AUTH_TOKEN_TTL_HOURS", "12")) * 3600)
+        ttl_seconds = _session_ttl_seconds
     payload = {"sub": subject, "kind": kind, "exp": int(time.time()) + ttl_seconds, **claims}
     body = _b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = _b64(hmac.new(_secret(), body.encode("ascii"), hashlib.sha256).digest())

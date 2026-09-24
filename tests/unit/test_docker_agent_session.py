@@ -322,3 +322,32 @@ async def test_missing_image_explains_how_to_build_it(tmp_path, client):
 
     with pytest.raises(RuntimeError, match=r"docker compose --profile build build"):
         await session.start("analysis-x", str(tmp_path), "p", api_key=KEY)
+
+
+async def test_agy_model_and_effort_come_from_the_project(tmp_path, client, monkeypatch):
+    monkeypatch.setenv("PAINKILLER_AGENT_MODEL", "from-env")
+    monkeypatch.setenv("PAINKILLER_AGENT_EFFORT", "low")
+    session = DockerAgentSession(client=client)
+
+    await session.start("a", str(tmp_path), "p", api_key=KEY, model="gemini-3.8-pro", effort="high")
+    command = client.containers.run.call_args.kwargs["command"]
+    args = command[command.index("--") + 1:]
+    assert args[args.index("--model") + 1] == "gemini-3.8-pro"
+    assert args[args.index("--effort") + 1] == "high"
+    assert "PAINKILLER_AGENT_MODEL" not in client.containers.run.call_args.kwargs["environment"]
+
+    # Projeto sem escolha: padrões do harness, nunca o .env.
+    await session.start("b", str(tmp_path), "p", api_key=KEY)
+    command = client.containers.run.call_args.kwargs["command"]
+    args = command[command.index("--") + 1:]
+    assert args[args.index("--model") + 1] == "gemini-3.8-flash"
+    assert args[args.index("--effort") + 1] == "medium"
+
+
+async def test_dsh_receives_the_project_model_and_effort(tmp_path, client):
+    await DockerAgentSession(client=client).start(
+        "a", str(tmp_path), "p", harness="deepseek_superpowers", api_key="sk-ds", model="deepseek-v4-flash", effort="low",
+    )
+    env = client.containers.run.call_args.kwargs["environment"]
+    assert env["PAINKILLER_DEEPSEEK_MODEL"] == "deepseek-v4-flash"
+    assert env["PAINKILLER_DEEPSEEK_EFFORT"] == "low"

@@ -20,6 +20,7 @@ from painkiller.core.domain.models import (
     UsageSource,
     IterationSession,
     SessionStatus,
+    harness_model,
 )
 from painkiller.core.ports.agent_session import AgentSessionPort
 from painkiller.core.ports.git import GitPort
@@ -76,7 +77,7 @@ TURN_ENDERS = frozenset(
 class AnalysisRun:
     """In-process bookkeeping for one live session."""
 
-    def __init__(self, session: AnalysisSession, repo_path: str):
+    def __init__(self, session: AnalysisSession, repo_path: str, model: str = ""):
         self.session = session
         self.repo_path = repo_path
         self.events: list[AgentEvent] = []
@@ -94,8 +95,9 @@ class AnalysisRun:
         # religar o pump relemos o log inteiro do contêiner, então estes
         # primeiros eventos são reconstruídos em memória mas não regravados.
         self.persisted = 0
-        # Modelo anunciado no evento de init; o RESULT nem sempre o repete.
-        self.model = os.environ.get("PAINKILLER_AGENT_MODEL", "")
+        # Modelo do projeto, trocado pelo que o agente anunciar no init; o
+        # RESULT nem sempre o repete.
+        self.model = model
 
 
 class AnalysisOrchestrator:
@@ -157,7 +159,7 @@ class AnalysisOrchestrator:
             claude_session_id=claude_session_id,
             status=AnalysisStatus.STARTING,
         )
-        run = AnalysisRun(session=session, repo_path=project.repo_path)
+        run = AnalysisRun(session=session, repo_path=project.repo_path, model=harness_model(project.harness, project.model))
         self.runs[session_id] = run
         try:
             await self.tracker.save_analysis_session(session)
@@ -220,6 +222,7 @@ class AnalysisOrchestrator:
                 harness=project.harness,
                 api_key=project.api_key,
                 model=project.model,
+                effort=project.effort,
             )
         except Exception as e:
             session.status = AnalysisStatus.FAILED
@@ -249,7 +252,7 @@ class AnalysisOrchestrator:
 
         run = self.runs.get(session_id)
         if not run:
-            run = AnalysisRun(session=session, repo_path=project.repo_path)
+            run = AnalysisRun(session=session, repo_path=project.repo_path, model=harness_model(project.harness, project.model))
             events = await self.tracker.list_analysis_events(session_id)
             run.events = list(events) if isinstance(events, (list, tuple)) else []
             self.runs[session_id] = run
@@ -269,6 +272,7 @@ class AnalysisOrchestrator:
                     harness=project.harness,
                     api_key=project.api_key,
                     model=project.model,
+                    effort=project.effort,
                 )
                 session.status = AnalysisStatus.WAITING_ANALYST
                 await self.tracker.save_analysis_session(session)
@@ -529,7 +533,8 @@ class AnalysisOrchestrator:
             raise ValueError(f"Sessão {session_id} não encontrada")
         project = await self.tracker.get_project(session.project_id)
         repo_path = project.repo_path if isinstance(project, Project) else ""
-        run = AnalysisRun(session=session, repo_path=repo_path)
+        model = harness_model(project.harness, project.model) if isinstance(project, Project) else ""
+        run = AnalysisRun(session=session, repo_path=repo_path, model=model)
         events = await self.tracker.list_analysis_events(session_id)
         run.events = list(events) if isinstance(events, (list, tuple)) else []
         self.runs[session_id] = run

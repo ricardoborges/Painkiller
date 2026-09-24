@@ -2,6 +2,9 @@
   import { api, baseName } from '$lib/api';
   import {
     DEEPSEEK_KEY_HARNESSES,
+    EFFORT_HARNESSES,
+    EFFORT_LEVELS,
+    type EffortLevel,
     PROJECT_TYPE_META,
     type HarnessType,
     type Project,
@@ -67,6 +70,8 @@
   }
 
   let model = $state('');
+  let effort = $state<EffortLevel>('medium');
+  const hasEffort = $derived(EFFORT_HARNESSES.includes(harness));
   let isCustomModel = $state(false);
   let customModelText = $state('');
 
@@ -117,6 +122,7 @@
       isCustomModel = true;
       customModelText = currentModel;
     }
+    effort = project?.effort ?? 'medium';
     apiKey = '';
     files = [];
     error = null;
@@ -209,13 +215,16 @@
         harness: HarnessType;
         api_key?: string;
         model?: string;
+        effort?: string;
       } = {
         name: name.trim(),
         description: description.trim(),
         purpose: purpose.trim(),
         solution_description: solution.trim(),
         harness: harness,
-        model: effectiveModel || undefined
+        model: effectiveModel || undefined,
+        // Só agy e dsh têm o ajuste; para os demais o backend o descarta.
+        effort: hasEffort ? effort : undefined
       };
       if (apiKey.trim()) {
         body.api_key = apiKey.trim();
@@ -402,6 +411,18 @@
           {/if}
         </div>
       </div>
+
+      {#if hasEffort}
+        <div class="field">
+          <label for="peffort">Esforço de raciocínio</label>
+          <p class="help">Quanto o modelo pensa antes de responder. Mais esforço custa mais tokens.</p>
+          <select id="peffort" class="input select-input" bind:value={effort}>
+            {#each EFFORT_LEVELS as level (level.id)}
+              <option value={level.id}>{level.label}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
 
       <div class="field">
         <label for="papikey">

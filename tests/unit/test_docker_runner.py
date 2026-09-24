@@ -108,3 +108,28 @@ async def test_docker_runner_flags_timeout():
     assert res.exit_code == 137
     assert res.timed_out is True
     assert res.summary == "ainda trabalhando"
+
+
+@pytest.mark.asyncio
+async def test_task_run_uses_the_project_model_and_effort(monkeypatch):
+    monkeypatch.setenv("PAINKILLER_AGENT_MODEL", "from-env")
+    monkeypatch.setenv("PAINKILLER_AGENT_EFFORT", "low")
+    mock_client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = [b'{"event": "result", "result": {"response": "ok"}}\n']
+    mock_container.wait.return_value = {"StatusCode": 0}
+    mock_client.containers.run.return_value = mock_container
+    runner = DockerSandboxRunner(client=mock_client)
+    task = Task(id="t3", project_id="p1", title="T", description="d", status=TaskStatus.READY)
+
+    await runner.run_task(task=task, repo_path="/fake/repo", task_instructions="x",
+                          harness="agy_superpowers", api_key="k", model="gemini-3.8-pro", effort="high")
+    command = mock_client.containers.run.call_args[1]["command"]
+    assert command[command.index("--model") + 1] == "gemini-3.8-pro"
+    assert command[command.index("--effort") + 1] == "high"
+
+    await runner.run_task(task=task, repo_path="/fake/repo", task_instructions="x",
+                          harness="deepseek_superpowers", api_key="k", effort="high")
+    env = mock_client.containers.run.call_args[1]["environment"]
+    assert env["PAINKILLER_DEEPSEEK_MODEL"] == "deepseek-v4-pro"
+    assert env["PAINKILLER_DEEPSEEK_EFFORT"] == "high"

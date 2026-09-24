@@ -10,7 +10,13 @@ from typing import Any, AsyncIterator, Optional
 
 import docker
 
-from painkiller.core.domain.models import DEEPSEEK_KEY_HARNESSES, AgentEvent, AgentEventType
+from painkiller.core.domain.models import (
+    DEEPSEEK_KEY_HARNESSES,
+    AgentEvent,
+    AgentEventType,
+    harness_effort,
+    harness_model,
+)
 from painkiller.core.ports.agent_session import AgentSessionPort
 from painkiller.adapters.sandbox.paths import daemon_path
 
@@ -19,16 +25,6 @@ logger = logging.getLogger(__name__)
 #: Caminho, dentro do contêiner, da fila que a ponte (painkiller agent-run) lê.
 STDIN_RELATIVE = ".painkiller/agent-stdin.jsonl"
 EOF_SENTINEL = "__painkiller_eof__"
-
-#: Variáveis repassadas ao contêiner. Nenhuma chave de provedor: ela vem só
-#: do projeto (`api_key`), para que um projeto nunca gaste a conta de outro.
-FORWARDED_ENV = [
-    "PAINKILLER_DEEPSEEK_MODEL",
-    "PAINKILLER_DEEPSEEK_EFFORT",
-    "PAINKILLER_MAKI_MODEL",
-    "PAINKILLER_AGENT_MODEL",
-    "PAINKILLER_AGENT_EFFORT",
-]
 
 #: Mensagem de quando o projeto não tem chave; a UI a mostra como veio.
 MISSING_KEY_MESSAGE = (
@@ -39,18 +35,13 @@ MISSING_KEY_MESSAGE = (
 
 
 
-def maki_model() -> str:
-    """Model spec (provider/model-id) for maki; DeepSeek, as its key is the one passed."""
-    return os.environ.get("PAINKILLER_MAKI_MODEL") or "deepseek/deepseek-v4-pro"
-
-
 def unreal_model(model: Optional[str] = None) -> str:
     """Model id for the Unreal Agent, sent as-is to DeepSeek's Responses API.
 
     A API da DeepSeek não conhece o prefixo `provider/` do maki; projetos
     gravados com `deepseek/...` continuam funcionando.
     """
-    chosen = model or os.environ.get("PAINKILLER_UNREAL_MODEL") or "deepseek-v4-pro"
+    chosen = harness_model("unreal_superpowers", model)
     return chosen.split("/", 1)[1] if chosen.startswith("deepseek/") else chosen
 
 
@@ -89,14 +80,10 @@ class DockerAgentSession(AgentSessionPort):
         image_name: str = "painkiller-agent:latest",
         client: Optional[Any] = None,
         plugin_dir: str = "/opt/superpowers",
-        model: Optional[str] = None,
-        effort: Optional[str] = None,
         network: Optional[str] = None,
     ):
         self.image_name = image_name
         self.plugin_dir = plugin_dir
-        self.model = model or os.environ.get("PAINKILLER_AGENT_MODEL") or "gemini-3.8-flash"
-        self.effort = effort or os.environ.get("PAINKILLER_AGENT_EFFORT") or "medium"
         self.network = network or os.environ.get("PAINKILLER_AGENT_NETWORK") or None
         self._client = client
         self._containers: dict[str, Any] = {}
@@ -122,12 +109,13 @@ class DockerAgentSession(AgentSessionPort):
         harness: Optional[Any] = "agy_superpowers",
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> str:
         harness_type = getattr(harness, "value", harness) or "agy_superpowers"
         if not api_key:
             raise RuntimeError(MISSING_KEY_MESSAGE)
-        env_vars = {k: os.environ[k] for k in FORWARDED_ENV if k in os.environ}
-        env_vars.update(env or {})
+        # Chave, modelo e esforço vêm só do projeto; nada do ambiente da API.
+        env_vars = dict(env or {})
         if harness_type in DEEPSEEK_KEY_HARNESSES:
             env_vars["DEEPSEEK_API_KEY"] = api_key
         else:
@@ -165,8 +153,9 @@ class DockerAgentSession(AgentSessionPort):
 
         if harness_type == "deepseek_superpowers":
             image = os.environ.get("PAINKILLER_AGENT_DEEPSEEK_IMAGE") or "painkiller-agent-deepseek:latest"
-            if model:
-                env_vars["PAINKILLER_DEEPSEEK_MODEL"] = model
+            # A ponte aplica os dois via session/set_config_option.
+            env_vars["PAINKILLER_DEEPSEEK_MODEL"] = harness_model(harness_type, model)
+            env_vars["PAINKILLER_DEEPSEEK_EFFORT"] = harness_effort(harness_type, effort) or ""
             # `painkiller acp-run` mantém uma sessão ACP do dsh viva e emite o
             # mesmo stream-json do agy. A chave da sessão do Painkiller acha a
             # sessão ACP de novo quando o contêiner é religado.
@@ -205,7 +194,7 @@ class DockerAgentSession(AgentSessionPort):
                 "--input-format", "stream-json",
                 "--output-format", "stream-json",
                 "--include-partial-messages",
-                "--model", model or maki_model(),
+                "--model", harness_model(harness_type, model),
             ]
             if claude_session_id:
                 # Retomar exige que a sessão exista; se o contêiner caiu antes
@@ -256,8 +245,8 @@ class DockerAgentSession(AgentSessionPort):
         else:
             image = self.image_name
             agent_args = [
-                "--model", model or self.model,
-                "--effort", self.effort,
+                "--model", harness_model(harness_type, model),
+                "--effort", harness_effort(harness_type, effort),
                 "--dangerously-skip-permissions",
                 "--input-format", "stream-json",
                 "--output-format", "stream-json",

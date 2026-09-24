@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from painkiller.api.routes.auth import ensure_gitea_account
 from painkiller.api.security import current_user, require_project, visible_project
 from painkiller.core.attachment_reader import extract_attachment_text
-from painkiller.core.domain.models import User, key_provider
+from painkiller.core.domain.models import EFFORT_HARNESSES, EFFORT_LEVELS, User, harness_effort, key_provider
 from painkiller.core.naming import compose_project_identity
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -29,6 +29,7 @@ class CreateProjectRequest(BaseModel):
     harness: Optional[str] = "agy_superpowers"
     api_key: Optional[str] = None
     model: Optional[str] = None
+    effort: Optional[str] = None
 
 
 class UpdateProjectRequest(BaseModel):
@@ -39,6 +40,7 @@ class UpdateProjectRequest(BaseModel):
     harness: Optional[str] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
+    effort: Optional[str] = None
 
 
 class ValidateKeyRequest(BaseModel):
@@ -57,6 +59,15 @@ class CreateTaskRequest(BaseModel):
     acceptance_criteria: Optional[list[str]] = None
     dependencies: Optional[list[str]] = None
     session_id: Optional[str] = None
+
+
+def _checked_effort(harness: Optional[str], effort: Optional[str]) -> Optional[str]:
+    """The effort to store: validated when the harness has the setting, dropped otherwise."""
+    if (getattr(harness, "value", harness) or "agy_superpowers") not in EFFORT_HARNESSES:
+        return None
+    if effort and effort not in EFFORT_LEVELS:
+        raise HTTPException(status_code=400, detail=f"Esforço inválido. Use um de: {', '.join(EFFORT_LEVELS)}.")
+    return harness_effort(harness, effort)
 
 
 def _get_storage_dir() -> str:
@@ -101,6 +112,7 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         provider = PROVIDER_LABELS[key_provider(req.harness)]
         raise HTTPException(status_code=400, detail=f"Informe a chave de API {provider} do projeto.")
     req.api_key = req.api_key.strip()
+    effort = _checked_effort(req.harness, req.effort)
 
     identity = compose_project_identity(user, req.name)
 
@@ -144,6 +156,7 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         harness=req.harness,
         api_key=req.api_key,
         model=req.model,
+        effort=effort,
         project_id=identity.project_id,
     )
     return _format_project(project)
@@ -173,6 +186,11 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
                 detail=f"Este harness usa outro provedor: informe a chave de API {provider}.",
             )
     req.api_key = new_key
+    # O esforço acompanha o harness efetivo: um harness sem o ajuste o apaga ("").
+    effort = None
+    if req.effort is not None or req.harness is not None:
+        harness = req.harness or (current.harness if current else None)
+        effort = _checked_effort(harness, req.effort if req.effort is not None else (current.effort if current else None)) or ""
     try:
         updated = await tracker.update_project(
             project_id=project_id,
@@ -183,6 +201,7 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
             harness=req.harness,
             api_key=req.api_key,
             model=req.model,
+            effort=effort,
         )
         return _format_project(updated)
     except ValueError as e:

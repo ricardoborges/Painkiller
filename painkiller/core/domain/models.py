@@ -143,10 +143,42 @@ class HarnessType(str, Enum):
 DEEPSEEK_KEY_HARNESSES = frozenset({"deepseek_superpowers", "maki_superpowers", "unreal_superpowers"})
 
 
+#: Modelo de cada harness quando o projeto não escolheu outro (a primeira
+#: opção que o formulário de projeto oferece).
+HARNESS_DEFAULT_MODELS = {
+    "agy_superpowers": "gemini-3.8-flash",
+    "deepseek_superpowers": "deepseek-v4-pro",
+    "maki_superpowers": "deepseek/deepseek-v4-pro",
+    "unreal_superpowers": "deepseek-v4-pro",
+}
+
+#: Níveis de esforço de raciocínio que o projeto pode escolher.
+EFFORT_LEVELS = ("low", "medium", "high")
+DEFAULT_EFFORT = "medium"
+#: Harnesses cujo agente aceita um nível de esforço (agy: `--effort`; dsh:
+#: opção `reasoning_effort` da sessão ACP). Maki e Unreal não têm o ajuste.
+EFFORT_HARNESSES = frozenset({"agy_superpowers", "deepseek_superpowers"})
+
+
+def _harness_value(harness: Optional[object]) -> str:
+    return getattr(harness, "value", harness) or HarnessType.AGY_SUPERPOWERS.value
+
+
+def harness_model(harness: Optional[object], model: Optional[str] = None) -> str:
+    """The project's model, or its harness' default."""
+    return (model or "").strip() or HARNESS_DEFAULT_MODELS[_harness_value(harness)]
+
+
+def harness_effort(harness: Optional[object], effort: Optional[str] = None) -> Optional[str]:
+    """The project's effort, its default, or None when the harness has no such setting."""
+    if _harness_value(harness) not in EFFORT_HARNESSES:
+        return None
+    return effort if effort in EFFORT_LEVELS else DEFAULT_EFFORT
+
+
 def key_provider(harness: Optional[object]) -> str:
     """Provider whose API key the harness needs: "deepseek" or "gemini"."""
-    value = getattr(harness, "value", harness) or HarnessType.AGY_SUPERPOWERS.value
-    return "deepseek" if value in DEEPSEEK_KEY_HARNESSES else "gemini"
+    return "deepseek" if _harness_value(harness) in DEEPSEEK_KEY_HARNESSES else "gemini"
 
 
 class Project(BaseModel):
@@ -169,6 +201,8 @@ class Project(BaseModel):
     harness: HarnessType = HarnessType.AGY_SUPERPOWERS
     api_key: Optional[str] = None
     model: Optional[str] = None
+    # Esforço de raciocínio; só vale para os harnesses de EFFORT_HARNESSES.
+    effort: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
@@ -398,6 +432,12 @@ class PlatformSettings(BaseModel):
     # Conta root que a automação criou no Coolify, para o admin entrar no painel.
     coolify_root_email: Optional[str] = None
     coolify_root_password: Optional[str] = None
+
+    # Senha da conta de serviço do Gitea, gerada na primeira subida; a API cria
+    # e realinha a conta com ela.
+    gitea_password: Optional[str] = None
+    # Validade das sessões, em horas (vazio = 12).
+    session_ttl_hours: Optional[int] = None
 
     steps: dict[str, SetupStepStatus] = Field(default_factory=dict)
     completed: bool = False

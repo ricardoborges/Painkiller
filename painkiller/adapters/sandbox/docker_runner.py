@@ -9,9 +9,16 @@ import uuid
 from typing import Optional, Any
 import docker
 
-from painkiller.core.domain.models import AgentEventType, Task, ExecutionResult, ClarificationRequest
+from painkiller.core.domain.models import (
+    AgentEventType,
+    ClarificationRequest,
+    ExecutionResult,
+    Task,
+    harness_effort,
+    harness_model,
+)
 from painkiller.core.ports.sandbox import AgentEventCallback, SandboxPort
-from painkiller.adapters.sandbox.docker_agent_session import maki_model, parse_agent_line, unreal_env
+from painkiller.adapters.sandbox.docker_agent_session import parse_agent_line, unreal_env
 from painkiller.adapters.sandbox.paths import daemon_path
 
 logger = logging.getLogger(__name__)
@@ -49,6 +56,7 @@ class DockerSandboxRunner(SandboxPort):
         harness: Optional[str] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> ExecutionResult:
         """Run the task in a detached Docker container, waiting for completion or clarification."""
         loop = asyncio.get_running_loop()
@@ -63,6 +71,7 @@ class DockerSandboxRunner(SandboxPort):
             harness,
             api_key,
             model,
+            effort,
         )
 
     def _run_task_sync(
@@ -75,28 +84,18 @@ class DockerSandboxRunner(SandboxPort):
         harness: Optional[str] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> ExecutionResult:
         container_name = f"pk-task-{task.id}-{uuid.uuid4().hex[:6]}"
 
-        # A chave de provedor vem só do projeto; do ambiente, apenas modelo e esforço.
-        env_vars = {}
-        for key in [
-            "PAINKILLER_DEEPSEEK_MODEL",
-            "PAINKILLER_DEEPSEEK_EFFORT",
-            "PAINKILLER_MAKI_MODEL",
-            "PAINKILLER_AGENT_MODEL",
-            "PAINKILLER_AGENT_EFFORT",
-            "PAINKILLER_LLM_MODEL",
-        ]:
-            if key in os.environ:
-                env_vars[key] = os.environ[key]
-        env_vars["PAINKILLER_WORKSPACE"] = "/workspace"
+        # Chave, modelo e esforço vêm só do projeto; nada do ambiente da API.
+        env_vars = {"PAINKILLER_WORKSPACE": "/workspace"}
 
         harness_type = getattr(harness, "value", harness) or "agy_superpowers"
         if harness_type == "maki_superpowers":
             image = os.environ.get("PAINKILLER_WORKER_MAKI_IMAGE") or "painkiller-worker-maki:latest"
             env_vars["DEEPSEEK_API_KEY"] = api_key or ""
-            chosen_model = model or maki_model()
+            chosen_model = harness_model(harness_type, model)
             # Um turno só, como o `agy --print`; saída no stream-json do Claude Code.
             command = [
                 "maki",
@@ -113,8 +112,9 @@ class DockerSandboxRunner(SandboxPort):
         elif harness_type == "deepseek_superpowers":
             image = os.environ.get("PAINKILLER_WORKER_DEEPSEEK_IMAGE") or "painkiller-worker-deepseek:latest"
             env_vars["DEEPSEEK_API_KEY"] = api_key or ""
-            if model:
-                env_vars["PAINKILLER_DEEPSEEK_MODEL"] = model
+            # A ponte aplica os dois via session/set_config_option.
+            env_vars["PAINKILLER_DEEPSEEK_MODEL"] = harness_model(harness_type, model)
+            env_vars["PAINKILLER_DEEPSEEK_EFFORT"] = harness_effort(harness_type, effort) or ""
             # Um turno só, como o `agy --print`; a ponte emite o mesmo stream-json.
             command = [
                 "painkiller",
@@ -139,13 +139,8 @@ class DockerSandboxRunner(SandboxPort):
             env_vars["GEMINI_API_KEY"] = api_key or ""
             env_vars["GOOGLE_API_KEY"] = api_key or ""
 
-            chosen_model = (
-                model
-                or env_vars.get("PAINKILLER_AGENT_MODEL")
-                or env_vars.get("PAINKILLER_LLM_MODEL")
-                or "gemini-3.8-flash"
-            )
-            effort = env_vars.get("PAINKILLER_AGENT_EFFORT") or "medium"
+            chosen_model = harness_model(harness_type, model)
+            effort = harness_effort(harness_type, effort)
 
             command = [
                 "agy",

@@ -91,13 +91,16 @@ async def test_start_runs_maki_in_bidirectional_stream_mode(tmp_path, client):
     assert (tmp_path / ".painkiller" / "maki_home" / "sessions" / "locks").is_dir()
 
 
-async def test_model_can_be_overridden(tmp_path, client, monkeypatch):
-    monkeypatch.setenv("PAINKILLER_MAKI_MODEL", "deepseek/deepseek-v4-pro")
+async def test_model_comes_from_the_project_not_the_env(tmp_path, client, monkeypatch):
+    monkeypatch.setenv("PAINKILLER_MAKI_MODEL", "deepseek/from-env")
     await DockerAgentSession(client=client).start(
         "a", str(tmp_path), "p", claude_session_id=SESSION, harness="maki_superpowers", api_key="sk-project",
+        model="deepseek/deepseek-v4-flash",
     )
     args = _agent_args(client.containers.run.call_args.kwargs["command"])
-    assert args[args.index("--model") + 1] == "deepseek/deepseek-v4-pro"
+    assert args[args.index("--model") + 1] == "deepseek/deepseek-v4-flash"
+    # Maki não tem nível de esforço.
+    assert "--effort" not in args
 
 
 async def test_resume_continues_saved_session_after_answered_queue(tmp_path, client):

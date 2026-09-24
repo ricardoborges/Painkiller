@@ -118,7 +118,7 @@ export const api = {
   /* ---- setup inicial (só admin) ---- */
   setupState: () => request<SetupState>('/setup'),
 
-  saveSetupEnvironment: (body: { public_url: string; host_root: string }) =>
+  saveSetupEnvironment: (body: { public_url: string; host_root: string; session_ttl_hours: number }) =>
     request<SetupState>('/setup/environment', { method: 'PUT', ...json(body) }),
 
   testSetupEnvironment: () =>
@@ -169,6 +169,7 @@ export const api = {
     harness?: string;
     api_key?: string;
     model?: string;
+    effort?: string;
   }) => request<Project>('/projects', { method: 'POST', ...json(body) }),
 
   updateProject: (
@@ -181,6 +182,7 @@ export const api = {
       harness?: string;
       api_key?: string;
       model?: string;
+      effort?: string;
     }
   ) => request<Project>(`/projects/${id}`, { method: 'PUT', ...json(body) }),
 

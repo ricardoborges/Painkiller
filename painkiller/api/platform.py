@@ -9,6 +9,7 @@ restart.
 import asyncio
 import logging
 import os
+import secrets
 import urllib.parse
 from typing import Any, Optional
 
@@ -85,6 +86,12 @@ class PlatformConfig:
         """Read the stored settings, install the signing key, detect the host root and apply."""
         security.set_auth_secret(await self.store.get_secret_key())
         self.settings = await self.store.get_platform_settings()
+        if not self.settings.gitea_password:
+            # Primeira subida: a senha da conta de serviço nasce aqui e nunca sai
+            # do banco; ensure_admin_user cria ou realinha a conta com ela.
+            settings = self.settings.model_copy(deep=True)
+            settings.gitea_password = secrets.token_urlsafe(24)
+            self.settings = await self.store.save_platform_settings(settings)
         if container_root():
             try:
                 client = self.docker_client()
@@ -167,12 +174,20 @@ class PlatformConfig:
             "allowed_domains": s.google_allowed_domains or "",
         }
 
+    def gitea_url(self) -> str:
+        """Gitea as the browser sees it: behind Painkiller's proxy, at /gitea."""
+        return f"{self.public_url()}/gitea"
+
+    async def sync_gitea_root_url(self) -> None:
+        """Align Gitea's own ROOT_URL with the public URL (restarts Gitea only on change)."""
+        vcs = getattr(self.state, "vcs", None)
+        if vcs is not None and hasattr(vcs, "ensure_root_url"):
+            await vcs.ensure_root_url(self.gitea_url())
+
     def google_redirect_uris(self) -> dict[str, str]:
-        # A URL externa do Gitea é infraestrutura do compose, não configuração do admin.
-        gitea = (os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL") or f"{self.public_url()}/gitea").rstrip("/")
         return {
             "painkiller": f"{self.public_url()}/api/auth/google/callback",
-            "gitea": f"{gitea}/user/oauth2/google/callback",
+            "gitea": f"{self.gitea_url()}/user/oauth2/google/callback",
         }
 
     def coolify_values(self) -> dict[str, str]:
@@ -202,7 +217,17 @@ class PlatformConfig:
 
     def apply(self) -> None:
         security.set_admin_account(self.settings.admin_username, self.settings.admin_password_hash)
+        security.set_session_ttl(self.settings.session_ttl_hours)
         set_host_root(self.host_root()[0])
+
+        vcs = getattr(self.state, "vcs", None)
+        if vcs is not None and hasattr(vcs, "push_credentials"):
+            vcs.external_base_url = self.gitea_url()
+            if self.settings.gitea_password:
+                vcs.password = self.settings.gitea_password
+            git = getattr(self.state, "git", None)
+            if git is not None and hasattr(git, "set_http_credentials"):
+                git.set_http_credentials(vcs.push_credentials())
 
         google_client = getattr(self.state, "google_oauth", None)
         if google_client is not None and hasattr(google_client, "configure"):
@@ -222,3 +247,5 @@ class PlatformConfig:
                 server_uuid=coolify["server_uuid"],
                 wildcard_domain=coolify["wildcard_domain"],
             )
+            if hasattr(deployment, "set_gitea_external_url"):
+                deployment.set_gitea_external_url(self.gitea_url())

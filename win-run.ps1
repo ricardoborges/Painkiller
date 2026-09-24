@@ -4,9 +4,10 @@
 #   powershell -ExecutionPolicy Bypass -File .\win-run.ps1
 #   powershell -ExecutionPolicy Bypass -File .\win-run.ps1 -SkipBuild
 #
-# Checks, in order: Docker is up, Compose >= 2.24, .env is complete (generates
-# what can be generated), "coolify" network, build of EVERY image (api + worker
-# and agent of each harness), verifies they exist, starts and waits for the api.
+# Checks, in order: Docker is up, Compose >= 2.24, "coolify" network, build of
+# EVERY image (api + worker and agent of each harness), verifies they exist,
+# starts and waits for the api. No .env is needed: everything is configured in
+# the browser (first access + setup wizard) and kept in the database.
 # Any failure stops the script with its cause, instead of letting it surface
 # later in the UI ("A imagem do agente ... nao foi encontrada").
 #
@@ -16,15 +17,13 @@
 param(
     # Skip the build (the images must already exist; the script checks).
     [switch]$SkipBuild,
-    # Never prompt (CI, automation): a missing key becomes a warning.
+    # Accepted for compatibility; the script no longer prompts for anything.
     [switch]$NonInteractive
 )
 
 $ErrorActionPreference = 'Continue'
 Set-Location -LiteralPath $PSScriptRoot
 
-$EnvFile = Join-Path $PSScriptRoot '.env'
-$EnvExample = Join-Path $PSScriptRoot '.env.example'
 $ApiUrl = 'http://localhost:8000'
 $MinCompose = [version]'2.24.0'
 
@@ -35,46 +34,6 @@ function Fail([string]$msg) {
     Write-Host ""
     Write-Host "ERROR: $msg" -ForegroundColor Red
     exit 1
-}
-
-# ---------------------------------------------------------------------------
-# .env: read and write while keeping comments and order
-# ---------------------------------------------------------------------------
-function Get-EnvLines {
-    if (Test-Path -LiteralPath $EnvFile) { return [System.IO.File]::ReadAllLines($EnvFile) }
-    return @()
-}
-
-function Get-EnvValue([string]$key) {
-    foreach ($line in Get-EnvLines) {
-        if ($line -match "^\s*$([regex]::Escape($key))\s*=(.*)$") {
-            $v = $Matches[1].Trim()
-            if ($v.Length -ge 2 -and (($v[0] -eq '"' -and $v[-1] -eq '"') -or ($v[0] -eq "'" -and $v[-1] -eq "'"))) {
-                $v = $v.Substring(1, $v.Length - 2)
-            }
-            return $v
-        }
-    }
-    return ''
-}
-
-function Set-EnvValue([string]$key, [string]$value) {
-    $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($l in Get-EnvLines) { $lines.Add($l) }
-    $pattern = "^\s*$([regex]::Escape($key))\s*="
-    $found = $false
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match $pattern) { $lines[$i] = "$key=$value"; $found = $true; break }
-    }
-    if (-not $found) { $lines.Add("$key=$value") }
-    # UTF-8 without BOM: compose reads .env and a BOM would become part of the first name.
-    [System.IO.File]::WriteAllLines($EnvFile, $lines, [System.Text.UTF8Encoding]::new($false))
-}
-
-function New-Secret([int]$bytes) {
-    $buf = New-Object byte[] $bytes
-    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($buf)
-    return ([Convert]::ToBase64String($buf) -replace '[+/=]', '')
 }
 
 # ---------------------------------------------------------------------------
@@ -105,36 +64,9 @@ if ($cv -lt $MinCompose) {
 Write-Ok "compose $composeVersion"
 
 # ---------------------------------------------------------------------------
-# 2. .env
+# 2. Storage folder (bind-mounted into the api; its host path is detected)
 # ---------------------------------------------------------------------------
-Write-Step 'Configuration (.env)'
-if (-not (Test-Path -LiteralPath $EnvFile)) {
-    if (-not (Test-Path -LiteralPath $EnvExample)) { Fail '.env.example not found; the clone looks incomplete.' }
-    Copy-Item -LiteralPath $EnvExample -Destination $EnvFile
-    Write-Ok '.env created from .env.example'
-}
-
-# ./storage is bind-mounted into the api; the api detects its host path by
-# inspecting its own container (shown and testable in the setup wizard).
 New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'storage') | Out-Null
-
-if (-not (Get-EnvValue 'PAINKILLER_GITEA_PASSWORD')) {
-    Set-EnvValue 'PAINKILLER_GITEA_PASSWORD' (New-Secret 24)
-    Write-Ok 'PAINKILLER_GITEA_PASSWORD generated'
-} else { Write-Ok 'PAINKILLER_GITEA_PASSWORD set' }
-
-# The administrator, the session-signing key, Google sign-in and Coolify all
-# live in the database: the first access creates the admin in the browser and
-# the setup wizard does the rest. LLM keys are per project.
-
-# Compose interpolation prefers the shell variable over .env. A leftover in the
-# session (or in the Windows environment) would override what was set above.
-foreach ($k in 'PAINKILLER_GITEA_PASSWORD', 'PAINKILLER_GITEA_EXTERNAL_URL', 'PAINKILLER_AGENT_NETWORK') {
-    if (Test-Path "Env:$k") {
-        Write-Warn "ignoring $k set in the Windows environment; the .env value wins"
-        Remove-Item "Env:$k"
-    }
-}
 
 # ---------------------------------------------------------------------------
 # 3. External Coolify network
@@ -155,7 +87,7 @@ if ($LASTEXITCODE -ne 0) {
 $images = @(docker compose --profile build config --images 2>$null | Where-Object { $_ -like 'painkiller-*' } | Sort-Object -Unique)
 if ($LASTEXITCODE -ne 0 -or $images.Count -eq 0) {
     docker compose --profile build config --quiet
-    Fail 'docker-compose.yml failed validation (see the message above; usually a variable missing from .env).'
+    Fail 'docker-compose.yml failed validation (see the message above).'
 }
 
 if (-not $SkipBuild) {
@@ -182,7 +114,7 @@ if ($missing.Count -gt 0) {
 Write-Step 'Starting services'
 docker compose up -d --remove-orphans
 if ($LASTEXITCODE -ne 0) {
-    Fail 'docker compose up failed. If the message mentions a port in use, free 8000, 3300, 8008 or 2222 (or change PAINKILLER_GITEA_PORT / COOLIFY_PORT in .env).'
+    Fail 'docker compose up failed. If the message mentions a port in use, free 8000, 3300, 8008 or 2222 (or set PAINKILLER_GITEA_PORT / COOLIFY_PORT before running).'
 }
 
 Write-Step "Waiting for the api at $ApiUrl"

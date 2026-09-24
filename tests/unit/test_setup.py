@@ -1,7 +1,7 @@
 """Setup wizard: platform settings saved by the admin, resolved against the .env."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -49,6 +49,9 @@ class FakeCoolify:
     def configure(self, api_token=None, server_uuid=None, wildcard_domain=None):
         self.api_token, self.server_uuid, self.wildcard_domain = api_token, server_uuid, wildcard_domain
 
+    def set_gitea_external_url(self, url):
+        self.gitea_external_url = url
+
     async def check(self, api_token=None):
         token = self.api_token if api_token is None else api_token
         ok = token.startswith("1|")
@@ -81,6 +84,8 @@ def _make_app(db, docker=None):
     app = create_app(db_url=f"sqlite+aiosqlite:///{db}", deployment_adapter=FakeCoolify())
     app.state.platform.docker_client_factory = lambda: docker or FakeDocker()
     app.state.coolify_bootstrap = FakeBootstrap()
+    # Nada de docker exec no Gitea de verdade da máquina.
+    app.state.vcs.ensure_root_url = AsyncMock(return_value=False)
     return app
 
 
@@ -270,3 +275,62 @@ def test_parse_result_ignores_tinker_noise():
     assert parse_result(out) == {"token": "1|x"}
     with pytest.raises(CoolifyBootstrapError):
         parse_result("Illuminate\\Database\\QueryException ...")
+
+
+async def test_gitea_service_password_is_generated_sealed_and_applied(tmp_path):
+    db = tmp_path / "gitea.db"
+    first = _make_app(db)
+    async with first.router.lifespan_context(first):
+        password = first.state.vcs.password
+        assert len(password) >= 24
+        # O push usa a mesma credencial, sem nada no .env.
+        assert first.state.git.http_credentials[first.state.vcs.internal_base_url] == ("painkiller", password)
+        raw = await first.state.tracker._read_setting("platform")
+        assert password not in raw
+
+    second = _make_app(db)
+    async with second.router.lifespan_context(second):
+        assert second.state.vcs.password == password  # estável entre restarts
+
+
+async def test_public_url_drives_gitea_links_and_session_ttl(app, client, monkeypatch):
+    from painkiller.api import security
+
+    monkeypatch.setenv("PAINKILLER_GITEA_EXTERNAL_URL", "http://ignored:1/gitea")
+    res = await client.put(
+        "/api/setup/environment", json={"public_url": "https://pk.example.com", "session_ttl_hours": 48}
+    )
+    assert res.status_code == 200
+    assert app.state.vcs.external_base_url == "https://pk.example.com/gitea"
+    assert app.state.deployment.gitea_external_url == "https://pk.example.com/gitea"
+    assert res.json()["google"]["redirect_uris"]["gitea"] == "https://pk.example.com/gitea/user/oauth2/google/callback"
+    assert res.json()["environment"]["session_ttl_hours"] == 48
+    assert security._session_ttl_seconds == 48 * 3600
+
+    too_long = await client.put("/api/setup/environment", json={"public_url": "", "session_ttl_hours": 10000})
+    assert too_long.status_code == 400
+
+
+async def test_gitea_root_url_is_rewritten_only_when_it_changes():
+    from painkiller.adapters.vcs.gitea_adapter import GiteaAdapter
+
+    container = MagicMock()
+    state = {"root": "http://localhost:8000/gitea/"}
+
+    def exec_run(cmd, user=None, environment=None):
+        if cmd[0] == "sh":
+            return 0, f"ROOT_URL = {state['root']}\n".encode()
+        state["root"] = environment["GITEA__server__ROOT_URL"]
+        return 0, b""
+
+    container.exec_run.side_effect = exec_run
+    docker = MagicMock()
+    docker.containers.get.return_value = container
+    adapter = GiteaAdapter(docker_client=docker)
+
+    assert await adapter.ensure_root_url("http://localhost:8000/gitea") is False
+    container.restart.assert_not_called()
+
+    assert await adapter.ensure_root_url("https://pk.example.com/gitea") is True
+    assert state["root"] == "https://pk.example.com/gitea/"
+    container.restart.assert_called_once()

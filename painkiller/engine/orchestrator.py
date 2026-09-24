@@ -15,6 +15,7 @@ from painkiller.core.domain.models import (
     TaskStatus,
     UsageRecord,
     UsageSource,
+    harness_model,
 )
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.sandbox import SandboxPort
@@ -147,9 +148,10 @@ class PainkillerOrchestrator:
             harness=project.harness,
             api_key=project.api_key,
             model=project.model,
+            effort=project.effort,
         )
         self._note(task.id, f"Agente encerrou com código {result.exit_code}")
-        await self._record_usage(task, result)
+        await self._record_usage(task, result, project)
 
         if task.id in self._restart_requested and result.exit_code not in (0, 42):
             return None
@@ -259,7 +261,7 @@ class PainkillerOrchestrator:
         updated_task = await self.tracker.get_task(task.id)
         return updated_task or task
 
-    async def _record_usage(self, task: Task, result: ExecutionResult) -> None:
+    async def _record_usage(self, task: Task, result: ExecutionResult, project: Optional[Project] = None) -> None:
         """Book what the agent says it spent, whatever the exit code — a failed run still costs."""
         if self.usage is None:
             return
@@ -271,7 +273,7 @@ class PainkillerOrchestrator:
             await self.usage.record_usage(
                 UsageRecord(
                     source=UsageSource.TASK,
-                    model=model or os.environ.get("PAINKILLER_AGENT_MODEL", os.environ.get("PAINKILLER_LLM_MODEL", "gemini-3.8-flash")),
+                    model=model or harness_model(project.harness if project else None, project.model if project else None),
                     project_id=task.project_id,
                     task_id=task.id,
                     input_tokens=input_tokens,

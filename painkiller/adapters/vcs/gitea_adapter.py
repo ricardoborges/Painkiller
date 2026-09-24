@@ -18,6 +18,13 @@ GOOGLE_AUTH_SOURCE = "google"
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
 
+#: Conta de serviço (admin do Gitea) que cria repositórios e faz os pushes.
+SERVICE_ACCOUNT = "painkiller"
+SERVICE_EMAIL = "bot@painkiller.local"
+#: Onde o `environment-to-ini` da imagem oficial grava a configuração.
+GITEA_APP_INI = "/data/gitea/conf/app.ini"
+
+
 class GiteaAdapter:
     """Asynchronous client for interacting with self-hosted Gitea/Forgejo instance."""
 
@@ -35,15 +42,14 @@ class GiteaAdapter:
             internal_base_url
             or os.environ.get("PAINKILLER_GITEA_INTERNAL_URL", "http://gitea:3000")
         ).rstrip("/")
-        self.external_base_url = (
-            external_base_url
-            or os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL", "http://localhost:8000/gitea")
-        ).rstrip("/")
-        self.username = username or os.environ.get("PAINKILLER_GITEA_USER", "painkiller")
+        # URL pública + /gitea, aplicada por PlatformConfig.
+        self.external_base_url = (external_base_url or "http://localhost:8000/gitea").rstrip("/")
+        self.username = username or SERVICE_ACCOUNT
         # Sem valor padrão: a conta de serviço é admin do site e o Gitea fica
         # exposto no host, então uma senha conhecida abriria todos os repos.
-        self.password = password or os.environ.get("PAINKILLER_GITEA_PASSWORD", "")
-        self.email = email or os.environ.get("PAINKILLER_GITEA_EMAIL", "bot@painkiller.local")
+        # PlatformConfig instala a senha gerada e guardada no banco.
+        self.password = password or ""
+        self.email = email or SERVICE_EMAIL
         self.container_name = container_name or os.environ.get("PAINKILLER_GITEA_CONTAINER_NAME", "painkiller-gitea")
         self._docker_client = docker_client
         # Id da fonte OAuth "google" no Gitea, descoberto uma vez por processo.
@@ -63,6 +69,45 @@ class GiteaAdapter:
 
     def _auth(self) -> tuple[str, str]:
         return (self.username, self.password)
+
+    def _read_root_url(self) -> Optional[str]:
+        code, out = self._exec_in_container(["sh", "-c", f"grep -m1 '^ROOT_URL' {GITEA_APP_INI} || true"])
+        if code != 0 or "=" not in out:
+            return None
+        return out.split("=", 1)[1].strip()
+
+    async def ensure_root_url(self, url: str) -> bool:
+        """Point Gitea's ROOT_URL at `url` (links, clone URLs, SSO callback).
+
+        Grava com o `environment-to-ini` da própria imagem e reinicia o Gitea,
+        só quando o valor muda. Devolve True se reiniciou.
+        """
+        wanted = url.rstrip("/") + "/"
+        if not self.docker_client:
+            return False
+
+        def _ensure() -> bool:
+            current = self._read_root_url()
+            if current is not None and current.rstrip("/") + "/" == wanted:
+                return False
+            container = self.docker_client.containers.get(self.container_name)
+            code, out = container.exec_run(
+                ["environment-to-ini", "--config", GITEA_APP_INI],
+                environment={"GITEA__server__ROOT_URL": wanted},
+                user="git",
+            )
+            if code != 0:
+                logger.warning(f"Could not set Gitea ROOT_URL: {out}")
+                return False
+            container.restart(timeout=10)
+            logger.info(f"Gitea ROOT_URL set to {wanted}; container restarted.")
+            return True
+
+        try:
+            return await asyncio.get_running_loop().run_in_executor(None, _ensure)
+        except Exception as e:
+            logger.warning(f"Could not align Gitea ROOT_URL: {e}")
+            return False
 
     def push_credentials(self) -> dict[str, tuple[str, str]]:
         """Credentials for pushing to this Gitea, keyed by the internal URL prefix."""
@@ -121,7 +166,7 @@ class GiteaAdapter:
                             user="git",
                         )
                         if exit_code != 0 and b"already exists" in (output or b""):
-                            # Usuário existe com outra senha: alinha com a do .env.
+                            # Usuário existe com outra senha: alinha com a do banco.
                             exit_code, output = container.exec_run(
                                 [
                                     "gitea", "admin", "user", "change-password",

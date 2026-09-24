@@ -15,6 +15,7 @@
 
   let publicUrl = $state('');
   let hostRoot = $state('');
+  let sessionTtl = $state(12);
   let overriding = $state(false);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -28,6 +29,7 @@
     if (seeded || !setup.state) return;
     seeded = true;
     publicUrl = setup.state.environment.public_url;
+    sessionTtl = setup.state.environment.session_ttl_hours;
     hostRoot = setup.state.environment.host_root_source === 'settings' ? (setup.state.environment.host_root ?? '') : '';
     overriding = setup.state.environment.host_root_source === 'settings';
   });
@@ -60,7 +62,8 @@
       setup.set(
         await api.saveSetupEnvironment({
           public_url: publicUrl.trim(),
-          host_root: overriding ? hostRoot.trim() : ''
+          host_root: overriding ? hostRoot.trim() : '',
+          session_ttl_hours: Number(sessionTtl) || 12
         })
       );
       saved = true;
@@ -105,9 +108,15 @@
       <label for="pk-public-url">URL pública do Painkiller</label>
       <input id="pk-public-url" class="input mono" bind:value={publicUrl} placeholder="http://localhost:8000" />
       <p class="help">
-        O endereço que o navegador usa. Monta o retorno do login Google e o link do Coolify.
+        O endereço que o navegador usa. Dele saem o retorno do login Google, o link do Coolify e o
+        endereço do Gitea (<span class="mono">{publicUrl.replace(/\/$/, '')}/gitea</span>).
         {#if !env.public_url_saved}Preenchido a partir desta página.{/if}
       </p>
+    </div>
+    <div class="field ttl">
+      <label for="pk-ttl">Validade da sessão (horas)</label>
+      <input id="pk-ttl" class="input mono" type="number" min="1" max="720" bind:value={sessionTtl} />
+      <p class="help">Depois disso é preciso entrar de novo. Padrão: 12.</p>
     </div>
   </section>
 
@@ -193,6 +202,10 @@
 
   .checks {
     border-bottom: 1px solid var(--rule);
+  }
+
+  .ttl {
+    max-width: 14rem;
   }
 
   .cmd {

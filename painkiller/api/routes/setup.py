@@ -85,6 +85,7 @@ async def _environment(request: Request, platform: PlatformConfig) -> dict:
     return {
         "public_url": platform.public_url(),
         "public_url_saved": bool(platform.settings.public_url),
+        "session_ttl_hours": platform.settings.session_ttl_hours or 12,
         "in_container": bool(container_root()),
         "host_root": host_root,
         "host_root_source": host_root_source,
@@ -166,8 +167,9 @@ async def update_admin_account(body: AdminAccountRequest, request: Request, resp
 
 class EnvironmentRequest(BaseModel):
     public_url: Optional[str] = None
-    # Vazio = volta ao .env ou à detecção automática.
+    # Vazio = volta à detecção automática.
     host_root: Optional[str] = None
+    session_ttl_hours: Optional[int] = None
 
 
 @router.put("/environment")
@@ -177,10 +179,18 @@ async def save_environment(body: EnvironmentRequest, request: Request):
     public_url = (body.public_url or "").strip().rstrip("/")
     if public_url and not public_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="A URL pública precisa começar com http:// ou https://.")
+    if body.session_ttl_hours is not None and not 1 <= body.session_ttl_hours <= 24 * 30:
+        raise HTTPException(status_code=400, detail="A validade da sessão vai de 1 hora a 30 dias (720 h).")
+    url_changed = (public_url or None) != settings.public_url
     settings.public_url = public_url or None
     settings.host_root = (body.host_root or "").strip() or None
+    if body.session_ttl_hours is not None:
+        settings.session_ttl_hours = body.session_ttl_hours
     settings.steps["environment"] = SetupStepStatus.DONE
     await platform.save(settings)
+    if url_changed:
+        # O Gitea monta links e o retorno do login único com o próprio ROOT_URL.
+        asyncio.create_task(platform.sync_gitea_root_url())
     return await _state(request)
 
 

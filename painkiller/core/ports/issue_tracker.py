@@ -37,6 +37,7 @@ class IssueTrackerPort(ABC):
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> Project:
         """Create or register a project."""
@@ -60,6 +61,7 @@ class IssueTrackerPort(ABC):
         harness: Optional[HarnessType] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> Project:
         """Update an existing project."""
         pass

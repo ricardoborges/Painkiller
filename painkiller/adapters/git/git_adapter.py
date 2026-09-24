@@ -26,6 +26,10 @@ class GitCliAdapter(GitPort):
     """
 
     def __init__(self, http_credentials: Optional[dict[str, tuple[str, str]]] = None):
+        self.set_http_credentials(http_credentials)
+
+    def set_http_credentials(self, http_credentials: Optional[dict[str, tuple[str, str]]]) -> None:
+        """Replace the push credentials (the Gitea password is installed after startup)."""
         self.http_credentials = {
             prefix.rstrip("/"): cred
             for prefix, cred in (http_credentials or {}).items()

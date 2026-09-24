@@ -114,3 +114,25 @@ async def test_same_provider_harness_switch_keeps_the_key(client: AsyncClient):
     res = await client.put(f"/api/projects/{proj['id']}", json={"harness": "maki_superpowers"}, headers=headers)
     assert res.status_code == 200
     assert res.json()["has_api_key"] is True
+
+
+@pytest.mark.asyncio
+async def test_effort_is_stored_per_project_and_follows_the_harness(client: AsyncClient):
+    headers = admin_headers()
+    bad = await client.post("/api/projects", json={"name": "X", "api_key": "k", "effort": "turbo"}, headers=headers)
+    assert bad.status_code == 400
+
+    proj = (await client.post(
+        "/api/projects",
+        json={"name": "Esforço", "api_key": "AIza-key", "model": "gemini-3.8-pro", "effort": "high"},
+        headers=headers,
+    )).json()
+    assert (proj["model"], proj["effort"]) == ("gemini-3.8-pro", "high")
+
+    # dsh também tem esforço: trocar para ele mantém o valor.
+    kept = (await client.put(f"/api/projects/{proj['id']}", json={"harness": "deepseek_superpowers", "api_key": "sk-ds"}, headers=headers)).json()
+    assert kept["effort"] == "high"
+
+    # Maki não tem: o valor é apagado.
+    dropped = (await client.put(f"/api/projects/{proj['id']}", json={"harness": "maki_superpowers"}, headers=headers)).json()
+    assert dropped["effort"] is None

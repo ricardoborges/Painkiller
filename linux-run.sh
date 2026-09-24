@@ -4,11 +4,12 @@
 #
 #   ./linux-run.sh                  # check, build everything and start
 #   ./linux-run.sh --skip-build     # start only (the images must already exist)
-#   ./linux-run.sh --non-interactive
+#   ./linux-run.sh --non-interactive   # accepted; the script no longer prompts
 #
-# Checks, in order: Docker is up, Compose >= 2.24, .env is complete (generates
-# what can be generated), "coolify" network, build of EVERY image (api + worker
-# and agent of each harness), verifies they exist, starts and waits for the api.
+# Checks, in order: Docker is up, Compose >= 2.24, "coolify" network, build of
+# EVERY image (api + worker and agent of each harness), verifies they exist,
+# starts and waits for the api. No .env is needed: everything is configured in
+# the browser (first access + setup wizard) and kept in the database.
 # Any failure stops the script with its cause, instead of letting it surface
 # later in the UI ("A imagem do agente ... nao foi encontrada").
 #
@@ -32,8 +33,6 @@ done
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT" || exit 1
 
-ENV_FILE="$ROOT/.env"
-ENV_EXAMPLE="$ROOT/.env.example"
 API_URL="http://localhost:8000"
 MIN_COMPOSE="2.24.0"
 PLATFORM="${PAINKILLER_PLATFORM:-linux}"   # mac-run.sh sets "mac"
@@ -47,35 +46,6 @@ step() { printf '\n%s==> %s%s\n' "$C_STEP" "$1" "$C_OFF"; }
 ok()   { printf '    %sok%s  %s\n' "$C_OK" "$C_OFF" "$1"; }
 warn() { printf '    %s!!%s  %s\n' "$C_WARN" "$C_OFF" "$1"; }
 fail() { printf '\n%sERROR:%s %s\n' "$C_ERR" "$C_OFF" "$1" >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# .env: read and write while keeping comments and order
-# ---------------------------------------------------------------------------
-env_get() {
-  [ -f "$ENV_FILE" ] || return 0
-  awk -v k="$1" '
-    { line=$0; sub(/^[ \t]+/, "", line) }
-    index(line, k"=") == 1 || line ~ ("^" k "[ \t]*=") {
-      v=line; sub(/^[^=]*=/, "", v); gsub(/^[ \t]+|[ \t\r]+$/, "", v)
-      if (v ~ /^".*"$/ || v ~ /^\x27.*\x27$/) v=substr(v, 2, length(v)-2)
-      print v; exit
-    }' "$ENV_FILE"
-}
-
-env_set() {
-  tmp="$(mktemp "${ENV_FILE}.XXXXXX")" || fail "could not write .env"
-  awk -v k="$1" -v v="$2" '
-    BEGIN { done=0 }
-    { line=$0; sub(/^[ \t]+/, "", line) }
-    !done && (index(line, k"=") == 1 || line ~ ("^" k "[ \t]*=")) { print k "=" v; done=1; next }
-    { print }
-    END { if (!done) print k "=" v }' "$ENV_FILE" > "$tmp" && mv "$tmp" "$ENV_FILE"
-}
-
-new_secret() {
-  # Only characters that are safe in .env and URLs.
-  head -c "$1" /dev/urandom | base64 | tr -d '/+=\n'
-}
 
 version_ge() {
   # version_ge A B -> true when A >= B (digits and dots only).
@@ -112,37 +82,9 @@ ok "compose $compose_version"
 command -v curl >/dev/null 2>&1 || fail '"curl" command not found; install it so the script can wait for the api.'
 
 # ---------------------------------------------------------------------------
-# 2. .env
+# 2. Storage folder (bind-mounted into the api; its host path is detected)
 # ---------------------------------------------------------------------------
-step "Configuration (.env)"
-if [ ! -f "$ENV_FILE" ]; then
-  [ -f "$ENV_EXAMPLE" ] || fail ".env.example not found; the clone looks incomplete."
-  cp "$ENV_EXAMPLE" "$ENV_FILE"
-  ok ".env created from .env.example"
-fi
-
-# ./storage is bind-mounted into the api; the api detects its host path by
-# inspecting its own container (shown and testable in the setup wizard).
 mkdir -p "$ROOT/storage"
-
-if [ -z "$(env_get PAINKILLER_GITEA_PASSWORD)" ]; then
-  env_set PAINKILLER_GITEA_PASSWORD "$(new_secret 24)"; ok "PAINKILLER_GITEA_PASSWORD generated"
-else
-  ok "PAINKILLER_GITEA_PASSWORD set"
-fi
-
-# The administrator, the session-signing key, Google sign-in and Coolify all
-# live in the database: the first access creates the admin in the browser and
-# the setup wizard does the rest. LLM keys are per project.
-
-# Compose interpolation prefers the shell variable over .env. A leftover in the
-# environment would override what was set above.
-for k in PAINKILLER_GITEA_PASSWORD PAINKILLER_GITEA_EXTERNAL_URL PAINKILLER_AGENT_NETWORK; do
-  if [ -n "$(eval "printf '%s' \"\${$k:-}\"")" ]; then
-    warn "ignoring $k set in the shell; the .env value wins"
-    unset "$k"
-  fi
-done
 
 # ---------------------------------------------------------------------------
 # 3. External Coolify network
@@ -162,7 +104,7 @@ fi
 # read from compose itself so this list never drifts.
 if ! images="$(docker compose --profile build config --images 2>/dev/null)"; then
   docker compose --profile build config --quiet
-  fail "docker-compose.yml failed validation (see the message above; usually a variable missing from .env)."
+  fail "docker-compose.yml failed validation (see the message above)."
 fi
 images="$(printf '%s\n' "$images" | grep '^painkiller-' | sort -u)"
 [ -n "$images" ] || fail "compose listed no painkiller-* image."
@@ -187,7 +129,7 @@ done
 # ---------------------------------------------------------------------------
 step "Starting services"
 docker compose up -d --remove-orphans \
-  || fail "docker compose up failed. If the message mentions a port in use, free 8000, 3300, 8008 or 2222 (or change PAINKILLER_GITEA_PORT / COOLIFY_PORT in .env)."
+  || fail "docker compose up failed. If the message mentions a port in use, free 8000, 3300, 8008 or 2222 (or export PAINKILLER_GITEA_PORT / COOLIFY_PORT before running)."
 
 step "Waiting for the api at $API_URL"
 up=0
