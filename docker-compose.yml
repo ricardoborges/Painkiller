@@ -221,11 +221,14 @@ services:
     image: ghcr.io/coollabsio/coolify:latest
     container_name: painkiller-coolify
     restart: unless-stopped
+    # O Coolify roda migrations e seeder uma unica vez no boot, sem retry: se o
+    # Postgres ainda estiver subindo, o banco fica sem tabelas ("relation
+    # instance_settings does not exist"). Por isso espera o healthcheck.
     depends_on:
       coolify-db:
-        condition: service_started
+        condition: service_healthy
       coolify-redis:
-        condition: service_started
+        condition: service_healthy
       coolify-ssh-init:
         condition: service_completed_successfully
     networks:
@@ -293,6 +296,11 @@ services:
       - POSTGRES_PASSWORD=coolify_secret_2026
     volumes:
       - coolify-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coolify -d coolify"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   coolify-redis:
     image: redis:alpine
@@ -300,6 +308,11 @@ services:
     restart: unless-stopped
     volumes:
       - coolify-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   # SSH Bridge para o Coolify interagir com o daemon Docker do host
   coolify-host:

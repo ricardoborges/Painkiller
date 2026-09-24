@@ -128,14 +128,23 @@
     <div class="inner">
       <span class="label">O que vem depois</span>
       <ol class="next">
-        <li><span class="mono n">1</span> Esta conta enxerga todos os projetos e configura a plataforma.</li>
         <li>
-          <span class="mono n">2</span> Em seguida, o wizard: ambiente, login com Google e Coolify — os dois
-          últimos podem ficar para depois.
+          <span class="mono n">1</span>
+          <div>Esta conta enxerga todos os projetos e configura a plataforma.</div>
         </li>
         <li>
-          <span class="mono n">3</span> Esqueceu a senha? No servidor,
-          <span class="mono">painkiller admin-reset</span> reabre esta tela.
+          <span class="mono n">2</span>
+          <div>
+            Em seguida, o wizard: ambiente, login com Google e Coolify — os dois
+            últimos podem ficar para depois.
+          </div>
+        </li>
+        <li>
+          <span class="mono n">3</span>
+          <div>
+            Esqueceu a senha? No servidor,
+            <span class="mono">painkiller admin-reset</span> reabre esta tela.
+          </div>
         </li>
       </ol>
       <p class="note lede">

@@ -140,7 +140,14 @@
           {:else}
             <span class="value hatch missing">Não detectado</span>
           {/if}
-          <button type="button" class="btn btn-quiet btn-sm" onclick={() => (overriding = true)}>Informar outro</button>
+          <button
+            type="button"
+            class="btn btn-quiet btn-sm"
+            onclick={() => {
+              overriding = true;
+              probe = null;
+            }}>Informar outro</button
+          >
         </div>
       {:else}
         <div class="field">
@@ -149,6 +156,7 @@
             id="pk-host-root"
             class="input mono"
             bind:value={hostRoot}
+            oninput={() => (probe = null)}
             placeholder={env.detected_host_root ?? 'D:\\dev\\Painkiller\\storage'}
           />
           <p class="help">
@@ -159,6 +167,7 @@
               onclick={() => {
                 overriding = false;
                 hostRoot = '';
+                probe = null;
               }}>Usar o automático</button
             >
           </p>
@@ -181,7 +190,17 @@
 
   <div class="actions">
     {#if saved && mode === 'settings'}<span class="help">Salvo.</span>{/if}
-    <button type="submit" class="btn btn-solid" disabled={busy}>
+    {#if !probe}
+      <span class="help">Teste a montagem para liberar o salvamento.</span>
+    {:else if !probe.ok}
+      <span class="help bad">O teste precisa passar para liberar o salvamento.</span>
+    {/if}
+    <button
+      type="submit"
+      class="btn btn-solid"
+      disabled={busy || probing || !probe?.ok}
+      title={!probe?.ok ? 'Teste a montagem com sucesso para habilitar o salvamento' : undefined}
+    >
       {busy ? 'Salvando…' : mode === 'wizard' ? 'Salvar e continuar' : 'Salvar'}
     </button>
   </div>
@@ -253,6 +272,10 @@
 
   .probe-result.bad {
     font-weight: 600;
+  }
+
+  .help.bad {
+    color: var(--accent);
   }
 
   .linkish {
