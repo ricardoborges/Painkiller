@@ -4,9 +4,9 @@
 
 # Painkiller
 
-Painkiller is a self-hosted platform that turns software specifications into deployed applications using autonomous coding agents.
+Painkiller is a self-hosted platform that turns rough ideas into deployed applications through collaborative brainstorming, spec-driven development (SDD), and autonomous coding agents.
 
-Instead of pasting prompts back and forth in a chat window, Painkiller runs agents inside isolated Docker containers, gives them structured software engineering workflows, tracks their code in Git, and deploys preview environments automatically.
+Instead of pasting prompts back and forth in a chat window, Painkiller brainstorms specifications with you, decomposes tasks, runs agents inside isolated Docker containers, tracks code in Git, and deploys preview environments automatically.
 
 ---
 
