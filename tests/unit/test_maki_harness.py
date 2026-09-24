@@ -94,7 +94,7 @@ async def test_start_runs_maki_in_bidirectional_stream_mode(tmp_path, client):
 async def test_model_can_be_overridden(tmp_path, client, monkeypatch):
     monkeypatch.setenv("PAINKILLER_MAKI_MODEL", "deepseek/deepseek-v4-pro")
     await DockerAgentSession(client=client).start(
-        "a", str(tmp_path), "p", claude_session_id=SESSION, harness="maki_superpowers",
+        "a", str(tmp_path), "p", claude_session_id=SESSION, harness="maki_superpowers", api_key="sk-project",
     )
     args = _agent_args(client.containers.run.call_args.kwargs["command"])
     assert args[args.index("--model") + 1] == "deepseek/deepseek-v4-pro"
@@ -108,7 +108,7 @@ async def test_resume_continues_saved_session_after_answered_queue(tmp_path, cli
     queue.write_text('{"type": "user", "message": {"content": "já respondida"}}\n', encoding="utf-8")
 
     await DockerAgentSession(client=client).start(
-        "a", str(tmp_path), "", resume=True, claude_session_id=SESSION, harness="maki_superpowers",
+        "a", str(tmp_path), "", resume=True, claude_session_id=SESSION, harness="maki_superpowers", api_key="sk-project",
     )
 
     command = client.containers.run.call_args.kwargs["command"]
@@ -121,16 +121,16 @@ async def test_resume_continues_saved_session_after_answered_queue(tmp_path, cli
 async def test_resume_without_saved_session_starts_under_same_id(tmp_path, client):
     # O contêiner caiu antes do primeiro turno: `--session` falharia.
     await DockerAgentSession(client=client).start(
-        "a", str(tmp_path), "", resume=True, claude_session_id=SESSION, harness="maki_superpowers",
+        "a", str(tmp_path), "", resume=True, claude_session_id=SESSION, harness="maki_superpowers", api_key="sk-project",
     )
     args = _agent_args(client.containers.run.call_args.kwargs["command"])
     assert args[args.index("--session-id") + 1] == SESSION
     assert "--session" not in args
 
 
-async def test_missing_deepseek_key_fails_early(tmp_path, client, monkeypatch):
-    monkeypatch.delenv("DEEPSEEK_API_KEY")
-    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+async def test_missing_deepseek_key_fails_early(tmp_path, client):
+    # DEEPSEEK_API_KEY do ambiente (fixture) não é mais fallback.
+    with pytest.raises(RuntimeError, match="chave de API"):
         await DockerAgentSession(client=client).start("a", str(tmp_path), "p", harness="maki_superpowers")
     client.containers.run.assert_not_called()
 

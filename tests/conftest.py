@@ -18,12 +18,26 @@ def isolate_test_storage(tmp_path, monkeypatch):
 
 
 
+#: Credenciais do administrador nos testes; o hash é calculado uma vez (scrypt é lento de propósito).
+TEST_ADMIN = ("admin", "test-admin-password")
+_TEST_ADMIN_HASH = None
+
+
 @pytest.fixture(autouse=True)
-def isolate_auth_env(monkeypatch):
-    """Deterministic credentials, independent of whatever the local .env holds."""
-    monkeypatch.setenv("PAINKILLER_ADMIN_USER", "admin")
-    monkeypatch.setenv("PAINKILLER_ADMIN_PASSWORD", "test-admin-password")
-    monkeypatch.setenv("PAINKILLER_AUTH_SECRET", "test-auth-secret")
-    monkeypatch.setenv("PAINKILLER_GOOGLE_CLIENT_ID", "")
-    monkeypatch.setenv("PAINKILLER_GOOGLE_CLIENT_SECRET", "")
-    monkeypatch.delenv("PAINKILLER_GOOGLE_ALLOWED_DOMAINS", raising=False)
+def frozen_admin(monkeypatch):
+    """Deterministic signing key and administrator, whatever each test database holds.
+
+    Em produção PlatformConfig instala os dois a partir do banco; aqui os
+    setters viram no-op para que cada create_app (com banco novo e vazio) não
+    apague o administrador que `admin_headers()` assina. Os testes do primeiro
+    acesso sobrescrevem esta fixture para exercitar o fluxo real.
+    """
+    global _TEST_ADMIN_HASH
+    from painkiller.api import security
+
+    if _TEST_ADMIN_HASH is None:
+        _TEST_ADMIN_HASH = security.hash_password(TEST_ADMIN[1])
+    monkeypatch.setattr(security, "_auth_secret", b"test-auth-secret")
+    monkeypatch.setattr(security, "_admin", (TEST_ADMIN[0], _TEST_ADMIN_HASH))
+    monkeypatch.setattr(security, "set_auth_secret", lambda value: None)
+    monkeypatch.setattr(security, "set_admin_account", lambda username, password_hash: None)

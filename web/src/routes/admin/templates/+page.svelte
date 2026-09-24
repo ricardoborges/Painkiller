@@ -9,6 +9,7 @@
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
   import TemplateDialog from '$lib/components/TemplateDialog.svelte';
+  import AdminTabs from '$lib/components/AdminTabs.svelte';
 
   let templates = $state<ProjectTemplate[]>([]);
   let loading = $state(true);
@@ -99,12 +100,7 @@
 </header>
 
 <!-- Subnavegação da Área de Administração -->
-<nav class="admin-tabs" aria-label="Abas da administração">
-  <a href="/admin/templates" class="tab active" aria-current="page">
-    Templates de Projeto
-    <span class="mono count">{templates.length}</span>
-  </a>
-</nav>
+<AdminTabs templateCount={templates.length} />
 
 <hr class="rule rule-ink" />
 
@@ -295,33 +291,6 @@
 />
 
 <style>
-  .admin-tabs {
-    display: flex;
-    gap: var(--s4);
-    margin-top: var(--s5);
-  }
-
-  .admin-tabs .tab {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s2);
-    padding: var(--s2) 0;
-    font-size: var(--t-small);
-    font-weight: 500;
-    border-bottom: 2px solid transparent;
-    color: var(--ink-2);
-    transition: color var(--fast) var(--ease), border-color var(--fast) var(--ease);
-  }
-
-  .admin-tabs .tab:hover {
-    color: var(--ink);
-  }
-
-  .admin-tabs .tab.active {
-    color: var(--ink);
-    border-bottom-color: var(--ink);
-  }
-
   .filter-bar {
     display: flex;
     justify-content: space-between;

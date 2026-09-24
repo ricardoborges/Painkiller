@@ -78,19 +78,15 @@ class DockerSandboxRunner(SandboxPort):
     ) -> ExecutionResult:
         container_name = f"pk-task-{task.id}-{uuid.uuid4().hex[:6]}"
 
-        # Collect API keys from current environment
+        # A chave de provedor vem só do projeto; do ambiente, apenas modelo e esforço.
         env_vars = {}
         for key in [
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-            "DEEPSEEK_API_KEY",
             "PAINKILLER_DEEPSEEK_MODEL",
             "PAINKILLER_DEEPSEEK_EFFORT",
             "PAINKILLER_MAKI_MODEL",
             "PAINKILLER_AGENT_MODEL",
             "PAINKILLER_AGENT_EFFORT",
             "PAINKILLER_LLM_MODEL",
-            "PAINKILLER_WORKSPACE",
         ]:
             if key in os.environ:
                 env_vars[key] = os.environ[key]
@@ -99,8 +95,7 @@ class DockerSandboxRunner(SandboxPort):
         harness_type = getattr(harness, "value", harness) or "agy_superpowers"
         if harness_type == "maki_superpowers":
             image = os.environ.get("PAINKILLER_WORKER_MAKI_IMAGE") or "painkiller-worker-maki:latest"
-            if api_key:
-                env_vars["DEEPSEEK_API_KEY"] = api_key
+            env_vars["DEEPSEEK_API_KEY"] = api_key or ""
             chosen_model = model or maki_model()
             # Um turno só, como o `agy --print`; saída no stream-json do Claude Code.
             command = [
@@ -117,8 +112,7 @@ class DockerSandboxRunner(SandboxPort):
             ]
         elif harness_type == "deepseek_superpowers":
             image = os.environ.get("PAINKILLER_WORKER_DEEPSEEK_IMAGE") or "painkiller-worker-deepseek:latest"
-            if api_key:
-                env_vars["DEEPSEEK_API_KEY"] = api_key
+            env_vars["DEEPSEEK_API_KEY"] = api_key or ""
             if model:
                 env_vars["PAINKILLER_DEEPSEEK_MODEL"] = model
             # Um turno só, como o `agy --print`; a ponte emite o mesmo stream-json.
@@ -130,8 +124,7 @@ class DockerSandboxRunner(SandboxPort):
             ]
         elif harness_type == "unreal_superpowers":
             image = os.environ.get("PAINKILLER_WORKER_UNREAL_IMAGE") or "painkiller-worker-unreal:latest"
-            if api_key:
-                env_vars["DEEPSEEK_API_KEY"] = api_key
+            env_vars["DEEPSEEK_API_KEY"] = api_key or ""
             unreal_env(env_vars, model)
             # Um turno só, como o `agy --print`; a ponte publica as skills e
             # emite o mesmo stream-json.
@@ -143,9 +136,8 @@ class DockerSandboxRunner(SandboxPort):
             ]
         else:
             image = self.image_name
-            if api_key:
-                env_vars["GEMINI_API_KEY"] = api_key
-                env_vars["GOOGLE_API_KEY"] = api_key
+            env_vars["GEMINI_API_KEY"] = api_key or ""
+            env_vars["GOOGLE_API_KEY"] = api_key or ""
 
             chosen_model = (
                 model

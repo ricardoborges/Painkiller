@@ -7,6 +7,7 @@ from painkiller.core.ports.llm import LLMPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
 from painkiller.core.ports.user_directory import UserDirectoryPort
 from painkiller.core.ports.deployment import DeploymentPort
+from painkiller.core.ports.platform_settings import PlatformSettingsPort
 
 __all__ = [
     "IssueTrackerPort",
@@ -16,4 +17,5 @@ __all__ = [
     "UsageLedgerPort",
     "UserDirectoryPort",
     "DeploymentPort",
+    "PlatformSettingsPort",
 ]

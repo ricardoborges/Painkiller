@@ -94,7 +94,7 @@ async def test_runner_streams_parsed_lines_to_callback():
 
 
 async def test_dispatch_publishes_and_finishes_activity():
-    project = Project(id="p1", name="App", repo_path="/repo")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="T", description="D")
     tracker = AsyncMock()
     tracker.get_task.return_value = task

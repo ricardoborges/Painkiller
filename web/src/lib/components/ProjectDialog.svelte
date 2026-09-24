@@ -145,13 +145,28 @@
 
   const effectiveModel = $derived(isCustomModel ? customModelText.trim() : model);
 
+  /** A chave salva só serve se o provedor (Gemini ou DeepSeek) não mudou. */
+  const savedKeyUsable = $derived(
+    Boolean(
+      project?.has_api_key &&
+        DEEPSEEK_KEY_HARNESSES.includes(project.harness ?? 'agy_superpowers') === usesDeepseekKey
+    )
+  );
+
+  const KEY_PAGES = {
+    deepseek: { name: 'DeepSeek', url: 'https://platform.deepseek.com/api_keys' },
+    gemini: { name: 'Google Gemini', url: 'https://aistudio.google.com/apikey' }
+  } as const;
+  const keyPage = $derived(usesDeepseekKey ? KEY_PAGES.deepseek : KEY_PAGES.gemini);
+
   const missing = $derived({
     name: !name.trim(),
     purpose: !purpose.trim(),
-    solution: !solution.trim()
+    solution: !solution.trim(),
+    apiKey: !apiKey.trim() && !savedKeyUsable
   });
 
-  const invalid = $derived(missing.name || missing.purpose || missing.solution);
+  const invalid = $derived(missing.name || missing.purpose || missing.solution || missing.apiKey);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -178,6 +193,14 @@
     busy = true;
     error = null;
     try {
+      // Pergunta ao provedor antes de salvar; só uma recusa explícita bloqueia.
+      if (apiKey.trim()) {
+        const check = await api.validateProjectKey(harness, apiKey.trim());
+        if (check.valid === false) {
+          error = check.detail ?? 'O provedor recusou a chave.';
+          return;
+        }
+      }
       const body: {
         name: string;
         description: string;
@@ -382,26 +405,19 @@
 
       <div class="field">
         <label for="papikey">
-          {#if usesDeepseekKey}
-            Chave de API DeepSeek <span class="opt">(Opcional)</span>
-          {:else}
-            Chave de API Google Gemini <span class="opt">(Opcional)</span>
-          {/if}
+          Chave de API {keyPage.name} <span class="req">*</span>
         </label>
         <p class="help">
-          {#if usesDeepseekKey}
-            {#if project?.has_api_key && project?.harness && DEEPSEEK_KEY_HARNESSES.includes(project.harness)}
-              Chave configurada ({project.masked_api_key}). Deixe em branco para mantê-la ou para fallback no .env do servidor.
-            {:else}
-              Deixe em branco para usar a chave padrão do servidor (DEEPSEEK_API_KEY).
-            {/if}
+          {#if savedKeyUsable}
+            Chave configurada ({project?.masked_api_key}). Deixe em branco para mantê-la.
+          {:else if editing && project?.has_api_key}
+            Este harness usa outra conta de provedor: informe uma chave {keyPage.name}.
           {:else}
-            {#if project?.has_api_key && (!project?.harness || project?.harness === 'agy_superpowers')}
-              Chave configurada ({project.masked_api_key}). Deixe em branco para mantê-la ou para fallback no .env do servidor.
-            {:else}
-              Deixe em branco para usar a chave padrão do servidor (GEMINI_API_KEY).
-            {/if}
+            Cada projeto usa a própria chave; o consumo sai da conta dona dela.
           {/if}
+          <a href={keyPage.url} target="_blank" rel="noopener noreferrer" class="key-link">
+            Obter uma chave <Icon name="external" size={10} />
+          </a>
         </p>
         <input
           id="papikey"
@@ -410,7 +426,9 @@
           bind:value={apiKey}
           placeholder={usesDeepseekKey ? 'sk-...' : 'AIzaSy...'}
           autocomplete="off"
+          aria-invalid={touched && missing.apiKey ? 'true' : undefined}
         />
+        {#if touched && missing.apiKey}<p class="field-error">Informe a chave de API.</p>{/if}
       </div>
 
       <div class="field">
@@ -631,10 +649,14 @@
     color: var(--ink-2);
   }
 
-  .opt {
-    color: var(--ink-3);
-    font-weight: normal;
-    font-size: var(--t-micro);
+  .key-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1875rem;
+    margin-left: var(--s1);
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   .model-select-wrap {

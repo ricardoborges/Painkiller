@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator, Optional
 
 import docker
 
-from painkiller.core.domain.models import AgentEvent, AgentEventType
+from painkiller.core.domain.models import DEEPSEEK_KEY_HARNESSES, AgentEvent, AgentEventType
 from painkiller.core.ports.agent_session import AgentSessionPort
 from painkiller.adapters.sandbox.paths import daemon_path
 
@@ -20,36 +20,23 @@ logger = logging.getLogger(__name__)
 STDIN_RELATIVE = ".painkiller/agent-stdin.jsonl"
 EOF_SENTINEL = "__painkiller_eof__"
 
-#: Variáveis repassadas ao contêiner. O Antigravity CLI autentica via GEMINI_API_KEY
-#: (ou GOOGLE_API_KEY). Variáveis legadas da Anthropic são mantidas para retrocompatibilidade.
+#: Variáveis repassadas ao contêiner. Nenhuma chave de provedor: ela vem só
+#: do projeto (`api_key`), para que um projeto nunca gaste a conta de outro.
 FORWARDED_ENV = [
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "DEEPSEEK_API_KEY",
     "PAINKILLER_DEEPSEEK_MODEL",
     "PAINKILLER_DEEPSEEK_EFFORT",
     "PAINKILLER_MAKI_MODEL",
     "PAINKILLER_AGENT_MODEL",
     "PAINKILLER_AGENT_EFFORT",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_CUSTOM_MODEL_OPTION",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "CLAUDE_CODE_SUBAGENT_MODEL",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "AWS_REGION",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
 ]
 
+#: Mensagem de quando o projeto não tem chave; a UI a mostra como veio.
+MISSING_KEY_MESSAGE = (
+    "Este projeto não tem chave de API cadastrada. Abra Editar projeto e informe a chave "
+    "do provedor do harness antes de iniciar o agente."
+)
 
-#: Harnesses que autenticam com a chave DeepSeek (do projeto ou do .env).
-DEEPSEEK_KEY_HARNESSES = frozenset({"deepseek_superpowers", "maki_superpowers", "unreal_superpowers"})
+
 
 
 def maki_model() -> str:
@@ -137,14 +124,14 @@ class DockerAgentSession(AgentSessionPort):
         model: Optional[str] = None,
     ) -> str:
         harness_type = getattr(harness, "value", harness) or "agy_superpowers"
+        if not api_key:
+            raise RuntimeError(MISSING_KEY_MESSAGE)
         env_vars = {k: os.environ[k] for k in FORWARDED_ENV if k in os.environ}
         env_vars.update(env or {})
-        if api_key:
-            if harness_type in DEEPSEEK_KEY_HARNESSES:
-                env_vars["DEEPSEEK_API_KEY"] = api_key
-            else:
-                env_vars["GEMINI_API_KEY"] = api_key
-        self._require_credentials(env_vars, harness=harness_type)
+        if harness_type in DEEPSEEK_KEY_HARNESSES:
+            env_vars["DEEPSEEK_API_KEY"] = api_key
+        else:
+            env_vars["GEMINI_API_KEY"] = api_key
 
         # Pasta para persistir configurações e memória do Antigravity CLI
         gemini_home = os.path.join(repo_path, ".painkiller", "gemini_home")
@@ -325,27 +312,6 @@ class DockerAgentSession(AgentSessionPort):
         if not resume and prompt:
             await self.send(session_id, prompt)
         return container_name
-
-    @staticmethod
-    def _require_credentials(env_vars: dict[str, str], harness: str = "agy_superpowers") -> None:
-        """Fail early and in pt-BR rather than letting the container die silently."""
-        if harness in DEEPSEEK_KEY_HARNESSES:
-            if not env_vars.get("DEEPSEEK_API_KEY"):
-                raise RuntimeError(
-                    "DEEPSEEK_API_KEY não está definida para este projeto e nem no arquivo .env. "
-                    "Configure a chave de API da DeepSeek antes de iniciar a análise."
-                )
-            return
-
-        has_gemini = any(env_vars.get(k) for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY"))
-        has_anthropic = any(env_vars.get(k) for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
-        has_cloud = any(env_vars.get(k) for k in ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"))
-        if has_gemini or has_anthropic or has_cloud:
-            return
-        raise RuntimeError(
-            "GEMINI_API_KEY não está definida. O agente de análise utiliza o Antigravity CLI com o "
-            "modelo Gemini 3.8 Flash. Defina GEMINI_API_KEY no arquivo .env antes de iniciar a análise."
-        )
 
     async def send(self, session_id: str, text: str) -> None:
         await self._append(
@@ -625,8 +591,7 @@ _HARNESS_ERROR_MESSAGES = {
         "platform.deepseek.com ou troque a chave de API do projeto."
     ),
     "AUTH": (
-        "A DeepSeek recusou a chave de API. Confira a chave do projeto "
-        "ou DEEPSEEK_API_KEY no .env."
+        "A DeepSeek recusou a chave de API. Confira a chave do projeto em Editar projeto."
     ),
 }
 

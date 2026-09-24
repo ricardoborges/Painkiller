@@ -35,9 +35,21 @@ def mock_git():
     return git
 
 
+async def test_dispatch_refuses_project_without_api_key(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(id="t1", project_id="p1", title="T", description="D")
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    with pytest.raises(RuntimeError, match="chave de API"):
+        await orchestrator.dispatch_task("t1")
+
+    mock_git.create_branch.assert_not_called()
+    mock_sandbox.run_task.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_dispatch_task_success(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc")
 
     mock_tracker.get_task.return_value = task
@@ -62,7 +74,7 @@ async def test_dispatch_task_success(mock_tracker, mock_sandbox, mock_git):
 
 @pytest.mark.asyncio
 async def test_dispatch_task_treats_test_exit_code_5_as_success(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="Build HTML Page", description="Desc")
 
     mock_tracker.get_task.return_value = task
@@ -84,7 +96,7 @@ async def test_dispatch_task_treats_test_exit_code_5_as_success(mock_tracker, mo
 
 @pytest.mark.asyncio
 async def test_dispatch_task_pause_on_clarification(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc")
 
     clar_req = ClarificationRequest(
@@ -112,7 +124,7 @@ async def test_dispatch_task_pause_on_clarification(mock_tracker, mock_sandbox, 
 
 @pytest.mark.asyncio
 async def test_merge_task_success(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo", default_branch="main")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k", default_branch="main")
     task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc", assigned_branch="feature/t1")
 
     mock_tracker.get_task.return_value = task
@@ -136,7 +148,7 @@ async def test_merge_task_success(mock_tracker, mock_sandbox, mock_git):
 
 @pytest.mark.asyncio
 async def test_finalize_session_deletes_only_merged_branches(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo", default_branch="main")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k", default_branch="main")
     session = IterationSession(id="s1", project_id="p1", number=1, title="Sessão 1", status=SessionStatus.IN_SPRINT)
     done = Task(id="t1", project_id="p1", title="A", description="", status=TaskStatus.COMPLETED,
                 assigned_branch="feature/t1", session_id="s1")
@@ -162,7 +174,7 @@ async def test_finalize_session_deletes_only_merged_branches(mock_tracker, mock_
 @pytest.mark.asyncio
 async def test_dispatch_task_timeout_keeps_error_short(mock_tracker, mock_sandbox, mock_git, monkeypatch):
     monkeypatch.setenv("PAINKILLER_TASK_TIMEOUT", "900")
-    project = Project(id="p1", name="App", repo_path="/repo")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc")
 
     mock_tracker.get_task.return_value = task
@@ -187,7 +199,7 @@ async def test_dispatch_task_timeout_keeps_error_short(mock_tracker, mock_sandbo
 
 @pytest.mark.asyncio
 async def test_retry_after_failure_tells_agent_to_continue(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc", status=TaskStatus.FAILED)
 
     mock_tracker.get_task.return_value = task
@@ -232,7 +244,7 @@ async def test_stop_ignores_task_that_is_not_running(mock_tracker, mock_sandbox,
 
 @pytest.mark.asyncio
 async def test_stop_during_dispatch_reports_interruption_not_exit_code(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="T", description="D")
     mock_tracker.get_task.return_value = task
     mock_tracker.get_project.return_value = project
@@ -254,7 +266,7 @@ async def test_stop_during_dispatch_reports_interruption_not_exit_code(mock_trac
 
 @pytest.mark.asyncio
 async def test_abbreviate_tests_restarts_live_run_without_tests(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo")
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="T", description="D")
     mock_tracker.get_task.return_value = task
     mock_tracker.get_project.return_value = project

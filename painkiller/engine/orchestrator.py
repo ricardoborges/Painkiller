@@ -85,6 +85,11 @@ class PainkillerOrchestrator:
         project = await self.tracker.get_project(task.project_id)
         if not project:
             raise ValueError(f"Project {task.project_id} not found")
+        if not project.api_key:
+            raise RuntimeError(
+                "Este projeto não tem chave de API cadastrada. Abra Editar projeto e informe a chave "
+                "do provedor do harness antes de despachar tarefas."
+            )
 
         # Verify dependency constraints
         if task.dependencies:

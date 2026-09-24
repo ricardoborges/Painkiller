@@ -29,7 +29,7 @@ async def test_deployments_api_flow(deployment_client: AsyncClient):
     # 1. Create project
     proj_res = await deployment_client.post(
         "/api/projects",
-        json={"name": "Deploy App", "repo_path": "/tmp/deploy_app"},
+        json={"name": "Deploy App", "repo_path": "/tmp/deploy_app", "api_key": "k"},
     )
     assert proj_res.status_code == 200
     proj_id = proj_res.json()["id"]

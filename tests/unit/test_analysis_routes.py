@@ -76,7 +76,7 @@ async def client(tmp_path):
 
 
 async def _project(client, tmp_path) -> str:
-    res = await client.post("/api/projects", json={"name": "Teste", "description": "d"})
+    res = await client.post("/api/projects", json={"name": "Teste", "description": "d", "api_key": "k"})
     assert res.status_code == 200, res.text
     return res.json()["id"]
 

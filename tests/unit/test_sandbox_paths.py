@@ -8,6 +8,7 @@ resolved by the host daemon and must be rewritten first.
 import os
 import pytest
 from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
+from painkiller.adapters.sandbox.paths import set_host_root
 
 CONTAINER_ROOT = "/app/storage"
 WINDOWS_HOST = r"D:\dev\github\Painkiller\storage"
@@ -16,14 +17,17 @@ POSIX_HOST = "/home/ricardo/painkiller/storage"
 
 @pytest.fixture(autouse=True)
 def clear_mapping(monkeypatch):
-    """Keep the ambient environment from leaking into these cases."""
+    """Keep the ambient environment and earlier tests from leaking into these cases."""
     monkeypatch.delenv("PAINKILLER_CONTAINER_ROOT", raising=False)
-    monkeypatch.delenv("PAINKILLER_HOST_ROOT", raising=False)
+    set_host_root(None)
+    yield
+    set_host_root(None)
 
 
 def _map(monkeypatch, container_root: str, host_root: str) -> None:
+    # A raiz do host vem das configurações da plataforma (salva ou detectada).
     monkeypatch.setenv("PAINKILLER_CONTAINER_ROOT", container_root)
-    monkeypatch.setenv("PAINKILLER_HOST_ROOT", host_root)
+    set_host_root(host_root)
 
 
 def test_rewrites_to_windows_host_path(monkeypatch):

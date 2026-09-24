@@ -12,14 +12,13 @@
 # aninhados. Isso significa que o `volumes=` do worker e resolvido pelo daemon
 # do HOST: um caminho como /app/storage/... simplesmente nao existe la.
 #
-# Por isso PAINKILLER_HOST_ROOT precisa apontar para o caminho ABSOLUTO DO HOST
-# da pasta ./storage. Defina no .env, por exemplo:
+# Por isso o caminho ABSOLUTO DO HOST da pasta ./storage precisa ser conhecido.
+# A api o descobre sozinha, inspecionando o proprio contentor pelo socket (nao
+# defina `hostname:` no servico api). O wizard de setup mostra o valor, testa a
+# montagem e aceita outro caminho se a deteccao falhar.
 #
-#   Windows       PAINKILLER_HOST_ROOT=D:\dev\github\Painkiller\storage
-#   Linux/macOS   PAINKILLER_HOST_ROOT=/home/voce/painkiller/storage
-#
-# Sem essa variavel a interface funciona por inteiro (projetos, analise inicial,
-# backlog); apenas o "Despachar" e que monta a pasta errada no agente.
+# Com o caminho errado a interface funciona por inteiro (projetos, analise
+# inicial, backlog); apenas o "Despachar" e que monta a pasta errada no agente.
 # =============================================================================
 
 name: painkiller
@@ -39,7 +38,8 @@ services:
     ports:
       - "8000:8000"
 
-    # Chaves de LLM. Opcional: sem .env a UI sobe, so a analise inicial falha.
+    # Admin, segredos e ajustes finos. As chaves de LLM sao por projeto (na UI),
+    # e Google/Coolify sao configurados no wizard de setup do primeiro acesso.
     env_file:
       - path: .env
         required: false
@@ -59,9 +59,7 @@ services:
       PAINKILLER_AGENT_UNREAL_IMAGE: painkiller-agent-unreal:latest
 
       # Backend do agente de analise inicial: Antigravity CLI + superpowers + Gemini 3.8 Flash.
-      # Autentica via GEMINI_API_KEY, que vem SO do env_file (.env). Nao repetir
-      # aqui como ${GEMINI_API_KEY}: a interpolacao do compose prefere a variavel
-      # do shell/Windows ao .env, e esta secao sobrescreve o env_file.
+      # Autentica com a chave do projeto, repassada pela api a cada contentor.
       PAINKILLER_AGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-gemini-3.8-flash}
       PAINKILLER_AGENT_EFFORT: ${PAINKILLER_AGENT_EFFORT:-medium}
 
@@ -69,10 +67,9 @@ services:
       # na rede do compose sozinho.
       PAINKILLER_AGENT_NETWORK: ${PAINKILLER_AGENT_NETWORK:-painkiller_default}
 
-      # Par de traducao de caminho lido por DockerSandboxRunner._daemon_path.
-      # O primeiro e fixo (segue o WORKDIR da imagem); o segundo vem do .env.
+      # Raiz de ./storage dentro do contentor (segue o WORKDIR da imagem); o
+      # lado do host e detectado ou salvo no wizard.
       PAINKILLER_CONTAINER_ROOT: /app/storage
-      PAINKILLER_HOST_ROOT: ${PAINKILLER_HOST_ROOT:-}
 
       # Gitea embutido para versionamento e visualizador de codigo
       PAINKILLER_GITEA_INTERNAL_URL: http://gitea:3000

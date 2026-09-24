@@ -105,7 +105,7 @@ flowchart TD
 
 ### Prerequisites
 - Docker & Docker Compose
-- API key for your chosen provider (`GEMINI_API_KEY` or `DEEPSEEK_API_KEY`)
+- An API key per project for its harness's provider (Google Gemini or DeepSeek), entered when the project is created — there is no server-wide LLM key
 
 ### One command
 
@@ -115,14 +115,14 @@ flowchart TD
 powershell -ExecutionPolicy Bypass -File .\win-run.ps1   # Windows
 ```
 
-The script checks Docker/Compose, creates `.env` from `.env.example`, fills `PAINKILLER_HOST_ROOT` and generates the secrets, asks for an LLM key if none is set, builds **every** image (including each harness's worker and agent), verifies them and waits for the API. Use `--skip-build` / `-SkipBuild` to only start.
+The script checks Docker/Compose, creates `.env` from `.env.example`, generates the Gitea service-account password, builds **every** image (including each harness's worker and agent), verifies them and waits for the API. Use `--skip-build` / `-SkipBuild` to only start.
 
 ### Running with Docker Compose manually
 
 1. Clone the repo and configure `.env`:
    ```bash
    cp .env.example .env
-   # Set your PAINKILLER_HOST_ROOT, GITEA password, and LLM keys in .env
+   # Set PAINKILLER_GITEA_PASSWORD in .env (everything else is configured in the browser)
    ```
 
 2. Build and start the services:
@@ -132,5 +132,15 @@ The script checks Docker/Compose, creates `.env` from `.env.example`, fills `PAI
    docker compose up -d
    ```
 
-3. Open `http://localhost:8000` in your browser.
+3. Open `http://localhost:8000` right away: a fresh install asks you to **create the administrator** (username and password, stored hashed in the database). Whoever gets there first owns the instance. Forgot the password? `docker compose exec api painkiller admin-reset && docker compose restart api` reopens the first access.
+
+### First-run setup wizard
+
+Right after the first access, the admin lands on a wizard (`/setup`, later at **Admin → Configurações**, `/admin/settings`):
+
+1. **Ambiente** — public URL (prefilled from the browser), the host path of `./storage` (detected by the API inspecting its own container) with a "Testar montagem" button, and checks for Docker and the harness images.
+2. **Login com Google** (optional, skippable) — a step-by-step for the Google Cloud Console with both redirect URIs ready to copy.
+3. **Coolify** (optional, skippable) — **"Configurar automaticamente"** creates Coolify's root account, enables its API and issues a root token by running `php artisan tinker` inside `painkiller-coolify` through the Docker socket; the generated credentials are shown once and kept encrypted. A manual path with direct links to Coolify's register, Settings → Advanced and API Tokens pages is there as a fallback.
+
+All of it lives in the SQLite database, never in the `.env`, and applies without a restart. A random key generated on first boot signs sessions and encrypts the stored secrets. The `.env` keeps only infrastructure settings (images, ports, the Gitea service-account password).
 

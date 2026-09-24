@@ -29,7 +29,7 @@ async def test_project_and_task_api(app_client: AsyncClient):
     # 1. Create project
     res = await app_client.post(
         "/api/projects",
-        json={"name": "API Test Project", "repo_path": "/tmp/api_proj"},
+        json={"name": "API Test Project", "repo_path": "/tmp/api_proj", "api_key": "k"},
     )
     assert res.status_code == 200
     proj_data = res.json()

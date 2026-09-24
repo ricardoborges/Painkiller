@@ -1,6 +1,7 @@
 """SQLite Issue Tracker Adapter using async SQLAlchemy."""
 
 import json
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Sequence, Any
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import declarative_base
 
 from painkiller.core.domain.models import (
+    PlatformSettings,
     Project,
     ProjectType,
     ProjectTemplate,
@@ -47,6 +49,8 @@ from painkiller.core.domain.models import (
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
 from painkiller.core.ports.user_directory import UserDirectoryPort
+from painkiller.core.ports.platform_settings import PlatformSettingsPort
+from painkiller.adapters.issue_trackers.secret_box import SecretBox
 
 Base = declarative_base()
 
@@ -233,11 +237,18 @@ class ProjectTemplateRecord(Base):
 USAGE_SETTINGS_KEY = "usage"
 
 
+#: Configuração da plataforma editada no wizard de setup.
+PLATFORM_SETTINGS_KEY = "platform"
+#: Chave aleatória da instalação: assina as sessões e cifra os segredos.
+PLATFORM_SECRET_KEY = "platform:secret-key"
+PLATFORM_SECRET_FIELDS = ("google_client_secret", "coolify_api_token", "coolify_root_password")
+
+
 def _budget_key(project_id: str) -> str:
     return f"usage:budget:{project_id}"
 
 
-class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
+class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, PlatformSettingsPort):
     """Asynchronous SQLite implementation of the tracker, usage ledger and user directory ports."""
 
     def __init__(self, db_url: str = "sqlite+aiosqlite:///painkiller.db"):
@@ -878,6 +889,39 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort):
 
     async def save_usage_settings(self, settings: UsageSettings) -> UsageSettings:
         await self._write_setting(USAGE_SETTINGS_KEY, settings.model_dump_json())
+        return settings
+
+    async def get_secret_key(self) -> str:
+        """Random key generated on first use and kept next to the data.
+
+        Fica no mesmo banco que os segredos que cifra: protege contra vazar só a
+        linha de configuração (logs, exports), não contra quem copia o banco.
+        """
+        key = await self._read_setting(PLATFORM_SECRET_KEY)
+        if not key:
+            key = secrets.token_urlsafe(48)
+            await self._write_setting(PLATFORM_SECRET_KEY, key)
+        return key
+
+    async def _secret_box(self) -> SecretBox:
+        return SecretBox(await self.get_secret_key())
+
+    async def get_platform_settings(self) -> PlatformSettings:
+        value = await self._read_setting(PLATFORM_SETTINGS_KEY)
+        if value is None:
+            return PlatformSettings()
+        settings = PlatformSettings.model_validate(json.loads(value or "{}"))
+        box = await self._secret_box()
+        for field in PLATFORM_SECRET_FIELDS:
+            setattr(settings, field, box.open(getattr(settings, field)))
+        return settings
+
+    async def save_platform_settings(self, settings: PlatformSettings) -> PlatformSettings:
+        box = await self._secret_box()
+        sealed = settings.model_copy()
+        for field in PLATFORM_SECRET_FIELDS:
+            setattr(sealed, field, box.seal(getattr(sealed, field)))
+        await self._write_setting(PLATFORM_SETTINGS_KEY, sealed.model_dump_json())
         return settings
 
     async def get_project_budget(self, project_id: str) -> Optional[float]:

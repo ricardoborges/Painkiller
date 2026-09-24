@@ -53,12 +53,10 @@ class CoolifyAdapter(DeploymentPort):
         # são clonados por SSH com um deploy key; sem ele, clone público.
         self.vcs = vcs
         self.api_url = (api_url if api_url is not None else os.environ.get("COOLIFY_API_URL", "http://localhost:8000")).rstrip("/")
-        self.api_token = os.environ.get("COOLIFY_API_TOKEN", "") if api_token is None else api_token
-        self.server_uuid = server_uuid or os.environ.get("COOLIFY_SERVER_UUID", "")
-        self.wildcard_domain = (
-            wildcard_domain
-            or os.environ.get("COOLIFY_WILDCARD_DOMAIN", "127.0.0.1.nip.io")
-        ).strip(".")
+        # Token, servidor e domínio vêm das configurações da plataforma (configure()).
+        self.api_token = api_token or ""
+        self.server_uuid = server_uuid or ""
+        self.wildcard_domain = (wildcard_domain or "127.0.0.1.nip.io").strip(".")
         self.gitea_internal_url = (
             gitea_internal_url
             or os.environ.get("COOLIFY_GITEA_URL")
@@ -68,6 +66,72 @@ class CoolifyAdapter(DeploymentPort):
             gitea_external_url
             or os.environ.get("PAINKILLER_GITEA_EXTERNAL_URL", "http://localhost:8000/gitea")
         ).rstrip("/")
+
+    def configure(
+        self,
+        api_token: Optional[str] = None,
+        server_uuid: Optional[str] = None,
+        wildcard_domain: Optional[str] = None,
+    ) -> None:
+        """Apply settings saved in the setup wizard; None keeps the current value."""
+        if api_token is not None:
+            self.api_token = api_token
+        if server_uuid is not None:
+            self.server_uuid = server_uuid
+        if wildcard_domain:
+            self.wildcard_domain = wildcard_domain.strip().strip(".")
+
+    async def check(self, api_token: Optional[str] = None) -> dict:
+        """Reachability and token check for the setup wizard.
+
+        Devolve {reachable, token_ok, version, servers, error}; nunca levanta.
+        """
+        token = self.api_token if api_token is None else api_token
+        result: dict[str, Any] = {
+            "reachable": False,
+            "token_ok": False,
+            "version": None,
+            "servers": [],
+            "error": None,
+        }
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                health = await client.get(f"{self.api_url}/api/health")
+                result["reachable"] = health.status_code < 500
+            except httpx.HTTPError as e:
+                result["error"] = f"Coolify inacessível em {self.api_url}: {e}"
+                return result
+            if not token:
+                return result
+            try:
+                version = await client.get(f"{self.api_url}/api/v1/version", headers=headers)
+                if version.status_code == 403 and "disabled" in version.text.lower():
+                    result["error"] = "A API do Coolify está desligada (Settings → Advanced → API Access)."
+                    return result
+                if version.status_code in (401, 403):
+                    result["error"] = "O Coolify recusou o token."
+                    return result
+                version.raise_for_status()
+                result["token_ok"] = True
+                result["version"] = version.text.strip().strip('"')
+                servers = await client.get(f"{self.api_url}/api/v1/servers", headers=headers)
+                if servers.is_success and isinstance(servers.json(), list):
+                    # O servidor "localhost" (id 0) é o próprio host, criado pelo
+                    # seeder do Coolify via a ponte SSH coolify-host; usable diz se
+                    # ele já passou na validação (SSH + Docker) e aceita deploy.
+                    result["servers"] = [
+                        {
+                            "uuid": s.get("uuid"),
+                            "name": s.get("name"),
+                            "ip": s.get("ip"),
+                            "usable": bool(s.get("is_reachable") and s.get("is_usable")),
+                        }
+                        for s in servers.json()
+                    ]
+            except httpx.HTTPError as e:
+                result["error"] = f"Falha ao consultar o Coolify: {e}"
+        return result
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -239,7 +303,7 @@ class CoolifyAdapter(DeploymentPort):
 
         # Se o token não estiver configurado, registra como mock / dev local com URL prevista
         if not self.api_token:
-            logger.warning("COOLIFY_API_TOKEN não configurado. Simulando registro de deploy.")
+            logger.warning("Coolify sem token configurado. Simulando registro de deploy.")
             return DeploymentRecord(
                 id=deployment_id,
                 project_id=project.id,
@@ -251,7 +315,7 @@ class CoolifyAdapter(DeploymentPort):
                 coolify_app_uuid=f"mock-app-{project.id}-{environment.value}",
                 coolify_deployment_uuid=f"mock-dep-{deployment_id}",
                 url=fqdn,
-                logs=f"Ambiente simulado (COOLIFY_API_TOKEN ausente). Apontando para {fqdn}",
+                logs=f"Ambiente simulado (Coolify não configurado em Admin → Configurações). Apontando para {fqdn}",
                 created_at=now,
                 updated_at=now,
             )

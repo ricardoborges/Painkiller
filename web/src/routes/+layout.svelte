@@ -5,12 +5,14 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { pending } from '$lib/stores/pending.svelte';
   import { disposeAnalyses } from '$lib/stores/analysis.svelte';
+  import { setup } from '$lib/stores/setup.svelte';
 
   import Icon from '$lib/components/Icon.svelte';
 
   let { children } = $props();
 
-  const isLogin = $derived(page.url.pathname === '/login');
+  // Páginas de quem ainda não entrou: login e o primeiro acesso de uma instalação nova.
+  const isLogin = $derived(page.url.pathname === '/login' || page.url.pathname === '/first-access');
 
   $effect(() => {
     auth.restore();
@@ -20,13 +22,15 @@
   $effect(() => {
     if (!auth.ready) return;
     if (!auth.signedIn && !isLogin) goto('/login', { replaceState: true });
-    if (auth.signedIn && isLogin) goto('/projetos', { replaceState: true });
+    if (auth.signedIn && isLogin) goto('/projects', { replaceState: true });
     if (
       auth.signedIn &&
       !auth.isAdmin &&
-      (page.url.pathname.startsWith('/pendencias') || page.url.pathname.startsWith('/admin'))
+      (page.url.pathname.startsWith('/pending') ||
+        page.url.pathname.startsWith('/admin') ||
+        page.url.pathname.startsWith('/setup'))
     ) {
-      goto('/projetos', { replaceState: true });
+      goto('/projects', { replaceState: true });
     }
   });
 
@@ -34,9 +38,20 @@
     if (auth.signedIn && auth.isAdmin) pending.ensure();
   });
 
+  // Primeiro acesso do admin: o wizard vem antes de tudo, até ser concluído.
+  $effect(() => {
+    if (!auth.signedIn || !auth.isAdmin) return;
+    setup.ensure().then(() => {
+      if (setup.state && !setup.state.completed && !page.url.pathname.startsWith('/setup')) {
+        goto('/setup', { replaceState: true });
+      }
+    });
+  });
+
   function signOut() {
     auth.signOut();
     pending.reset();
+    setup.reset();
     // As sessões de análise vivem num módulo e sobrevivem à navegação de
     // propósito; o logout é o único momento em que devem ser descartadas.
     disposeAnalyses();
@@ -44,16 +59,16 @@
   }
 
   const nav = $derived([
-    { href: '/projetos', label: 'Projetos', external: false },
+    { href: '/projects', label: 'Projetos', external: false },
     { href: '/gitea/', label: 'Repositórios', external: true },
     ...(auth.isAdmin
       ? [
-          { href: '/pendencias', label: 'Pendências', external: false },
+          { href: '/pending', label: 'Pendências', external: false },
           { href: '/admin/templates', label: 'Admin', external: false }
         ]
       : [])
   ]);
-  const isFluid = $derived(page.url.pathname.includes('/analise-inicial'));
+  const isFluid = $derived(page.url.pathname.includes('/initial-analysis'));
 </script>
 
 <svelte:head>
@@ -67,7 +82,7 @@
 {:else}
   <header>
     <div class="shell bar" class:fluid={isFluid}>
-      <a href="/projetos" class="brand" aria-label="Painkiller, início">
+      <a href="/projects" class="brand" aria-label="Painkiller, início">
         <span class="mark" aria-hidden="true"></span>
         <span class="word">Painkiller</span>
       </a>
@@ -89,7 +104,7 @@
           {:else}
             <a href={item.href} class="nav-link" class:active aria-current={active ? 'page' : undefined}>
               {item.label}
-              {#if item.href === '/pendencias' && pending.count > 0}
+              {#if item.href === '/pending' && pending.count > 0}
                 <span class="count mono">{pending.count}</span>
               {/if}
             </a>

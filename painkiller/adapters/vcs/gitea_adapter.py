@@ -48,6 +48,8 @@ class GiteaAdapter:
         self._docker_client = docker_client
         # Id da fonte OAuth "google" no Gitea, descoberto uma vez por processo.
         self._google_source_id: Optional[int] = None
+        # Credenciais com que a fonte foi alinhada; trocá-las no wizard realinha.
+        self._google_source_credentials: Optional[tuple[str, str]] = None
 
     @property
     def docker_client(self):
@@ -172,7 +174,8 @@ class GiteaAdapter:
         para isso, então depende do socket Docker; sem ele devolve None e o
         Gitea fica sem SSO (o resto funciona).
         """
-        if self._google_source_id is not None:
+        credentials = (client_id, client_secret)
+        if self._google_source_id is not None and self._google_source_credentials == credentials:
             return self._google_source_id
         if not client_id or not client_secret or not self.docker_client:
             return None
@@ -184,6 +187,15 @@ class GiteaAdapter:
                 return None
             source_id = self._find_auth_source(out, GOOGLE_AUTH_SOURCE)
             if source_id is not None:
+                # Já existe: realinha, porque o secret pode ter sido trocado.
+                code, out = self._exec_in_container([
+                    "gitea", "admin", "auth", "update-oauth",
+                    "--id", str(source_id),
+                    "--key", client_id,
+                    "--secret", client_secret,
+                ])
+                if code != 0:
+                    logger.warning(f"Could not update Gitea Google auth source: {out}")
                 return source_id
             code, out = self._exec_in_container([
                 "gitea", "admin", "auth", "add-oauth",
@@ -203,6 +215,8 @@ class GiteaAdapter:
         try:
             loop = asyncio.get_running_loop()
             self._google_source_id = await loop.run_in_executor(None, _ensure)
+            if self._google_source_id is not None:
+                self._google_source_credentials = credentials
         except Exception as e:
             logger.warning(f"Error ensuring Gitea Google auth source: {e}")
         return self._google_source_id

@@ -12,7 +12,7 @@
   {#if page.error?.message}
     <p class="lede detail">{page.error.message}</p>
   {/if}
-  <a class="btn btn-solid back" href="/projetos">Voltar aos projetos</a>
+  <a class="btn btn-solid back" href="/projects">Voltar aos projetos</a>
 </div>
 
 <style>

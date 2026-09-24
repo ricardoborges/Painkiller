@@ -2,9 +2,10 @@
 
 Dois tipos de usuário:
 
-- **admin break-glass**: credenciais em `PAINKILLER_ADMIN_USER` /
-  `PAINKILLER_ADMIN_PASSWORD`, não vive no banco e enxerga todos os projetos.
-  É o acesso de emergência quando o login Google está fora.
+- **administrador**: criado no primeiro acesso à plataforma e guardado nas
+  configurações da plataforma (SQLite), com a senha em hash scrypt. Enxerga
+  todos os projetos e continua sendo o acesso de emergência quando o login
+  Google está fora.
 - **usuário Google**: criado no primeiro login, dono dos próprios projetos e de
   uma conta no Gitea. Só enxerga o que é dele; o resto responde 404, para não
   revelar nem a existência.
@@ -32,21 +33,52 @@ BREAK_GLASS_ID = "breakglass"
 SESSION_KIND = "session"
 OAUTH_STATE_KIND = "oauth_state"
 
-# Sem PAINKILLER_AUTH_SECRET os tokens são assinados com uma chave efêmera:
-# funciona, mas todo restart derruba as sessões.
-_ephemeral_secret = secrets.token_urlsafe(32)
-_warned_ephemeral = False
+# Chave de assinatura e conta do administrador, instaladas por PlatformConfig a
+# partir do banco na subida. Até lá (ou sem banco) a chave é efêmera e não há
+# administrador, o que só acontece antes do primeiro acesso.
+_auth_secret: bytes = secrets.token_urlsafe(32).encode("utf-8")
+_admin: Optional[tuple[str, str]] = None
+
+#: Parâmetros do scrypt: ~16 MB e algumas dezenas de ms por verificação.
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
+
+
+def set_auth_secret(value: str) -> None:
+    """Install the token-signing key (kept in the database)."""
+    global _auth_secret
+    _auth_secret = value.encode("utf-8")
+
+
+def set_admin_account(username: Optional[str], password_hash: Optional[str]) -> None:
+    """Install the administrator account; None = first access still pending."""
+    global _admin
+    _admin = (username, password_hash) if username and password_hash else None
+
+
+def admin_account() -> Optional[tuple[str, str]]:
+    """(username, password_hash), or None before the first access."""
+    return _admin
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P)
+    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${_b64(salt)}${_b64(digest)}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        scheme, n, r, p, salt, digest = stored.split("$")
+        if scheme != "scrypt":
+            return False
+        actual = hashlib.scrypt(password.encode("utf-8"), salt=_unb64(salt), n=int(n), r=int(r), p=int(p))
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(actual, _unb64(digest))
 
 
 def _secret() -> bytes:
-    global _warned_ephemeral
-    configured = os.environ.get("PAINKILLER_AUTH_SECRET", "")
-    if configured:
-        return configured.encode("utf-8")
-    if not _warned_ephemeral:
-        logger.warning("PAINKILLER_AUTH_SECRET não definido: sessões serão perdidas a cada restart.")
-        _warned_ephemeral = True
-    return _ephemeral_secret.encode("utf-8")
+    return _auth_secret
 
 
 def _b64(data: bytes) -> str:
@@ -82,31 +114,31 @@ def verify_token(token: str, kind: str = SESSION_KIND) -> Optional[dict]:
     return payload
 
 
-def break_glass_credentials() -> tuple[str, str]:
-    return (
-        os.environ.get("PAINKILLER_ADMIN_USER", "admin"),
-        os.environ.get("PAINKILLER_ADMIN_PASSWORD", ""),
-    )
-
-
 def check_break_glass(username: str, password: str) -> bool:
-    """Constant-time check; disabled while the password is empty."""
-    expected_user, expected_password = break_glass_credentials()
-    if not expected_password:
+    """Check the administrator's credentials; always False before the first access."""
+    account = admin_account()
+    if account is None:
         return False
-    user_ok = hmac.compare_digest(username.encode("utf-8"), expected_user.encode("utf-8"))
-    pass_ok = hmac.compare_digest(password.encode("utf-8"), expected_password.encode("utf-8"))
+    expected_user, password_hash = account
+    user_ok = hmac.compare_digest(username.strip().encode("utf-8"), expected_user.encode("utf-8"))
+    # Verifica a senha mesmo com usuário errado, para não vazar qual dos dois falhou pelo tempo.
+    pass_ok = verify_password(password, password_hash)
     return user_ok and pass_ok
 
 
 def break_glass_fingerprint() -> str:
-    """Short hash of the admin password, carried in the admin's tokens."""
-    password = break_glass_credentials()[1]
-    return hmac.new(_secret(), password.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+    """Short hash of the stored password hash, carried in the admin's tokens.
+
+    Trocar a senha muda o hash (e o sal), o que invalida os tokens anteriores.
+    """
+    account = admin_account()
+    material = account[1] if account else ""
+    return hmac.new(_secret(), material.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
 def break_glass_user() -> User:
-    username, _ = break_glass_credentials()
+    account = admin_account()
+    username = account[0] if account else "admin"
     return User(id=BREAK_GLASS_ID, email=username, name="Administrador", role=UserRole.ADMIN)
 
 
@@ -114,7 +146,7 @@ def user_payload(user: User) -> dict:
     """What the UI gets from /login, /me and the Google callback."""
     return {
         "id": user.id,
-        "username": user.email if not user.is_admin else break_glass_credentials()[0],
+        "username": user.email,
         "name": user.name or user.email,
         "email": user.email,
         "role": user.role.value,
@@ -148,8 +180,8 @@ async def current_user(request: Request) -> User:
         raise HTTPException(status_code=401, detail="Sessão inválida ou expirada")
 
     if payload["sub"] == BREAK_GLASS_ID:
-        # Trocar (ou apagar) a senha no .env invalida os tokens emitidos com a anterior.
-        if not break_glass_credentials()[1] or payload.get("pw") != break_glass_fingerprint():
+        # Trocar a senha (ou zerar a conta) invalida os tokens emitidos com a anterior.
+        if admin_account() is None or payload.get("pw") != break_glass_fingerprint():
             raise HTTPException(status_code=401, detail="Sessão inválida ou expirada")
         user = break_glass_user()
     else:

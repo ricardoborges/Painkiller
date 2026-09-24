@@ -1,6 +1,5 @@
 """Google OAuth 2.0 (OpenID Connect) client for the sign-in flow."""
 
-import os
 import urllib.parse
 from typing import Optional
 
@@ -28,15 +27,31 @@ class GoogleOAuthClient:
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
         redirect_uri: Optional[str] = None,
+        allowed_domains: Optional[str] = None,
     ):
-        self.client_id = client_id if client_id is not None else os.environ.get("PAINKILLER_GOOGLE_CLIENT_ID", "")
-        self.client_secret = (
-            client_secret if client_secret is not None else os.environ.get("PAINKILLER_GOOGLE_CLIENT_SECRET", "")
-        )
-        public_url = os.environ.get("PAINKILLER_PUBLIC_URL", "http://localhost:8000").rstrip("/")
-        self.redirect_uri = redirect_uri or os.environ.get(
-            "PAINKILLER_GOOGLE_REDIRECT_URI", f"{public_url}/api/auth/google/callback"
-        )
+        # Vazio até PlatformConfig aplicar o que o admin salvou no wizard.
+        self.client_id = client_id or ""
+        self.client_secret = client_secret or ""
+        self.redirect_uri = redirect_uri or "http://localhost:8000/api/auth/google/callback"
+        self.allowed_domains = allowed_domains or ""
+
+    def configure(
+        self,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+        allowed_domains: str = "",
+    ) -> None:
+        """Apply settings saved in the setup wizard; takes effect on the next sign-in."""
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.redirect_uri = redirect_uri
+        self.allowed_domains = allowed_domains
+
+    @property
+    def allowed_domain_set(self) -> set[str]:
+        raw = self.allowed_domains or ""
+        return {d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()}
 
     @property
     def enabled(self) -> bool:

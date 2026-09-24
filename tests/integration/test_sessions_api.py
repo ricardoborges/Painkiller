@@ -32,6 +32,7 @@ async def test_sessions_crud_and_auto_creation(app_client: AsyncClient):
             "description": "App",
             "purpose": "Teste",
             "solution_description": "Sol",
+            "api_key": "k",
         },
     )
     assert resp.status_code == 200

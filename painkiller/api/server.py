@@ -24,12 +24,14 @@ from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
 from painkiller.adapters.sandbox.docker_agent_session import DockerAgentSession
 from painkiller.adapters.llm.litellm_adapter import LiteLLMAdapter
 from painkiller.adapters.llm.pricing import litellm_price
-from painkiller.adapters.llm.balance import fetch_balances
+from painkiller.adapters.llm.balance import fetch_balances, validate_key
 from painkiller.adapters.deployment.coolify_adapter import CoolifyAdapter
+from painkiller.adapters.deployment.coolify_bootstrap import CoolifyBootstrap
 from painkiller.engine.orchestrator import PainkillerOrchestrator
 from painkiller.engine.analysis import AnalysisOrchestrator
 from painkiller.engine.deployment_service import DeploymentService
 from painkiller.interrogation.wizard import InterrogationWizard
+from painkiller.api.platform import PlatformConfig
 from painkiller.api.security import current_user
 from painkiller.api.routes.auth import router as auth_router
 from painkiller.api.routes.projects import router as projects_router
@@ -42,6 +44,7 @@ from painkiller.api.routes.sessions import router as sessions_router
 from painkiller.api.routes.deployments import router as deployments_router
 from painkiller.api.routes.gitea_proxy import router as gitea_proxy_router
 from painkiller.api.routes.admin_templates import router as admin_templates_router, public_router as templates_router
+from painkiller.api.routes.setup import router as setup_router
 
 
 logger = logging.getLogger(__name__)
@@ -92,6 +95,11 @@ def create_app(
         # Startup
         tracker: SQLiteIssueTracker = app.state.tracker
         await tracker.init_db()
+        # O que o admin salvou no wizard vence o .env; aplicado antes do 1º request.
+        try:
+            await app.state.platform.load()
+        except Exception as e:
+            logger.warning(f"Could not load platform settings: {e}")
         # Initialize Gitea admin user in background if service is reachable
         vcs: GiteaAdapter = app.state.vcs
         asyncio.create_task(vcs.ensure_admin_user())
@@ -159,7 +167,10 @@ def create_app(
     # Injetáveis para os testes não dependerem do catálogo do LiteLLM nem da rede.
     app.state.price_lookup = litellm_price
     app.state.balance_lookup = fetch_balances
+    app.state.key_validator = validate_key
     app.state.google_oauth = GoogleOAuthClient()
+    app.state.coolify_bootstrap = CoolifyBootstrap()
+    app.state.platform = PlatformConfig(store=tracker, state=app.state)
 
     # Register routers. Só /api/auth é público; o resto exige sessão, e cada
     # router ainda confere se o projeto/tarefa/sessão é do usuário.
@@ -176,6 +187,7 @@ def create_app(
     app.include_router(project_usage_router, dependencies=signed_in)
     app.include_router(admin_templates_router, dependencies=signed_in)
     app.include_router(templates_router, dependencies=signed_in)
+    app.include_router(setup_router, dependencies=signed_in)
 
     @app.get("/api/health")
     async def health_check():

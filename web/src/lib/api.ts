@@ -20,7 +20,11 @@ import type {
   EnvironmentType,
   EnvironmentStatusResponse,
   ProjectTemplate,
-  ProjectType
+  ProjectType,
+  SetupState,
+  CoolifyStatus,
+  CoolifyBootstrapResult,
+  KeyValidation
 } from './types';
 
 const TOKEN_KEY = 'pk_token';
@@ -100,7 +104,59 @@ export const api = {
 
   authConfig: () => request<AuthConfig>('/auth/config'),
 
+  /** Instalação nova: cria o administrador e já devolve a sessão dele. */
+  firstAccess: (username: string, password: string) =>
+    request<{ token: string; user: User }>('/auth/first-access', {
+      method: 'POST',
+      ...json({ username, password })
+    }),
+
+  /** Troca usuário e/ou senha do admin; a sessão anterior deixa de valer. */
+  updateAdminAccount: (body: { current_password: string; username: string; new_password: string }) =>
+    request<{ token: string; user: User }>('/setup/admin', { method: 'PUT', ...json(body) }),
+
+  /* ---- setup inicial (só admin) ---- */
+  setupState: () => request<SetupState>('/setup'),
+
+  saveSetupEnvironment: (body: { public_url: string; host_root: string }) =>
+    request<SetupState>('/setup/environment', { method: 'PUT', ...json(body) }),
+
+  testSetupEnvironment: () =>
+    request<{ ok: boolean; detail: string }>('/setup/environment/test', { method: 'POST' }),
+
+  saveSetupGoogle: (body: { client_id: string; client_secret?: string; allowed_domains: string }) =>
+    request<SetupState>('/setup/google', { method: 'PUT', ...json(body) }),
+
+  coolifyStatus: () => request<CoolifyStatus>('/setup/coolify/status'),
+
+  saveSetupCoolify: (body: {
+    api_token?: string;
+    server_uuid?: string;
+    wildcard_domain?: string;
+    dashboard_url?: string;
+  }) => request<SetupState>('/setup/coolify', { method: 'PUT', ...json(body) }),
+
+  bootstrapCoolify: (email: string) =>
+    request<CoolifyBootstrapResult>('/setup/coolify/bootstrap', {
+      method: 'POST',
+      ...json({ email })
+    }),
+
+  coolifyCredentials: () =>
+    request<{ email: string; password: string | null }>('/setup/coolify/credentials'),
+
+  skipSetupStep: (step: string) =>
+    request<SetupState>(`/setup/steps/${step}/skip`, { method: 'POST' }),
+
+  completeSetup: () => request<SetupState>('/setup/complete', { method: 'POST' }),
+
   /* ---- projetos ---- */
+  validateProjectKey: (harness: string, api_key: string) =>
+    request<KeyValidation>('/projects/validate-key', {
+      method: 'POST',
+      ...json({ harness, api_key })
+    }),
+
   listProjects: () => request<Project[]>('/projects'),
 
   getProject: (id: string) => request<Project>(`/projects/${id}`),
@@ -316,7 +372,8 @@ export const api = {
     request<UsageSettings>('/usage/settings', { method: 'PUT', ...json(body) }),
 
   /** Consulta os provedores na hora; pode demorar alguns segundos. */
-  getProviderBalances: () => request<ProviderBalance[]>('/usage/balances'),
+  getProjectBalances: (projectId: string) =>
+    request<ProviderBalance[]>(`/projects/${projectId}/usage/balances`),
 
   /* ---- deploys (Coolify: teste e produção) ---- */
   triggerDeploy: (

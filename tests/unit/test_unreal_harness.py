@@ -275,7 +275,7 @@ async def test_resume_skips_the_answered_queue(tmp_path, client, env):
     session = DockerAgentSession(client=client)
     await session.start(
         "analysis-unreal", str(tmp_path), claude_session_id=SESSION, resume=True,
-        harness="unreal_superpowers",
+        harness="unreal_superpowers", api_key="sk-project",
     )
 
     command = client.containers.run.call_args.kwargs["command"]

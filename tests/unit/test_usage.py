@@ -165,7 +165,7 @@ async def test_ledger_roundtrip(tmp_path):
 async def test_dispatch_records_task_usage_even_when_the_run_fails():
     tracker, sandbox, git, usage = AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()
     tracker.get_task.return_value = Task(id="t1", project_id="p1", title="T", description="D")
-    tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo")
+    tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     sandbox.run_task.return_value = ExecutionResult(
         exit_code=1,
         logs='{"event": "result", "result": {"model": "gemini-3.8-flash", "total_cost_usd": 0.02, "usage_metadata": {"promptTokenCount": 3000, "candidatesTokenCount": 200}}}',
@@ -213,7 +213,8 @@ async def client(tmp_path):
     app = create_app(db_url=f"sqlite+aiosqlite:///{tmp_path / 'api.db'}")
     app.state.price_lookup = lambda model: None
 
-    async def balances():
+    async def balances(keys):
+        assert keys == {"deepseek": "sk-proj"}
         return [{"provider": "deepseek", "name": "DeepSeek", "supported": True,
                  "balance": 12.5, "currency": "USD", "error": None}]
 
@@ -267,19 +268,16 @@ async def test_usage_routes_are_scoped_to_the_project(client):
     assert (await c.put(f"{base}/budget", json={"budget_usd": -1})).status_code == 422
     assert (await c.get("/api/projects/nao-existe/usage")).status_code == 404
     assert (await c.get("/api/usage")).status_code == 404
-    assert (await c.get("/api/usage/balances")).json()[0]["balance"] == 12.5
+    assert (await c.get(f"{base}/balances")).json() == []  # projeto sem chave
+    await tracker.update_project(mine.id, harness="maki_superpowers", api_key="sk-proj")
+    assert (await c.get(f"{base}/balances")).json()[0]["balance"] == 12.5
 
 
 async def test_fetch_balances_only_for_configured_providers(monkeypatch):
     import httpx
-    from painkiller.adapters.llm.balance import PROVIDERS, fetch_balances
+    from painkiller.adapters.llm.balance import fetch_balances
 
-    for _, _, names in PROVIDERS:
-        for name in names:
-            monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
-    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    keys = {"deepseek": "sk-ds", "openrouter": "sk-or", "gemini": "g", "openai": ""}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if "deepseek" in request.url.host:
@@ -290,9 +288,27 @@ async def test_fetch_balances_only_for_configured_providers(monkeypatch):
         return httpx.Response(500)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        rows = {r["provider"]: r for r in await fetch_balances(client)}
+        rows = {r["provider"]: r for r in await fetch_balances(keys, client)}
 
     assert set(rows) == {"deepseek", "openrouter", "gemini"}
     assert (rows["deepseek"]["balance"], rows["deepseek"]["currency"]) == (9.5, "USD")
     assert rows["openrouter"]["error"]
     assert rows["gemini"]["supported"] is False and rows["gemini"]["balance"] is None
+
+
+async def test_validate_key_distinguishes_refused_from_unknown():
+    import httpx
+    from painkiller.adapters.llm.balance import validate_key
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "deepseek" in request.url.host:
+            ok = request.headers["Authorization"] == "Bearer sk-good"
+            return httpx.Response(200 if ok else 401, json={})
+        return httpx.Response(503)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert (await validate_key("deepseek", "sk-good", client))["valid"] is True
+        assert (await validate_key("deepseek", "sk-bad", client))["valid"] is False
+        # Provedor fora do ar não bloqueia: a chave só não foi confirmada.
+        assert (await validate_key("gemini", "AIza", client))["valid"] is None
+        assert (await validate_key("deepseek", "  ", client))["valid"] is False

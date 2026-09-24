@@ -11,7 +11,7 @@
   let error = $state<string | null>(null);
   let busy = $state(false);
   // Na dúvida (config não carregou), mostra as duas portas de entrada.
-  let config = $state<AuthConfig>({ google: true, break_glass: true });
+  let config = $state<AuthConfig>({ google: true, break_glass: true, first_access: false });
   // O acesso break-glass fica recolhido quando o Google está disponível.
   let showBreakGlass = $state(false);
 
@@ -26,7 +26,7 @@
       busy = true;
       try {
         await auth.signInWithToken(token);
-        await goto('/projetos', { replaceState: true });
+        await goto('/projects', { replaceState: true });
         return;
       } catch (e) {
         error = e instanceof Error ? e.message : 'Não foi possível entrar.';
@@ -41,6 +41,10 @@
       config = await api.authConfig();
     } catch {
       /* servidor fora: mantém as duas opções visíveis */
+    }
+    if (config.first_access) {
+      await goto('/first-access', { replaceState: true });
+      return;
     }
     showBreakGlass = config.break_glass && !config.google;
   });
@@ -57,7 +61,7 @@
     busy = true;
     try {
       await auth.signIn(username, password);
-      await goto('/projetos', { replaceState: true });
+      await goto('/projects', { replaceState: true });
     } catch (e) {
       error = e instanceof Error ? e.message : 'Não foi possível entrar.';
     } finally {
@@ -144,15 +148,9 @@
         </button>
 
         <p class="help">
-          {#if config.break_glass}
-            Conta break-glass do administrador, definida no servidor
-            (<span class="mono">PAINKILLER_ADMIN_USER</span> e
-            <span class="mono">PAINKILLER_ADMIN_PASSWORD</span>). Enxerga todos os projetos.
-          {:else}
-            Nenhuma forma de entrar está configurada. Defina
-            <span class="mono">PAINKILLER_ADMIN_PASSWORD</span> ou as credenciais do
-            Google no <span class="mono">.env</span> do servidor.
-          {/if}
+          Conta do administrador, criada no primeiro acesso à plataforma. Enxerga todos os
+          projetos. Esqueceu a senha? No servidor, rode
+          <span class="mono">painkiller admin-reset</span> e reinicie a API.
         </p>
       </form>
       {/if}

@@ -139,6 +139,16 @@ class HarnessType(str, Enum):
     UNREAL_SUPERPOWERS = "unreal_superpowers"
 
 
+#: Harnesses que autenticam com uma chave DeepSeek; os demais usam Gemini.
+DEEPSEEK_KEY_HARNESSES = frozenset({"deepseek_superpowers", "maki_superpowers", "unreal_superpowers"})
+
+
+def key_provider(harness: Optional[object]) -> str:
+    """Provider whose API key the harness needs: "deepseek" or "gemini"."""
+    value = getattr(harness, "value", harness) or HarnessType.AGY_SUPERPOWERS.value
+    return "deepseek" if value in DEEPSEEK_KEY_HARNESSES else "gemini"
+
+
 class Project(BaseModel):
     """Target software project managed by Painkiller."""
     id: str
@@ -351,3 +361,43 @@ class UsageSettings(BaseModel):
     exchange_rate: Optional[float] = None
     local_currency: str = "BRL"
     prices: dict[str, ModelPrice] = Field(default_factory=dict)
+
+
+#: Etapas do wizard de setup inicial, na ordem em que aparecem.
+SETUP_STEPS = ("environment", "google", "coolify")
+
+
+class SetupStepStatus(str, Enum):
+    PENDING = "pending"
+    DONE = "done"
+    SKIPPED = "skipped"
+
+
+class PlatformSettings(BaseModel):
+    """Platform configuration edited by the admin in the setup wizard.
+
+    Fonte única dessa configuração: nada disto é lido do `.env`. Um campo vazio
+    cai no padrão do código (ou no valor detectado, para a pasta no host). Os
+    segredos chegam aqui já decifrados; cifrá-los é papel de quem persiste.
+    """
+    # Criado no primeiro acesso; sem ele, a plataforma só oferece esse fluxo.
+    admin_username: Optional[str] = None
+    admin_password_hash: Optional[str] = None
+
+    public_url: Optional[str] = None
+    host_root: Optional[str] = None
+
+    google_client_id: Optional[str] = None
+    google_client_secret: Optional[str] = None
+    google_allowed_domains: Optional[str] = None
+
+    coolify_dashboard_url: Optional[str] = None
+    coolify_api_token: Optional[str] = None
+    coolify_server_uuid: Optional[str] = None
+    coolify_wildcard_domain: Optional[str] = None
+    # Conta root que a automação criou no Coolify, para o admin entrar no painel.
+    coolify_root_email: Optional[str] = None
+    coolify_root_password: Optional[str] = None
+
+    steps: dict[str, SetupStepStatus] = Field(default_factory=dict)
+    completed: bool = False

@@ -37,7 +37,16 @@ class AuthStore {
   }
 
   async signIn(username: string, password: string) {
-    const { token, user } = await api.login(username, password);
+    this.adopt(await api.login(username, password));
+  }
+
+  /** Primeiro acesso: cria o administrador e entra com ele. */
+  async createAdmin(username: string, password: string) {
+    this.adopt(await api.firstAccess(username, password));
+  }
+
+  /** Adota uma sessão nova (login, primeiro acesso, troca de senha do admin). */
+  adopt({ token, user }: { token: string; user: User }) {
     setToken(token);
     this.user = user;
     this.ready = true;

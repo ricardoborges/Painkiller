@@ -17,9 +17,12 @@ from painkiller.adapters.sandbox.docker_agent_session import (
 from painkiller.core.domain.models import AgentEventType
 
 
+#: Chave do projeto; a única que chega ao contêiner.
+KEY = "AIzaSyTestKey123"
+
 @pytest.fixture(autouse=True)
 def gemini_key(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "AIzaSyTestKey123")
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaSy-global-not-forwarded")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("PAINKILLER_CONTAINER_ROOT", raising=False)
     monkeypatch.delenv("PAINKILLER_HOST_ROOT", raising=False)
@@ -42,7 +45,7 @@ def _queue_lines(tmp_path):
 async def test_start_runs_agy_in_bidirectional_stream_mode(tmp_path, client):
     session = DockerAgentSession(client=client)
 
-    await session.start("analysis-1", str(tmp_path), "Comece a entrevista")
+    await session.start("analysis-1", str(tmp_path), "Comece a entrevista", api_key=KEY)
 
     command = client.containers.run.call_args.kwargs["command"]
     assert command[:4] == ["painkiller", "agent-run", "--agent-bin", "agy"]
@@ -54,12 +57,14 @@ async def test_start_runs_agy_in_bidirectional_stream_mode(tmp_path, client):
     assert "--model" in agent_args and agent_args[agent_args.index("--model") + 1] == "gemini-3.8-flash"
     assert "--effort" in agent_args and agent_args[agent_args.index("--effort") + 1] == "medium"
     assert not any(arg.startswith("--print") for arg in agent_args)
+    # Só a chave do projeto entra; a do ambiente do servidor não é repassada.
+    assert client.containers.run.call_args.kwargs["environment"]["GEMINI_API_KEY"] == KEY
 
 
 async def test_start_mounts_the_repo_and_seeds_the_prompt_into_the_queue(tmp_path, client):
     session = DockerAgentSession(client=client)
 
-    await session.start("analysis-1", str(tmp_path), "Comece a entrevista")
+    await session.start("analysis-1", str(tmp_path), "Comece a entrevista", api_key=KEY)
 
     volumes = client.containers.run.call_args.kwargs["volumes"]
     bindings = [v["bind"] for v in volumes.values()]
@@ -79,7 +84,7 @@ async def test_start_mounts_the_repo_and_seeds_the_prompt_into_the_queue(tmp_pat
 
 async def test_send_appends_an_analyst_turn(tmp_path, client):
     session = DockerAgentSession(client=client)
-    await session.start("analysis-1", str(tmp_path), "prompt")
+    await session.start("analysis-1", str(tmp_path), "prompt", api_key=KEY)
 
     await session.send("analysis-1", "quero um CRUD")
 
@@ -90,19 +95,18 @@ async def test_send_appends_an_analyst_turn(tmp_path, client):
 
 async def test_close_input_writes_the_eof_sentinel(tmp_path, client):
     session = DockerAgentSession(client=client)
-    await session.start("analysis-1", str(tmp_path), "prompt")
+    await session.start("analysis-1", str(tmp_path), "prompt", api_key=KEY)
 
     await session.close_input("analysis-1")
 
     assert _queue_lines(tmp_path)[-1] == {"type": EOF_SENTINEL}
 
 
-async def test_missing_gemini_credentials_fail_before_the_container_starts(tmp_path, client, monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+async def test_project_without_key_fails_before_the_container_starts(tmp_path, client):
+    # A chave global do .env (GEMINI_API_KEY da fixture) não serve mais de fallback.
     session = DockerAgentSession(client=client)
 
-    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+    with pytest.raises(RuntimeError, match="chave de API"):
         await session.start("analysis-1", str(tmp_path), "prompt")
 
     client.containers.run.assert_not_called()
@@ -123,7 +127,7 @@ async def test_stream_splits_chunks_that_are_not_line_aligned(tmp_path, client):
     ])
     container.wait.return_value = {"StatusCode": 0}
     session = DockerAgentSession(client=client)
-    await session.start("analysis-1", str(tmp_path), "prompt")
+    await session.start("analysis-1", str(tmp_path), "prompt", api_key=KEY)
 
     events = [e async for e in session.stream("analysis-1")]
 
@@ -148,7 +152,7 @@ async def test_stream_parses_agy_events(tmp_path, client):
     ])
     container.wait.return_value = {"StatusCode": 0}
     session = DockerAgentSession(client=client)
-    await session.start("analysis-1", str(tmp_path), "prompt")
+    await session.start("analysis-1", str(tmp_path), "prompt", api_key=KEY)
 
     events = [e async for e in session.stream("analysis-1")]
 
@@ -248,10 +252,10 @@ async def test_resume_deepseek_passes_session_key(tmp_path, client):
 
 
 async def test_missing_deepseek_credentials_fail_with_clear_error(tmp_path, client, monkeypatch):
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-global-not-used")
     session = DockerAgentSession(client=client)
 
-    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+    with pytest.raises(RuntimeError, match="chave de API"):
         await session.start(
             "analysis-dsh",
             str(tmp_path),
@@ -317,4 +321,4 @@ async def test_missing_image_explains_how_to_build_it(tmp_path, client):
     session = DockerAgentSession(client=client)
 
     with pytest.raises(RuntimeError, match=r"docker compose --profile build build"):
-        await session.start("analysis-x", str(tmp_path), "p")
+        await session.start("analysis-x", str(tmp_path), "p", api_key=KEY)

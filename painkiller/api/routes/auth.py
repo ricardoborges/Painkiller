@@ -1,7 +1,6 @@
 """Authentication routes: break-glass admin and Google sign-in."""
 
 import logging
-import os
 import secrets
 import urllib.parse
 from typing import Optional
@@ -15,7 +14,7 @@ from painkiller.api.security import (
     BREAK_GLASS_ID,
     OAUTH_STATE_KIND,
     _bearer,
-    break_glass_credentials,
+    admin_account,
     break_glass_fingerprint,
     break_glass_user,
     check_break_glass,
@@ -39,9 +38,9 @@ class LoginRequest(BaseModel):
     password: str
 
 
-def _allowed_domains() -> set[str]:
-    raw = os.environ.get("PAINKILLER_GOOGLE_ALLOWED_DOMAINS", "")
-    return {d.strip().lower().lstrip("@") for d in raw.split(",") if d.strip()}
+class FirstAccessRequest(BaseModel):
+    username: str
+    password: str
 
 
 async def ensure_gitea_account(app, user: User) -> User:
@@ -74,18 +73,17 @@ async def ensure_gitea_account(app, user: User) -> User:
 async def auth_config(request: Request):
     """What the login screen should offer."""
     google = getattr(request.app.state, "google_oauth", None)
+    has_admin = admin_account() is not None
     return {
         "google": bool(google and google.enabled),
-        "break_glass": bool(break_glass_credentials()[1]),
+        "break_glass": has_admin,
+        # Sem administrador, a única coisa que a plataforma oferece é criá-lo.
+        "first_access": not has_admin,
     }
 
 
-@router.post("/login")
-async def login(req: LoginRequest, response: Response):
-    """Break-glass admin login, configured in the .env."""
-    if not check_break_glass(req.username, req.password):
-        raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
-    user = break_glass_user()
+def admin_session(response: Response) -> dict:
+    """Issue the administrator's token (bound to the current password) and set the cookie."""
     token = issue_token(BREAK_GLASS_ID, pw=break_glass_fingerprint())
     response.set_cookie(
         AUTH_COOKIE_NAME,
@@ -95,7 +93,33 @@ async def login(req: LoginRequest, response: Response):
         samesite="lax",
         path="/",
     )
-    return {"token": token, "user": user_payload(user)}
+    return {"token": token, "user": user_payload(break_glass_user())}
+
+
+@router.post("/login")
+async def login(req: LoginRequest, response: Response):
+    """Administrator login (the account created on the first access)."""
+    if not check_break_glass(req.username, req.password):
+        raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
+    return admin_session(response)
+
+
+@router.post("/first-access")
+async def first_access(req: FirstAccessRequest, request: Request, response: Response):
+    """Create the administrator on a fresh install and sign them in.
+
+    Só funciona enquanto não há administrador: depois disso responde 409.
+    """
+    from painkiller.api.platform import AdminAccountError
+
+    if admin_account() is not None:
+        raise HTTPException(status_code=409, detail="O primeiro acesso já foi feito. Entre com o administrador.")
+    try:
+        await request.app.state.platform.create_admin(req.username, req.password)
+    except AdminAccountError as e:
+        status = 409 if admin_account() is not None else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    return admin_session(response)
 
 
 @router.get("/me")
@@ -188,7 +212,7 @@ async def google_callback(
     if not sub or not email or not identity.get("email_verified", False):
         return _back_to_login({"error": "A conta Google precisa ter um e-mail verificado."})
 
-    domains = _allowed_domains()
+    domains = google.allowed_domain_set
     if domains and email.rsplit("@", 1)[-1] not in domains:
         return _back_to_login({"error": "Este domínio de e-mail não tem acesso ao Painkiller."})
 

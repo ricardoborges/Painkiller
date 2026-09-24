@@ -190,8 +190,10 @@ export interface User {
 export interface AuthConfig {
   /** Login com Google configurado no servidor. */
   google: boolean;
-  /** Admin break-glass habilitado (senha definida no .env). */
+  /** Já existe um administrador (criado no primeiro acesso). */
   break_glass: boolean;
+  /** Instalação nova: a única coisa a fazer é criar o administrador. */
+  first_access: boolean;
 }
 
 export interface InterrogationStart {
@@ -391,3 +393,91 @@ export interface EnvironmentStatusResponse {
   };
 }
 
+
+/* ---- setup inicial (wizard do admin) ---- */
+
+export type SetupStep = 'environment' | 'google' | 'coolify';
+export type SetupStepStatus = 'pending' | 'done' | 'skipped';
+
+export interface SetupImageRow {
+  harness: string;
+  images: string[];
+  present: boolean;
+}
+
+export interface SetupEnvironment {
+  public_url: string;
+  public_url_saved: boolean;
+  in_container: boolean;
+  host_root: string | null;
+  /** De onde veio o valor: salvo no wizard ou detectado no contêiner. */
+  host_root_source: 'settings' | 'detected' | null;
+  detected_host_root: string | null;
+  docker_ok: boolean;
+  images: SetupImageRow[];
+}
+
+export interface SetupGoogle {
+  client_id: string;
+  has_secret: boolean;
+  masked_secret: string | null;
+  allowed_domains: string;
+  redirect_uris: { painkiller: string; gitea: string };
+  enabled: boolean;
+}
+
+export interface SetupCoolify {
+  dashboard_url: string;
+  has_token: boolean;
+  masked_token: string | null;
+  server_uuid: string;
+  wildcard_domain: string;
+  suggested_wildcard_domain: string;
+  root_email: string | null;
+  has_root_password: boolean;
+}
+
+export interface SetupState {
+  completed: boolean;
+  admin_username: string | null;
+  steps: Record<SetupStep, SetupStepStatus>;
+  environment: SetupEnvironment;
+  google: SetupGoogle;
+  coolify: SetupCoolify;
+}
+
+export interface CoolifyCheck {
+  reachable: boolean;
+  token_ok: boolean;
+  version: string | null;
+  /** usable = o Coolify validou SSH e Docker e aceita deploy nele. */
+  servers: { uuid: string; name: string; ip: string; usable: boolean }[];
+  error: string | null;
+}
+
+export interface CoolifyStatus {
+  container: {
+    reachable: boolean;
+    root_user: boolean;
+    root_email: string | null;
+    api_enabled: boolean;
+    error: string | null;
+  };
+  api: CoolifyCheck;
+  coolify: SetupCoolify;
+}
+
+export interface CoolifyBootstrapResult {
+  created_user: boolean;
+  email: string;
+  /** Só vem quando a conta root foi criada agora. */
+  password: string | null;
+  api: CoolifyCheck;
+  state: SetupState;
+}
+
+export interface KeyValidation {
+  /** null = não foi possível confirmar (rede, provedor fora). */
+  valid: boolean | null;
+  detail: string | null;
+}

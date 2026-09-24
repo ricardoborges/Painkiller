@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from painkiller.api.routes.auth import ensure_gitea_account
 from painkiller.api.security import current_user, require_project, visible_project
 from painkiller.core.attachment_reader import extract_attachment_text
-from painkiller.core.domain.models import User
+from painkiller.core.domain.models import User, key_provider
 from painkiller.core.naming import compose_project_identity
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -39,6 +39,15 @@ class UpdateProjectRequest(BaseModel):
     harness: Optional[str] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
+
+
+class ValidateKeyRequest(BaseModel):
+    harness: Optional[str] = "agy_superpowers"
+    api_key: str = ""
+
+
+#: Nome do provedor como o analista o conhece, para as mensagens de erro.
+PROVIDER_LABELS = {"gemini": "Google Gemini", "deepseek": "DeepSeek"}
 
 
 class CreateTaskRequest(BaseModel):
@@ -70,6 +79,12 @@ async def list_projects(request: Request, user: User = Depends(current_user)):
     return [_format_project(p) for p in projects]
 
 
+@router.post("/validate-key")
+async def validate_project_key(req: ValidateKeyRequest, request: Request):
+    """Ask the harness' provider whether the key works, before saving the project."""
+    return await request.app.state.key_validator(key_provider(req.harness), req.api_key)
+
+
 @router.post("")
 async def create_project(req: CreateProjectRequest, request: Request, user: User = Depends(current_user)):
     tracker = request.app.state.tracker
@@ -80,6 +95,12 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
     # apontar para o repositório de outro e ler seus artefatos.
     if req.repo_path and not user.is_admin:
         raise HTTPException(status_code=403, detail="Só o administrador pode escolher o caminho do repositório")
+
+    # Não há chave global de servidor: cada projeto paga o próprio consumo.
+    if not (req.api_key or "").strip():
+        provider = PROVIDER_LABELS[key_provider(req.harness)]
+        raise HTTPException(status_code=400, detail=f"Informe a chave de API {provider} do projeto.")
+    req.api_key = req.api_key.strip()
 
     identity = compose_project_identity(user, req.name)
 
@@ -140,6 +161,18 @@ async def get_project(project_id: str, request: Request):
 @router.put("/{project_id}", dependencies=[Depends(require_project)])
 async def update_project(project_id: str, req: UpdateProjectRequest, request: Request):
     tracker = request.app.state.tracker
+    current = await tracker.get_project(project_id)
+    new_key = (req.api_key or "").strip() or None
+    # Chave vazia mantém a atual, mas só enquanto o provedor não muda: uma chave
+    # Gemini não serve a um harness DeepSeek, nem o contrário.
+    if current and req.harness and new_key is None:
+        if key_provider(req.harness) != key_provider(current.harness) or not current.api_key:
+            provider = PROVIDER_LABELS[key_provider(req.harness)]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Este harness usa outro provedor: informe a chave de API {provider}.",
+            )
+    req.api_key = new_key
     try:
         updated = await tracker.update_project(
             project_id=project_id,

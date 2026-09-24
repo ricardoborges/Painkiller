@@ -121,20 +121,9 @@ if [ ! -f "$ENV_FILE" ]; then
   ok ".env created from .env.example"
 fi
 
-# ABSOLUTE host path of ./storage: agent containers are siblings of the api and
-# mount the repo through this path. If it is wrong, dispatch silently mounts the
-# wrong folder, so it is always realigned with the current clone.
-storage="$ROOT/storage"
-mkdir -p "$storage"
-host_root="$(env_get PAINKILLER_HOST_ROOT)"
-host_root="${host_root%/}"
-if [ "$host_root" != "$storage" ]; then
-  env_set PAINKILLER_HOST_ROOT "$storage"
-  if [ -n "$host_root" ]; then ok "PAINKILLER_HOST_ROOT fixed: '$host_root' -> '$storage'"
-  else ok "PAINKILLER_HOST_ROOT = $storage"; fi
-else
-  ok "PAINKILLER_HOST_ROOT = $storage"
-fi
+# ./storage is bind-mounted into the api; the api detects its host path by
+# inspecting its own container (shown and testable in the setup wizard).
+mkdir -p "$ROOT/storage"
 
 if [ -z "$(env_get PAINKILLER_GITEA_PASSWORD)" ]; then
   env_set PAINKILLER_GITEA_PASSWORD "$(new_secret 24)"; ok "PAINKILLER_GITEA_PASSWORD generated"
@@ -142,47 +131,13 @@ else
   ok "PAINKILLER_GITEA_PASSWORD set"
 fi
 
-if [ -z "$(env_get PAINKILLER_AUTH_SECRET)" ]; then
-  env_set PAINKILLER_AUTH_SECRET "$(new_secret 48)"; ok "PAINKILLER_AUTH_SECRET generated (sessions survive restarts)"
-else
-  ok "PAINKILLER_AUTH_SECRET set"
-fi
-
-# Without Google configured, the break-glass admin is the only way in.
-generated_admin_password=""
-[ -n "$(env_get PAINKILLER_ADMIN_USER)" ] || env_set PAINKILLER_ADMIN_USER admin
-if [ -z "$(env_get PAINKILLER_ADMIN_PASSWORD)" ] && [ -z "$(env_get PAINKILLER_GOOGLE_CLIENT_ID)" ]; then
-  generated_admin_password="$(new_secret 12)"
-  env_set PAINKILLER_ADMIN_PASSWORD "$generated_admin_password"
-  ok "PAINKILLER_ADMIN_PASSWORD generated (without Google sign-in it is the only access)"
-fi
-
-# LLM keys: dsh and maki use the DeepSeek one; agy uses the Gemini one.
-gemini="$(env_get GEMINI_API_KEY)"
-[ -n "$gemini" ] || gemini="$(env_get GOOGLE_API_KEY)"
-deepseek="$(env_get DEEPSEEK_API_KEY)"
-if [ -z "$gemini" ] && [ -z "$deepseek" ] && [ "$INTERACTIVE" = 1 ]; then
-  warn "no LLM key in .env. Without one, the initial analysis and task dispatch fail."
-  printf '    DEEPSEEK_API_KEY (dsh and maki harnesses; Enter to skip): '
-  read -r k || k=""
-  if [ -n "$k" ]; then env_set DEEPSEEK_API_KEY "$k"; deepseek="$k"; fi
-  printf '    GEMINI_API_KEY (agy harness; Enter to skip): '
-  read -r k || k=""
-  if [ -n "$k" ]; then env_set GEMINI_API_KEY "$k"; gemini="$k"; fi
-fi
-if [ -n "$deepseek" ]; then ok "DEEPSEEK_API_KEY set (dsh and maki harnesses)"
-else warn "DEEPSEEK_API_KEY empty: projects on the dsh or maki harness only work with their own project key."; fi
-if [ -n "$gemini" ]; then ok "GEMINI_API_KEY set (agy harness)"
-else warn "GEMINI_API_KEY empty: projects on the agy harness only work with their own project key."; fi
-
-if [ -z "$(env_get COOLIFY_API_TOKEN)" ]; then
-  coolify_port="$(env_get COOLIFY_PORT)"
-  warn "COOLIFY_API_TOKEN empty: the 'Testar' button stays unavailable until you create a token at http://localhost:${coolify_port:-8008} (Keys & Tokens) and run this script again."
-fi
+# The administrator, the session-signing key, Google sign-in and Coolify all
+# live in the database: the first access creates the admin in the browser and
+# the setup wizard does the rest. LLM keys are per project.
 
 # Compose interpolation prefers the shell variable over .env. A leftover in the
 # environment would override what was set above.
-for k in PAINKILLER_HOST_ROOT PAINKILLER_GITEA_PASSWORD PAINKILLER_GITEA_EXTERNAL_URL PAINKILLER_AGENT_NETWORK; do
+for k in PAINKILLER_GITEA_PASSWORD PAINKILLER_GITEA_EXTERNAL_URL PAINKILLER_AGENT_NETWORK; do
   if [ -n "$(eval "printf '%s' \"\${$k:-}\"")" ]; then
     warn "ignoring $k set in the shell; the .env value wins"
     unset "$k"
@@ -250,12 +205,8 @@ ok "api responding"
 
 # ---------------------------------------------------------------------------
 printf '\n%sPainkiller is up: %s%s\n' "$C_OK" "$API_URL" "$C_OFF"
-admin_user="$(env_get PAINKILLER_ADMIN_USER)"
-if [ -n "$generated_admin_password" ]; then
-  echo "  Login: $admin_user / $generated_admin_password   (saved in .env)"
-elif [ -n "$(env_get PAINKILLER_ADMIN_PASSWORD)" ]; then
-  echo "  Login: $admin_user / (password in PAINKILLER_ADMIN_PASSWORD in .env)"
-fi
-[ -z "$(env_get PAINKILLER_GOOGLE_CLIENT_ID)" ] || echo "  Google sign-in enabled."
+echo "  Open it now: a fresh install asks you to create the administrator (first access),"
+echo "  then opens the setup wizard (Google sign-in, Coolify). Whoever gets there first owns it."
+echo "  Forgot the admin password: docker compose exec api painkiller admin-reset && docker compose restart api"
 echo "  Logs:  docker compose logs -f api"
 echo "  Stop:  docker compose down"

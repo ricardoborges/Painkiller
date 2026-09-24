@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from painkiller.api.security import visible_project
-from painkiller.core.domain.models import ModelPrice, UsageSettings
+from painkiller.core.domain.models import ModelPrice, UsageSettings, key_provider
 from painkiller.core.usage import record_cost, summarize
 
 router = APIRouter(prefix="/api/usage", tags=["usage"])
@@ -83,6 +83,10 @@ async def save_usage_settings(body: UsageSettingsRequest, request: Request) -> U
     return await request.app.state.usage.save_usage_settings(settings)
 
 
-@router.get("/balances")
-async def get_provider_balances(request: Request):
-    return await request.app.state.balance_lookup()
+@project_router.get("/balances")
+async def get_project_balances(project_id: str, request: Request):
+    """Live balance of the provider account behind the project's own key."""
+    project = await visible_project(request, project_id)
+    if not project.api_key:
+        return []
+    return await request.app.state.balance_lookup({key_provider(project.harness): project.api_key})

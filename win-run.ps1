@@ -114,64 +114,22 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
     Write-Ok '.env created from .env.example'
 }
 
-# ABSOLUTE host path of ./storage: agent containers are siblings of the api and
-# mount the repo through this path. If it is wrong, dispatch silently mounts the
-# wrong folder, so it is always realigned with the current clone.
-$storage = Join-Path $PSScriptRoot 'storage'
-New-Item -ItemType Directory -Force -Path $storage | Out-Null
-$hostRoot = Get-EnvValue 'PAINKILLER_HOST_ROOT'
-if ($hostRoot.TrimEnd('\', '/') -ne $storage) {
-    Set-EnvValue 'PAINKILLER_HOST_ROOT' $storage
-    if ($hostRoot) { Write-Ok "PAINKILLER_HOST_ROOT fixed: '$hostRoot' -> '$storage'" }
-    else { Write-Ok "PAINKILLER_HOST_ROOT = $storage" }
-} else {
-    Write-Ok "PAINKILLER_HOST_ROOT = $storage"
-}
+# ./storage is bind-mounted into the api; the api detects its host path by
+# inspecting its own container (shown and testable in the setup wizard).
+New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'storage') | Out-Null
 
 if (-not (Get-EnvValue 'PAINKILLER_GITEA_PASSWORD')) {
     Set-EnvValue 'PAINKILLER_GITEA_PASSWORD' (New-Secret 24)
     Write-Ok 'PAINKILLER_GITEA_PASSWORD generated'
 } else { Write-Ok 'PAINKILLER_GITEA_PASSWORD set' }
 
-if (-not (Get-EnvValue 'PAINKILLER_AUTH_SECRET')) {
-    Set-EnvValue 'PAINKILLER_AUTH_SECRET' (New-Secret 48)
-    Write-Ok 'PAINKILLER_AUTH_SECRET generated (sessions survive restarts)'
-} else { Write-Ok 'PAINKILLER_AUTH_SECRET set' }
-
-# Without Google configured, the break-glass admin is the only way in.
-$generatedAdminPassword = $null
-if (-not (Get-EnvValue 'PAINKILLER_ADMIN_USER')) { Set-EnvValue 'PAINKILLER_ADMIN_USER' 'admin' }
-if (-not (Get-EnvValue 'PAINKILLER_ADMIN_PASSWORD') -and -not (Get-EnvValue 'PAINKILLER_GOOGLE_CLIENT_ID')) {
-    $generatedAdminPassword = New-Secret 12
-    Set-EnvValue 'PAINKILLER_ADMIN_PASSWORD' $generatedAdminPassword
-    Write-Ok 'PAINKILLER_ADMIN_PASSWORD generated (without Google sign-in it is the only access)'
-}
-
-# LLM keys: dsh and maki use the DeepSeek one; agy uses the Gemini one.
-$gemini = (Get-EnvValue 'GEMINI_API_KEY')
-if (-not $gemini) { $gemini = Get-EnvValue 'GOOGLE_API_KEY' }
-$deepseek = Get-EnvValue 'DEEPSEEK_API_KEY'
-if (-not $gemini -and -not $deepseek -and -not $NonInteractive) {
-    Write-Warn 'no LLM key in .env. Without one, the initial analysis and task dispatch fail.'
-    $k = Read-Host '    DEEPSEEK_API_KEY (dsh and maki harnesses; Enter to skip)'
-    if ($k) { Set-EnvValue 'DEEPSEEK_API_KEY' $k.Trim(); $deepseek = $k }
-    $k = Read-Host '    GEMINI_API_KEY (agy harness; Enter to skip)'
-    if ($k) { Set-EnvValue 'GEMINI_API_KEY' $k.Trim(); $gemini = $k }
-}
-if ($deepseek) { Write-Ok 'DEEPSEEK_API_KEY set (dsh and maki harnesses)' }
-else { Write-Warn 'DEEPSEEK_API_KEY empty: projects on the dsh or maki harness only work with their own project key.' }
-if ($gemini) { Write-Ok 'GEMINI_API_KEY set (agy harness)' }
-else { Write-Warn 'GEMINI_API_KEY empty: projects on the agy harness only work with their own project key.' }
-
-if (-not (Get-EnvValue 'COOLIFY_API_TOKEN')) {
-    $coolifyPort = Get-EnvValue 'COOLIFY_PORT'
-    if (-not $coolifyPort) { $coolifyPort = '8008' }
-    Write-Warn "COOLIFY_API_TOKEN empty: the 'Testar' button stays unavailable until you create a token at http://localhost:$coolifyPort (Keys & Tokens) and run this script again."
-}
+# The administrator, the session-signing key, Google sign-in and Coolify all
+# live in the database: the first access creates the admin in the browser and
+# the setup wizard does the rest. LLM keys are per project.
 
 # Compose interpolation prefers the shell variable over .env. A leftover in the
 # session (or in the Windows environment) would override what was set above.
-foreach ($k in 'PAINKILLER_HOST_ROOT', 'PAINKILLER_GITEA_PASSWORD', 'PAINKILLER_GITEA_EXTERNAL_URL', 'PAINKILLER_AGENT_NETWORK') {
+foreach ($k in 'PAINKILLER_GITEA_PASSWORD', 'PAINKILLER_GITEA_EXTERNAL_URL', 'PAINKILLER_AGENT_NETWORK') {
     if (Test-Path "Env:$k") {
         Write-Warn "ignoring $k set in the Windows environment; the .env value wins"
         Remove-Item "Env:$k"
@@ -246,12 +204,8 @@ Write-Ok 'api responding'
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "Painkiller is up: $ApiUrl" -ForegroundColor Green
-$adminUser = Get-EnvValue 'PAINKILLER_ADMIN_USER'
-if ($generatedAdminPassword) {
-    Write-Host "  Login: $adminUser / $generatedAdminPassword   (saved in .env)"
-} elseif (Get-EnvValue 'PAINKILLER_ADMIN_PASSWORD') {
-    Write-Host "  Login: $adminUser / (password in PAINKILLER_ADMIN_PASSWORD in .env)"
-}
-if (Get-EnvValue 'PAINKILLER_GOOGLE_CLIENT_ID') { Write-Host '  Google sign-in enabled.' }
+Write-Host '  Open it now: a fresh install asks you to create the administrator (first access),'
+Write-Host '  then opens the setup wizard (Google sign-in, Coolify). Whoever gets there first owns it.'
+Write-Host '  Forgot the admin password: docker compose exec api painkiller admin-reset; docker compose restart api'
 Write-Host '  Logs:  docker compose logs -f api'
 Write-Host '  Stop:  docker compose down'

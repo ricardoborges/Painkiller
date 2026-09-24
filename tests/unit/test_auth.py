@@ -17,8 +17,9 @@ class FakeGoogle:
     client_secret = "csecret"
     redirect_uri = "http://test/api/auth/google/callback"
 
-    def __init__(self, identity: dict):
+    def __init__(self, identity: dict, allowed_domains: frozenset = frozenset()):
         self.identity = identity
+        self.allowed_domain_set = set(allowed_domains)
         self.codes: list[str] = []
 
     def authorization_url(self, state: str) -> str:
@@ -52,7 +53,7 @@ def _fragment(location: str) -> dict:
     return dict(urllib.parse.parse_qsl(urllib.parse.urlparse(location).fragment))
 
 
-async def test_break_glass_login_uses_env_credentials(client):
+async def test_admin_login_checks_the_stored_credentials(client):
     bad = await client.post("/api/auth/login", json={"username": "admin", "password": "123456"})
     assert bad.status_code == 401
 
@@ -64,20 +65,6 @@ async def test_break_glass_login_uses_env_credentials(client):
     me = await client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['token']}"})
     assert me.status_code == 200
     assert me.json()["username"] == "admin"
-
-
-async def test_break_glass_disabled_without_password(client, monkeypatch):
-    monkeypatch.setenv("PAINKILLER_ADMIN_PASSWORD", "")
-    res = await client.post("/api/auth/login", json={"username": "admin", "password": ""})
-    assert res.status_code == 401
-    assert (await client.get("/api/auth/config")).json()["break_glass"] is False
-
-
-async def test_changing_admin_password_revokes_admin_tokens(client, monkeypatch):
-    headers = admin_headers()
-    assert (await client.get("/api/auth/me", headers=headers)).status_code == 200
-    monkeypatch.setenv("PAINKILLER_ADMIN_PASSWORD", "rotated")
-    assert (await client.get("/api/auth/me", headers=headers)).status_code == 401
 
 
 async def test_api_requires_a_session(client):
@@ -100,7 +87,7 @@ async def test_users_only_see_their_own_projects(app, client):
     alice = await tracker.create_user(email="alice@example.com", name="Alice", gitea_username="alice")
     bob = await tracker.create_user(email="bob@example.com", name="Bob", gitea_username="bob")
 
-    created = await client.post("/api/projects", json={"name": "Loja"}, headers=user_headers(alice.id))
+    created = await client.post("/api/projects", json={"name": "Loja", "api_key": "k"}, headers=user_headers(alice.id))
     assert created.status_code == 200
     project_id = created.json()["id"]
     assert created.json()["owner_id"] == alice.id
@@ -204,15 +191,15 @@ async def test_google_callback_rejects_forged_state(app, client):
     assert app.state.google_oauth.codes == []
 
 
-async def test_google_domain_allowlist_and_verified_email(app, client, monkeypatch):
-    monkeypatch.setenv("PAINKILLER_GOOGLE_ALLOWED_DOMAINS", "empresa.com.br")
-    app.state.google_oauth = FakeGoogle({"sub": "g", "email": "x@gmail.com", "email_verified": True})
+async def test_google_domain_allowlist_and_verified_email(app, client):
+    only = frozenset({"empresa.com.br"})
+    app.state.google_oauth = FakeGoogle({"sub": "g", "email": "x@gmail.com", "email_verified": True}, only)
     assert "error" in _fragment((await _google_round_trip(client)).headers["location"])
 
-    app.state.google_oauth = FakeGoogle({"sub": "g", "email": "x@empresa.com.br", "email_verified": False})
+    app.state.google_oauth = FakeGoogle({"sub": "g", "email": "x@empresa.com.br", "email_verified": False}, only)
     assert "error" in _fragment((await _google_round_trip(client)).headers["location"])
 
-    app.state.google_oauth = FakeGoogle({"sub": "g", "email": "x@empresa.com.br", "email_verified": True})
+    app.state.google_oauth = FakeGoogle({"sub": "g", "email": "x@empresa.com.br", "email_verified": True}, only)
     assert "token" in _fragment((await _google_round_trip(client)).headers["location"])
 
 
