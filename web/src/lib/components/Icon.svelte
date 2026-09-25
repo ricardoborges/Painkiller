@@ -20,11 +20,11 @@
     | 'file-text'
     | 'copy'
     | 'info'
-    | 'sidebar'
     | 'download'
     | 'square'
     | 'sun'
-    | 'moon';
+    | 'moon'
+    | 'chevron-down';
 
   let { name, size = 14 }: { name: Name; size?: number } = $props();
 </script>
@@ -40,7 +40,9 @@
   stroke-linejoin="miter"
   aria-hidden="true"
 >
-  {#if name === 'plus'}
+  {#if name === 'chevron-down'}
+    <path d="M3.5 6 8 10.5 12.5 6" />
+  {:else if name === 'plus'}
     <path d="M8 2.5v11M2.5 8h11" />
   {:else if name === 'arrow-right'}
     <path d="M2.5 8h11M9 3.5 13.5 8 9 12.5" />
@@ -75,9 +77,6 @@
   {:else if name === 'info'}
     <circle cx="8" cy="8" r="6" />
     <path d="M8 7.5v4M8 5.25v.5" />
-  {:else if name === 'sidebar'}
-    <rect x="2" y="2.5" width="12" height="11" />
-    <path d="M6 2.5v11" />
   {:else if name === 'download'}
     <path d="M8 2.5V11M4.5 7.5 8 11l3.5-3.5M2.5 13.5h11" />
   {:else if name === 'square'}

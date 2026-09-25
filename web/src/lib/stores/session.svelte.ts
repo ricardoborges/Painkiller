@@ -11,6 +11,8 @@ export class ProjectSessionStore {
   sessions = $state<IterationSession[]>([]);
   activeSessionId = $state<string | null>(null);
   loading = $state(false);
+  /** A lista já veio do servidor ao menos uma vez (vazia ainda é resposta). */
+  loaded = $state(false);
   creating = $state(false);
   error = $state<string | null>(null);
 
@@ -76,7 +78,13 @@ export class ProjectSessionStore {
       return [];
     } finally {
       this.loading = false;
+      this.loaded = true;
     }
+  }
+
+  /** Alguma sessão já foi encerrada: o projeto tem histórico para um painel. */
+  get hasCompleted(): boolean {
+    return this.sessions.some((s) => s.status === 'COMPLETED');
   }
 
   async createNextSession(title?: string): Promise<IterationSession | null> {

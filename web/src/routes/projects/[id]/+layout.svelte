@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import Icon from '$lib/components/Icon.svelte';
-  import SessionSidebar from '$lib/components/SessionSidebar.svelte';
+  import SessionPicker from '$lib/components/SessionPicker.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
   import type { HarnessType } from '$lib/types';
 
@@ -46,8 +46,15 @@
     }
   });
 
+  /* Com uma sessão encerrada a entrada do projeto vira o painel e o contexto
+     passa para /context; antes disso a entrada é o próprio contexto. */
   const aside = $derived([
-    { href: base, label: 'Contexto', exact: true },
+    ...(sessionStore.hasCompleted
+      ? [
+          { href: base, label: 'Painel', exact: true },
+          { href: `${base}/context`, label: 'Contexto', exact: false }
+        ]
+      : [{ href: base, label: 'Contexto', exact: true }]),
     { href: `${base}/costs`, label: 'Custos', exact: false }
   ]);
 
@@ -55,6 +62,16 @@
   async function startNextSession() {
     if (await sessionStore.createNextSession()) await goto(`${base}/initial-analysis`);
   }
+
+  /* Painel, Contexto e Custos são visões do projeto, não de uma sessão: nelas o
+     seletor e o stepper da sessão saem. Um projeto sem sessão encerrada ainda
+     não tem painel, e o contexto é a porta de entrada para a análise. */
+  const projectView = $derived(
+    sessionStore.hasCompleted &&
+      (page.url.pathname === base ||
+        page.url.pathname.startsWith(`${base}/context`) ||
+        page.url.pathname.startsWith(`${base}/costs`))
+  );
 
   function isActive(href: string, exact: boolean) {
     return exact ? page.url.pathname === href : page.url.pathname.startsWith(href);
@@ -67,46 +84,47 @@
 
 <svelte:head><title>{data.project.name} — Painkiller</title></svelte:head>
 
-<div class="project-layout">
-  <SessionSidebar
-    sessions={sessionStore.sessions}
-    activeSessionId={sessionStore.activeSessionId}
-    loading={sessionStore.loading}
-    creating={sessionStore.creating}
-    onselect={(s) => sessionStore.selectSession(s.id)}
-    oncreate={startNextSession}
-  />
+<div class="project-main">
+  <header class="head" class:compact>
+    <div class="top">
+      <a href="/projects" class="back label">
+        <Icon name="arrow-left" size={11} /> Projetos
+      </a>
 
-  <div class="project-main">
-    <header class="head" class:compact>
-      <div class="top">
-        <a href="/projects" class="back label">
-          <Icon name="arrow-left" size={11} /> Projetos
+      {#if data.project.repo_url}
+        <a
+          href={data.project.repo_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="repo label"
+        >
+          Repositório <Icon name="external" size={10} />
         </a>
+      {/if}
+    </div>
 
-        {#if data.project.repo_url}
-          <a
-            href={data.project.repo_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="repo label"
-          >
-            Repositório <Icon name="external" size={10} />
-          </a>
+    <h1 class="display">{data.project.name}</h1>
+
+    <div class="ident mono faint">
+      <span>{data.project.id}</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span>branch base {data.project.default_branch}</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span>{HARNESS_LABELS[data.project.harness ?? 'agy_superpowers']}</span>
+    </div>
+
+    <nav aria-label="Seções do projeto">
+      {#if !projectView}
+        {#if sessionStore.sessions.length}
+          <SessionPicker
+            sessions={sessionStore.sessions}
+            active={sessionStore.activeSession}
+            creating={sessionStore.creating}
+            onselect={(s) => sessionStore.selectSession(s.id)}
+            oncreate={startNextSession}
+          />
+          <span class="rule" aria-hidden="true"></span>
         {/if}
-      </div>
-
-      <h1 class="display">{data.project.name}</h1>
-
-      <div class="ident mono faint">
-        <span>{data.project.id}</span>
-        <span class="sep" aria-hidden="true">·</span>
-        <span>branch base {data.project.default_branch}</span>
-        <span class="sep" aria-hidden="true">·</span>
-        <span>{HARNESS_LABELS[data.project.harness ?? 'agy_superpowers']}</span>
-      </div>
-
-      <nav aria-label="Seções do projeto">
         <ol class="steps">
           {#each steps as tab, i (tab.href)}
             {@const active = isActive(tab.href, tab.exact)}
@@ -125,38 +143,39 @@
             </li>
           {/each}
         </ol>
+      {/if}
 
-        <span class="gap" aria-hidden="true"></span>
+      <span class="gap" aria-hidden="true"></span>
 
-        {#each aside as tab (tab.href)}
-          {@const active = isActive(tab.href, tab.exact)}
-          <a href={tab.href} class="tab quiet" class:active aria-current={active ? 'page' : undefined}>
-            {tab.label}
-          </a>
-        {/each}
-      </nav>
-    </header>
+      {#each aside as tab (tab.href)}
+        {@const active = isActive(tab.href, tab.exact)}
+        <a href={tab.href} class="tab quiet" class:active aria-current={active ? 'page' : undefined}>
+          {tab.label}
+        </a>
+      {/each}
+    </nav>
+  </header>
 
-    <div class="project-body">
-      {@render children()}
-    </div>
+  <div class="project-body">
+    {@render children()}
   </div>
 </div>
 
 <style>
-  .project-layout {
-    display: flex;
-    align-items: stretch;
-    min-height: calc(100vh - 3.25rem);
-    margin-left: calc(var(--gutter) * -1);
-  }
-
   .project-main {
-    flex: 1;
     min-width: 0;
-    padding-left: var(--gutter);
+    min-height: calc(100vh - 3.25rem);
     display: flex;
     flex-direction: column;
+  }
+
+  /* Separa a sessão das etapas dela: um traço vertical, do peso da régua. */
+  .rule {
+    align-self: center;
+    width: 1px;
+    height: 1rem;
+    margin-bottom: var(--s3);
+    background: var(--rule-2);
   }
 
   .project-body {
@@ -351,21 +370,12 @@
     white-space: nowrap;
   }
 
-  @media (max-width: 768px) {
-    .project-layout {
-      margin-left: 0;
-      flex-direction: column;
-    }
-
-    .project-main {
-      padding-left: 0;
-    }
-  }
 
   @media (max-width: 640px) {
+    /* Quebra em linhas em vez de rolar: a rolagem cortaria o menu de sessões. */
     nav {
-      gap: var(--s4);
-      overflow-x: auto;
+      gap: var(--s3) var(--s4);
+      flex-wrap: wrap;
     }
 
     .gap {
