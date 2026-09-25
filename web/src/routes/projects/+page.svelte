@@ -6,14 +6,11 @@
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
-  import ProjectDialog from '$lib/components/ProjectDialog.svelte';
 
   let projects = $state<Project[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  let dialogOpen = $state(false);
-  let editing = $state<Project | null>(null);
   let removing = $state<string | null>(null);
 
   async function load() {
@@ -36,16 +33,6 @@
     return pending.entries.filter((e) => e.project.id === projectId).length;
   }
 
-  function openNew() {
-    editing = null;
-    dialogOpen = true;
-  }
-
-  function openEdit(p: Project) {
-    editing = p;
-    dialogOpen = true;
-  }
-
   async function remove(p: Project) {
     if (!confirm(`Excluir "${p.name}" e todas as suas tarefas?`)) return;
     removing = p.id;
@@ -58,10 +45,6 @@
     } finally {
       removing = null;
     }
-  }
-
-  function onSaved() {
-    load();
   }
 
   const fmt = new Intl.DateTimeFormat('pt-BR', {
@@ -85,9 +68,9 @@
       Contexto, propósito e documentos que alimentam o agente de análise.
     </p>
   </div>
-  <button type="button" class="btn btn-solid" onclick={openNew}>
+  <a class="btn btn-solid" href="/projects/new">
     <Icon name="plus" /> Novo projeto
-  </button>
+  </a>
 </header>
 
 <p class="label tally">
@@ -119,9 +102,9 @@
     detail="Um projeto reúne o propósito, a solução desejada e os documentos de contexto. É a partir daí que o agente monta as perguntas de especificação."
   >
     {#snippet action()}
-      <button type="button" class="btn btn-solid" onclick={openNew}>
+      <a class="btn btn-solid" href="/projects/new">
         <Icon name="plus" /> Criar o primeiro
-      </button>
+      </a>
     {/snippet}
   </Placeholder>
 {:else}
@@ -180,14 +163,9 @@
             <a class="btn btn-line btn-sm" href="/projects/{p.id}">
               Abrir <Icon name="arrow-right" size={11} />
             </a>
-            <button
-              type="button"
-              class="btn-icon"
-              onclick={() => openEdit(p)}
-              aria-label="Editar {p.name}"
-            >
+            <a class="btn-icon" href="/projects/{p.id}/edit" aria-label="Editar {p.name}">
               <Icon name="pencil" />
-            </button>
+            </a>
             <button
               type="button"
               class="btn-icon danger"
@@ -203,8 +181,6 @@
     {/each}
   </ul>
 {/if}
-
-<ProjectDialog bind:open={dialogOpen} project={editing} onsaved={onSaved} />
 
 <style>
   .head {

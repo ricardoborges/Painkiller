@@ -743,7 +743,7 @@
   }
 
   .col.active .bar {
-    background: #2c2c32;
+    background: var(--ink-hover);
   }
 
   .tip {

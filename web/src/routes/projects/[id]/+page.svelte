@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { goto, invalidateAll } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { api, baseName } from '$lib/api';
   import type { AnalysisSession, Task } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
-  import ProjectDialog from '$lib/components/ProjectDialog.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import { analysisFor, analysisStorageKey } from '$lib/stores/analysis.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
@@ -12,7 +11,6 @@
 
   const sessionStore = $derived(getProjectSessionStore(data.project.id));
 
-  let dialogOpen = $state(false);
   let restarting = $state(false);
 
   async function handleRestart() {
@@ -260,14 +258,12 @@
     </div>
 
     <div class="acts">
-      <button type="button" class="btn btn-line" onclick={() => (dialogOpen = true)}>
+      <a class="btn btn-line" href="{base}/edit">
         <Icon name="pencil" size={11} /> Editar
-      </button>
+      </a>
     </div>
   </aside>
 </div>
-
-<ProjectDialog bind:open={dialogOpen} project={data.project} onsaved={() => invalidateAll()} />
 
 <style>
   .grid {

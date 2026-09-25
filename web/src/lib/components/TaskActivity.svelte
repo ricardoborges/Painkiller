@@ -281,7 +281,7 @@
 
   .stop-btn:hover:not(:disabled) {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
 
   .stop-btn:disabled {

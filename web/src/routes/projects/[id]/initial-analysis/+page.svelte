@@ -1188,7 +1188,7 @@
     border: 1px solid var(--rule-ink);
     display: flex;
     flex-direction: column;
-    box-shadow: 0 16px 36px -12px rgba(20, 20, 22, 0.2);
+    box-shadow: 0 16px 36px -12px var(--shadow);
   }
 
   .sheet > :global(*) {

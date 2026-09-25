@@ -37,6 +37,15 @@
   --progress: #2563eb;
   --done-sunk: #eaf5ee;
 
+  /* Derivados que antes eram literais nos componentes */
+  --ink-hover: #2c2c32;
+  --skel-hi: #efeff1;
+  --on-accent: #ffffff;
+  --shadow: rgba(20, 20, 22, 0.24);
+  --scrim: rgba(20, 20, 22, 0.32);
+
+  color-scheme: light;
+
   /* Tipografia */
   --font-sans: 'Geist', ui-sans-serif, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
@@ -67,6 +76,39 @@
   --fast: 140ms;
   --base: 240ms;
   --slow: 420ms;
+}
+
+/* Tema escuro — opcional, ativado por data-theme="dark" no <html>
+   (ver lib/stores/theme.svelte.ts). O padrão continua claro. A mesma regra
+   vale aqui: tinta clara sobre papel escuro, e o vermelhão só para exit 42. */
+:root[data-theme='dark'] {
+  --paper: #121214;
+  --paper-sunk: #1b1b1e;
+
+  --ink: #ececef;
+  --ink-2: #a5a5ad;
+  --ink-3: #75757e;
+  --ink-4: #4e4e56;
+
+  --rule: #2a2a2f;
+  --rule-2: #3a3a40;
+  --rule-ink: #ececef;
+
+  --accent: #e5543a;
+  --accent-ink: #f07a63;
+  --accent-sunk: #2e1712;
+
+  --done: #3fb872;
+  --progress: #5b8def;
+  --done-sunk: #14281c;
+
+  --ink-hover: #c8c8ce;
+  --skel-hi: #242428;
+  --on-accent: #ffffff;
+  --shadow: rgba(0, 0, 0, 0.6);
+  --scrim: rgba(0, 0, 0, 0.55);
+
+  color-scheme: dark;
 }
 
 *,
@@ -281,8 +323,8 @@ svg {
 }
 
 .btn-solid:hover:not(:disabled) {
-  background: #2c2c32;
-  border-color: #2c2c32;
+  background: var(--ink-hover);
+  border-color: var(--ink-hover);
 }
 
 .btn-line {
@@ -305,7 +347,7 @@ svg {
 
 .btn-accent {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -321,7 +363,7 @@ svg {
 
 .btn-line.danger:hover:not(:disabled) {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -449,7 +491,7 @@ svg {
 
 /* Esqueleto no lugar de spinner */
 .skel {
-  background: linear-gradient(90deg, var(--paper-sunk) 0%, #efeff1 50%, var(--paper-sunk) 100%) 0 0 /
+  background: linear-gradient(90deg, var(--paper-sunk) 0%, var(--skel-hi) 50%, var(--paper-sunk) 100%) 0 0 /
     200% 100%;
   animation: shimmer 1.4s linear infinite;
 }

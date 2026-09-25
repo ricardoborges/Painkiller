@@ -22,7 +22,9 @@
     | 'info'
     | 'sidebar'
     | 'download'
-    | 'square';
+    | 'square'
+    | 'sun'
+    | 'moon';
 
   let { name, size = 14 }: { name: Name; size?: number } = $props();
 </script>
@@ -80,5 +82,10 @@
     <path d="M8 2.5V11M4.5 7.5 8 11l3.5-3.5M2.5 13.5h11" />
   {:else if name === 'square'}
     <rect x="3.5" y="3.5" width="9" height="9" />
+  {:else if name === 'sun'}
+    <circle cx="8" cy="8" r="2.75" />
+    <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4" />
+  {:else if name === 'moon'}
+    <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z" />
   {/if}
 </svg>

@@ -154,7 +154,7 @@
     gap: var(--s3);
     margin-top: var(--s4);
     padding-top: var(--s3);
-    border-top: 1px solid rgba(204, 58, 30, 0.3);
+    border-top: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     font-size: var(--t-small);
     color: var(--accent-ink);
   }

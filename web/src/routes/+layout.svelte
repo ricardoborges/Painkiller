@@ -6,6 +6,7 @@
   import { pending } from '$lib/stores/pending.svelte';
   import { disposeAnalyses } from '$lib/stores/analysis.svelte';
   import { setup } from '$lib/stores/setup.svelte';
+  import { theme } from '$lib/stores/theme.svelte';
 
   import Icon from '$lib/components/Icon.svelte';
 
@@ -114,6 +115,15 @@
 
       <div class="who">
         <span class="label user">{auth.user?.username}</span>
+        <button
+          type="button"
+          class="btn-icon"
+          onclick={() => theme.toggle()}
+          aria-label={theme.current === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}
+          title={theme.current === 'dark' ? 'Tema claro' : 'Tema escuro'}
+        >
+          <Icon name={theme.current === 'dark' ? 'sun' : 'moon'} />
+        </button>
         <button type="button" class="btn btn-quiet btn-sm" onclick={signOut}>Sair</button>
       </div>
     </div>
@@ -209,7 +219,7 @@
     font-size: 0.6875rem;
     font-weight: 500;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
   }
 
   .who {

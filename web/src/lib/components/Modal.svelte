@@ -54,7 +54,7 @@
     border: 1px solid var(--rule-2);
     background: var(--paper);
     color: var(--ink);
-    box-shadow: 0 24px 48px -24px rgba(20, 20, 22, 0.24);
+    box-shadow: 0 24px 48px -24px var(--shadow);
     /* A janela nunca rola: só o corpo tem barra, cabeçalho e rodapé ficam fixos. */
     overflow: hidden;
   }
@@ -66,7 +66,7 @@
   }
 
   dialog::backdrop {
-    background: rgba(20, 20, 22, 0.32);
+    background: var(--scrim);
   }
 
   dialog[open] {

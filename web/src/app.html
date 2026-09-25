@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#ffffff" />
+    <script>
+      try {
+        if (localStorage.getItem('pk_theme') === 'dark') {
+          document.documentElement.dataset.theme = 'dark';
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#121214');
+        }
+      } catch (e) {}
+    </script>
     <meta name="description" content="Painkiller — orquestracao de agentes de codificacao." />
     <link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
