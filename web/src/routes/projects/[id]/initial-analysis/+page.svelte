@@ -142,6 +142,59 @@
     }
   }
 
+  /* Anexos: soltar em qualquer ponto do chat, colar no composer ou escolher
+     pelo clipe. Só na vez do analista — o agente lê os arquivos no próximo turno. */
+  let picker = $state<HTMLInputElement | null>(null);
+  let dragDepth = $state(0);
+
+  function hasFiles(e: DragEvent) {
+    return !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+  }
+
+  function onDragEnter(e: DragEvent) {
+    if (!a.myTurn || !hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth += 1;
+  }
+
+  function onDragOver(e: DragEvent) {
+    if (!a.myTurn || !hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }
+
+  function onDragLeave(e: DragEvent) {
+    if (!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+  }
+
+  function onDrop(e: DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    if (!a.myTurn) return;
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length) a.addFiles(files);
+  }
+
+  function onPaste(e: ClipboardEvent) {
+    const files = Array.from(e.clipboardData?.items ?? [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => !!f);
+    if (!files.length || !a.myTurn) return;
+    // Colar uma imagem não deve inserir o nome do arquivo no texto.
+    e.preventDefault();
+    a.addFiles(files);
+  }
+
+  function onPick(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    if (files.length) a.addFiles(files);
+    input.value = '';
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -380,7 +433,20 @@
   </div>
 
   <div class="panes">
-    <section class="chat">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <section
+      class="chat"
+      ondragenter={onDragEnter}
+      ondragover={onDragOver}
+      ondragleave={onDragLeave}
+      ondrop={onDrop}
+    >
+      {#if dragDepth > 0}
+        <div class="dropzone" aria-hidden="true">
+          <Icon name="upload" size={16} />
+          <span class="label">Solte para anexar</span>
+        </div>
+      {/if}
       {#if a.startError}
         <div class="scroller">
           <Placeholder kind="error" title="O agente não subiu" detail={a.startError}>
@@ -414,9 +480,18 @@
               <li class="turn" class:is-analyst={turn.who === 'analyst'}>
                 <span class="label who">{turn.who === 'agent' ? 'Agente' : 'Você'}</span>
                 <div class="content">
-                  <div class="markdown-body">
-                    {@html renderMarkdown(parsed ? parsed.body : turn.text)}
-                  </div>
+                  {#if turn.text}
+                    <div class="markdown-body">
+                      {@html renderMarkdown(parsed ? parsed.body : turn.text)}
+                    </div>
+                  {/if}
+                  {#if turn.files?.length}
+                    <ul class="files">
+                      {#each turn.files as name, j (j)}
+                        <li class="file-chip mono"><Icon name="clip" size={11} /> {name}</li>
+                      {/each}
+                    </ul>
+                  {/if}
                   {#if showBacklogAction}
                     <div class="backlog-handoff">
                       <button
@@ -496,11 +571,42 @@
           </p>
         {/if}
 
+        {#if a.attachments.length}
+          <!-- Fora do composer: quando o agente pergunta com opções, os anexos
+               seguem junto com a escolha. -->
+          <ul class="tray" aria-label="Anexos do próximo envio">
+            {#each a.attachments as item (item.id)}
+              <li class="pending" class:hatch={!!item.error} title={item.error ?? item.name}>
+                {#if item.preview}
+                  <img src={item.preview} alt="" />
+                {:else}
+                  <Icon name="file-text" size={14} />
+                {/if}
+                <span class="mono name">{item.name}</span>
+                {#if item.error}
+                  <span class="state">falhou</span>
+                {:else if !item.path}
+                  <span class="state">enviando…</span>
+                {/if}
+                <button
+                  type="button"
+                  class="remove"
+                  aria-label={`Remover ${item.name}`}
+                  onclick={() => a.removeAttachment(item.id)}
+                >
+                  <Icon name="close" size={11} />
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
         {#if needsComposer}
           <div class="composer">
             <textarea
               bind:this={composer}
               bind:value={a.draft}
+              onpaste={onPaste}
               class="textarea"
               rows="2"
               placeholder={a.finished
@@ -513,13 +619,24 @@
             ></textarea>
             <div class="composer-foot">
               <span class="help">
-                <span class="mono">Enter</span> envia, <span class="mono">Shift+Enter</span> quebra linha
+                <span class="mono">Enter</span> envia, <span class="mono">Shift+Enter</span> quebra linha.
+                Arraste ou cole arquivos e imagens.
               </span>
+              <input bind:this={picker} type="file" multiple hidden onchange={onPick} />
+              <button
+                type="button"
+                class="btn btn-line btn-sm"
+                onclick={() => picker?.click()}
+                disabled={!a.myTurn}
+                title="Anexar arquivos ou imagens"
+              >
+                <Icon name="clip" size={12} /> Anexar
+              </button>
               <button
                 type="button"
                 class="btn btn-solid btn-sm"
                 onclick={() => a.send()}
-                disabled={!a.myTurn || !a.draft.trim()}
+                disabled={!a.myTurn || !a.canSend}
               >
                 Enviar <Icon name="send" size={12} />
               </button>
@@ -1603,8 +1720,101 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--s4);
+    gap: var(--s2);
     margin-top: var(--s3);
+  }
+
+  .composer-foot .help {
+    flex: 1;
+  }
+
+  /* Anexos */
+  .dropzone {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    border: 1px dashed var(--rule-ink);
+    color: var(--ink);
+    pointer-events: none;
+  }
+
+  .files,
+  .tray {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+  }
+
+  .files {
+    margin-top: var(--s2);
+  }
+
+  .file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: 2px var(--s2);
+    border: 1px solid var(--rule-2);
+    font-size: var(--t-small);
+    color: var(--ink-2);
+  }
+
+  .tray {
+    flex-shrink: 0;
+    padding-top: var(--s3);
+    margin-top: var(--s2);
+    border-top: 1px solid var(--rule);
+  }
+
+  .pending {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    max-width: 16rem;
+    padding: var(--s1) var(--s1) var(--s1) var(--s2);
+    border: 1px solid var(--rule-2);
+    font-size: var(--t-small);
+  }
+
+  .pending img {
+    width: 28px;
+    height: 28px;
+    object-fit: cover;
+    display: block;
+  }
+
+  .pending .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .pending .state {
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+
+  .pending .remove {
+    display: inline-flex;
+    padding: var(--s1);
+    background: none;
+    border: 0;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .pending .remove:hover {
+    color: var(--ink);
   }
 
   @media (max-width: 900px) {

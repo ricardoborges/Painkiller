@@ -1,4 +1,5 @@
 import { ApiError, api, openAnalysisStream } from '$lib/api';
+import { isImage, namePasted, parseAnalystMessage } from '$lib/attachments';
 import type { AgentEvent, AnalysisSession, ProjectDoc, Task } from '$lib/types';
 
 /** De quanto em quanto tempo a rede de segurança confere o servidor. */
@@ -9,6 +10,30 @@ const WATCHDOG_SILENCE_MS = 20_000;
 export interface Turn {
   who: 'agent' | 'analyst';
   text: string;
+  /** Arquivos anexados pelo analista (nomes para exibição). */
+  files?: string[];
+}
+
+/** Um arquivo no composer: sobe assim que entra, vai junto no próximo envio. */
+export interface PendingAttachment {
+  id: string;
+  name: string;
+  /** URL local para a miniatura, só para imagens. */
+  preview: string | null;
+  /** Caminho no repositório, devolvido pelo upload. */
+  path: string | null;
+  error: string | null;
+}
+
+function analystTurn(text: string): Turn {
+  const { body, files } = parseAnalystMessage(text);
+  return files.length ? { who: 'analyst', text: body, files } : { who: 'analyst', text };
+}
+
+function sameTurn(a: Turn | undefined, b: Turn): boolean {
+  return (
+    a?.who === b.who && a.text === b.text && (a.files ?? []).join('\n') === (b.files ?? []).join('\n')
+  );
 }
 
 /**
@@ -49,6 +74,13 @@ export class AnalysisStore {
   reasoning = $state('');
   /** O rascunho também sobrevive à navegação — perder o que foi digitado irrita. */
   draft = $state('');
+  /** Anexos do próximo envio; como o rascunho, sobrevivem à navegação. */
+  attachments = $state<PendingAttachment[]>([]);
+  readonly uploading = $derived(this.attachments.some((a) => !a.path && !a.error));
+  /** Há algo para enviar: texto ou ao menos um anexo já no servidor. */
+  readonly canSend = $derived(
+    !this.uploading && (!!this.draft.trim() || this.attachments.some((a) => a.path))
+  );
 
   waitingSince = $state(Date.now());
 
@@ -235,9 +267,9 @@ export class AnalysisStore {
         if (!this.streaming) this.reasoning += event.text;
         break;
       case 'USER': {
-        const last = this.turns[this.turns.length - 1];
-        if (last?.who !== 'analyst' || last.text !== event.text) {
-          this.turns = [...this.turns, { who: 'analyst', text: event.text }];
+        const turn = analystTurn(event.text);
+        if (!sameTurn(this.turns[this.turns.length - 1], turn)) {
+          this.turns = [...this.turns, turn];
         }
         break;
       }
@@ -282,10 +314,14 @@ export class AnalysisStore {
   /** Envia o rascunho do composer, ou `answer` quando vem das opções clicáveis. */
   async send(answer?: string) {
     const text = (answer ?? this.draft).trim();
-    if (!text || !this.session || !this.myTurn) return;
+    const ready = this.attachments.filter((a) => a.path);
+    if ((!text && !ready.length) || !this.session || !this.myTurn || this.uploading) return;
 
-    this.turns = [...this.turns, { who: 'analyst', text }];
+    const files = ready.map((a) => a.name);
+    this.turns = [...this.turns, files.length ? { who: 'analyst', text, files } : { who: 'analyst', text }];
     if (answer === undefined) this.draft = '';
+    const paths = ready.map((a) => a.path as string);
+    this.clearAttachments();
     this.streaming = '';
     this.reasoning = '';
     this.sendError = null;
@@ -294,7 +330,7 @@ export class AnalysisStore {
     this.session = { ...this.session, status: 'WAITING_AGENT' };
 
     try {
-      await api.answerAnalysis(this.session.session_id, text);
+      await api.answerAnalysis(this.session.session_id, text, paths);
     } catch (e) {
       this.sendError =
         e instanceof ApiError && e.status === 404
@@ -303,6 +339,46 @@ export class AnalysisStore {
             ? e.message
             : 'Falha ao enviar a resposta.';
     }
+  }
+
+  /** Sobe os arquivos soltos, colados ou escolhidos; cada um vira uma etiqueta no composer. */
+  addFiles(files: File[]) {
+    const sessionId = this.session?.session_id;
+    if (!sessionId) return;
+    for (const raw of files) {
+      const file = namePasted(raw);
+      const item: PendingAttachment = {
+        id: crypto.randomUUID(),
+        name: file.name,
+        preview: isImage(file) ? URL.createObjectURL(file) : null,
+        path: null,
+        error: null
+      };
+      this.attachments = [...this.attachments, item];
+      api
+        .uploadAnalysisAttachment(sessionId, file)
+        .then((res) => this.#patchAttachment(item.id, { path: res.path }))
+        .catch((e) =>
+          this.#patchAttachment(item.id, {
+            error: e instanceof Error ? e.message : 'Falha ao enviar o arquivo.'
+          })
+        );
+    }
+  }
+
+  #patchAttachment(id: string, patch: Partial<PendingAttachment>) {
+    this.attachments = this.attachments.map((a) => (a.id === id ? { ...a, ...patch } : a));
+  }
+
+  removeAttachment(id: string) {
+    const item = this.attachments.find((a) => a.id === id);
+    if (item?.preview) URL.revokeObjectURL(item.preview);
+    this.attachments = this.attachments.filter((a) => a.id !== id);
+  }
+
+  clearAttachments() {
+    for (const a of this.attachments) if (a.preview) URL.revokeObjectURL(a.preview);
+    this.attachments = [];
   }
 
   async closeSession() {
@@ -347,6 +423,8 @@ export class AnalysisStore {
     this.#dispose = null;
     this.remember(null);
     this.session = null;
+    // Os anexos pendentes estavam no repositório da sessão encerrada.
+    this.clearAttachments();
     await this.boot(true);
   }
 

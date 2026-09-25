@@ -286,11 +286,21 @@ export const api = {
 
   getAnalysis: (sessionId: string) => request<AnalysisSession>(`/analysis/${sessionId}`),
 
-  answerAnalysis: (sessionId: string, answer: string) =>
+  answerAnalysis: (sessionId: string, answer: string, attachments: string[] = []) =>
     request<AnalysisSession>(`/analysis/${sessionId}/message`, {
       method: 'POST',
-      ...json({ answer })
+      ...json({ answer, attachments })
     }),
+
+  /** Grava um arquivo no repositório do projeto; o caminho vai junto na próxima mensagem. */
+  uploadAnalysisAttachment: (sessionId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<{ path: string; name: string; size: number; content_type: string | null }>(
+      `/analysis/${sessionId}/attachments`,
+      { method: 'POST', body: form }
+    );
+  },
 
   /** Fecha o stdin do agente para que ele encerre o turno e saia. */
   finishAnalysis: (sessionId: string) =>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import Icon from '$lib/components/Icon.svelte';
   import SessionSidebar from '$lib/components/SessionSidebar.svelte';
@@ -50,6 +51,11 @@
     { href: `${base}/costs`, label: 'Custos', exact: false }
   ]);
 
+  /* Uma sessão nova começa pelo primeiro passo do ciclo, o Chat. */
+  async function startNextSession() {
+    if (await sessionStore.createNextSession()) await goto(`${base}/initial-analysis`);
+  }
+
   function isActive(href: string, exact: boolean) {
     return exact ? page.url.pathname === href : page.url.pathname.startsWith(href);
   }
@@ -68,7 +74,7 @@
     loading={sessionStore.loading}
     creating={sessionStore.creating}
     onselect={(s) => sessionStore.selectSession(s.id)}
-    oncreate={() => sessionStore.createNextSession()}
+    oncreate={startNextSession}
   />
 
   <div class="project-main">

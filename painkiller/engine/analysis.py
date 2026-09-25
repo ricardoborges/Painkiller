@@ -54,6 +54,70 @@ DOCS_RELATIVE = "docs"
 #: está em web/src/lib/choices.ts — mudar aqui exige mudar lá.
 CHOICES_FENCE = "painkiller-choices"
 
+#: Pasta, dentro do repositório, onde caem os arquivos que o analista anexa ao
+#: chat. O agente os lê pelo bind mount; o exclude do git os mantém fora de
+#: qualquer commit (o `git add -A` do `painkiller ask` os levaria junto).
+UPLOADS_RELATIVE = ".painkiller/uploads"
+
+#: Cabeçalho do bloco de anexos acrescentado à mensagem do analista. O mesmo
+#: texto está em web/src/lib/attachments.ts, que o esconde da transcrição e
+#: mostra os arquivos como etiquetas — mudar aqui exige mudar lá.
+ATTACHMENTS_HEADER = "Anexos enviados pelo analista"
+
+#: Extensões tratadas como imagem no aviso ao agente.
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
+
+
+def upload_relative(analysis_session_id: str, filename: str) -> str:
+    """Repo-relative path of a file the analyst attached to one analysis."""
+    return f"{UPLOADS_RELATIVE}/{analysis_session_id}/{filename}"
+
+
+def safe_upload_name(filename: str) -> str:
+    """Basename reduced to characters every shell and bind mount accepts."""
+    base = os.path.basename((filename or "").replace("\\", "/")).strip() or "arquivo"
+    stem, ext = os.path.splitext(base)
+    clean = "".join(c if c.isalnum() and c.isascii() or c in "-_." else "-" for c in stem)
+    clean = clean.strip("-.") or "arquivo"
+    ext = "".join(c for c in ext.lower() if c.isalnum() and c.isascii() or c == ".")
+    return f"{uuid.uuid4().hex[:6]}_{clean[:80]}{ext[:10]}"
+
+
+def with_attachments(text: str, paths: list[str]) -> str:
+    """Append the attachment block the agent reads (and the UI hides)."""
+    if not paths:
+        return text
+    lines = [
+        f"{ATTACHMENTS_HEADER} (caminhos relativos à raiz do repositório; "
+        "abra cada um com sua ferramenta de leitura de arquivos antes de responder):"
+    ]
+    for path in paths:
+        kind = "imagem" if os.path.splitext(path)[1].lower() in IMAGE_EXTENSIONS else "arquivo"
+        lines.append(f"- `{path}` ({kind})")
+    block = "\n".join(lines)
+    return f"{text}\n\n{block}" if text else block
+
+
+def _exclude_uploads(repo_path: str) -> None:
+    """Keep the uploads folder out of git through `.git/info/exclude`."""
+    git_dir = os.path.join(repo_path, ".git")
+    if not os.path.isdir(git_dir):
+        return
+    exclude = os.path.join(git_dir, "info", "exclude")
+    entry = f"/{UPLOADS_RELATIVE}/"
+    existing = ""
+    if os.path.exists(exclude):
+        with open(exclude, "r", encoding="utf-8") as f:
+            existing = f.read()
+    if entry in existing.splitlines():
+        return
+    os.makedirs(os.path.dirname(exclude), exist_ok=True)
+    with open(exclude, "a", encoding="utf-8") as f:
+        if existing and not existing.endswith("\n"):
+            f.write("\n")
+        f.write(entry + "\n")
+
+
 #: Quantos eventos ficam guardados para replay quando o EventSource reconecta.
 REPLAY_LIMIT = 500
 
@@ -476,10 +540,33 @@ class AnalysisOrchestrator:
                 AnalysisStatus.FINISHED if code == 0 else AnalysisStatus.FAILED
             )
 
-    async def send(self, session_id: str, text: str) -> AnalysisSession:
+    async def save_upload(self, session_id: str, filename: str, data: bytes) -> str:
+        """Store a file the analyst attached; returns its repo-relative path."""
+        await self.get_or_restore(session_id)
+        run = self._require(session_id)
+        if not run.repo_path:
+            raise ValueError("A sessão não tem repositório para receber o anexo.")
+        relative = upload_relative(session_id, safe_upload_name(filename))
+        target = os.path.join(run.repo_path, *relative.split("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as f:
+            f.write(data)
+        try:
+            _exclude_uploads(run.repo_path)
+        except OSError as e:
+            logger.warning(f"Não foi possível excluir {UPLOADS_RELATIVE} do git em {run.repo_path}: {e}")
+        return relative
+
+    async def send(
+        self, session_id: str, text: str, attachments: Optional[list[str]] = None
+    ) -> AnalysisSession:
         # Após um restart a sessão só existe no banco até alguém abrir o stream.
         await self.get_or_restore(session_id)
         run = self._require(session_id)
+        # Só aceita anexos desta sessão: o caminho vai para o prompt do agente.
+        prefix = f"{UPLOADS_RELATIVE}/{session_id}/"
+        paths = [p for p in (attachments or []) if p.startswith(prefix) and ".." not in p]
+        text = with_attachments(text, paths)
         # Um restart da API derruba o contêiner, mas a sessão restaurada ainda
         # mostra a vez do analista: sem religar, a resposta cairia numa fila que
         # ninguém lê e a tela ficaria em "agente trabalhando" para sempre. O

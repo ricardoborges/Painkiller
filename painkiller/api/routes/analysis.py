@@ -1,9 +1,10 @@
 """Interactive initial-analysis routes (Claude Code + superpowers, streamed)."""
 
 import json
+import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -12,8 +13,14 @@ from painkiller.api.security import require_analysis, visible_project
 router = APIRouter(prefix="/api", tags=["analysis"])
 
 
+#: Teto por anexo do chat; o arquivo vai inteiro para o repositório do projeto.
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+
 class MessageRequest(BaseModel):
-    answer: str
+    answer: str = ""
+    #: Caminhos devolvidos por POST /analysis/{sid}/attachments.
+    attachments: list[str] = []
 
 
 def _session_payload(session) -> dict:
@@ -136,11 +143,37 @@ async def stream_analysis(session_id: str, request: Request):
 
 @router.post("/analysis/{session_id}/message", dependencies=[Depends(require_analysis)])
 async def send_message(session_id: str, req: MessageRequest, request: Request):
+    if not req.answer.strip() and not req.attachments:
+        raise HTTPException(status_code=400, detail="Mensagem vazia")
     try:
-        session = await request.app.state.analysis.send(session_id, req.answer)
+        session = await request.app.state.analysis.send(
+            session_id, req.answer.strip(), req.attachments
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return _session_payload(session)
+
+
+@router.post("/analysis/{session_id}/attachments", dependencies=[Depends(require_analysis)])
+async def upload_analysis_attachment(
+    session_id: str, request: Request, file: UploadFile = File(...)
+):
+    """Store a file or image the analyst attached to the chat, inside the project repo."""
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Arquivo maior que 20 MB")
+    try:
+        path = await request.app.state.analysis.save_upload(
+            session_id, file.filename or "", data
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {
+        "path": path,
+        "name": file.filename or os.path.basename(path),
+        "size": len(data),
+        "content_type": file.content_type,
+    }
 
 
 @router.post("/analysis/{session_id}/finish", dependencies=[Depends(require_analysis)])

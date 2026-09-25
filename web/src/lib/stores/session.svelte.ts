@@ -93,6 +93,19 @@ export class ProjectSessionStore {
       this.creating = false;
     }
   }
+
+  /** Encerra a sessão: o backend apaga as branches das tarefas já incorporadas. */
+  async finalizeSession(id: string): Promise<boolean> {
+    this.error = null;
+    try {
+      const updated = await api.updateSession(this.projectId, id, { status: 'COMPLETED' });
+      this.sessions = this.sessions.map((s) => (s.id === id ? updated : s));
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : 'Falha ao encerrar a sessão.';
+      return false;
+    }
+  }
 }
 
 const stores = new Map<string, ProjectSessionStore>();

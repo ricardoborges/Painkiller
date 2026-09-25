@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '$lib/api';
   import {
@@ -37,6 +38,7 @@
   let migrating = $state(false);
   let error = $state<string | null>(null);
   let syncingIssues = $state(false);
+  let finalizing = $state(false);
   let issuesNote = $state<string | null>(null);
 
   // Execução individual
@@ -97,6 +99,8 @@
   });
 
   const completedCount = $derived(tasks.filter((t) => t.status === 'COMPLETED').length);
+  const allDone = $derived(tasks.length > 0 && completedCount === tasks.length);
+  const sessionClosed = $derived(activeSession?.status === 'COMPLETED');
   const progressPercent = $derived(tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0);
 
   const counts = $derived.by(() => {
@@ -226,6 +230,29 @@
       issuesNote = e instanceof Error ? e.message : 'Falha ao sincronizar as issues.';
     } finally {
       syncingIssues = false;
+    }
+  }
+
+  async function finalizeSession() {
+    if (!activeSession || finalizing) return;
+    const ok = confirm(
+      `Encerrar ${activeSession.title}? As branches das tarefas já incorporadas serão apagadas ` +
+        'localmente e no Gitea, e o "Testar" por tarefa deixa de existir. O código continua na branch principal.'
+    );
+    if (!ok) return;
+    finalizing = true;
+    try {
+      if (!(await sessionStore.finalizeSession(activeSession.id))) {
+        alert(sessionStore.error ?? 'Falha ao encerrar a sessão.');
+      }
+    } finally {
+      finalizing = false;
+    }
+  }
+
+  async function startNextSession() {
+    if (await sessionStore.createNextSession()) {
+      await goto(`/projects/${data.project.id}/initial-analysis`);
     }
   }
 
@@ -582,6 +609,37 @@
     <div class="progress-track">
       <div class="progress-fill" style:width="{progressPercent}%"></div>
     </div>
+
+    {#if activeSession && (sessionClosed || (allDone && branchesAlive))}
+      <div class="session-close spread">
+        {#if sessionClosed}
+          <span class="mono">Sessão encerrada. As branches das tarefas foram removidas.</span>
+          {#if activeSession.id === sessionStore.sessions[sessionStore.sessions.length - 1]?.id}
+            <button
+              type="button"
+              class="btn btn-solid btn-sm"
+              onclick={startNextSession}
+              disabled={sessionStore.creating}
+            >
+              <Icon name="plus" size={11} />
+              {sessionStore.creating ? 'Criando…' : 'Nova sessão'}
+            </button>
+          {/if}
+        {:else}
+          <span class="mono">Todas as tarefas concluídas. Encerre a sessão quando terminar de testar.</span>
+          <button
+            type="button"
+            class="btn btn-solid btn-sm"
+            onclick={finalizeSession}
+            disabled={finalizing || isQueueRunning}
+            title="Marcar a sessão como concluída e apagar as branches das tarefas incorporadas"
+          >
+            <Icon name="check" size={11} />
+            {finalizing ? 'Encerrando…' : 'Encerrar sessão'}
+          </button>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <!-- Painel de Controle de Execução e Status -->
@@ -1118,6 +1176,17 @@
     height: 6px;
     background: var(--rule-2);
     overflow: hidden;
+  }
+
+  .session-close {
+    align-items: center;
+    gap: var(--s3);
+    flex-wrap: wrap;
+    margin-top: var(--s4);
+    padding-top: var(--s3);
+    border-top: 1px solid var(--rule-2);
+    font-size: var(--t-small);
+    color: var(--ink-2);
   }
 
   .progress-fill {

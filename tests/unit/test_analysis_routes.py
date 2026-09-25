@@ -6,6 +6,7 @@ The Docker adapter is swapped for an in-memory fake so the whole path
 
 import asyncio
 import json
+import os
 from typing import AsyncIterator
 
 import pytest
@@ -129,6 +130,43 @@ async def test_message_reaches_the_agent(client, tmp_path):
 
     assert res.status_code == 200
     assert client.agent.sent == ["um CRUD"]
+
+
+async def test_attachment_lands_in_the_repo_and_is_referenced_in_the_message(client, tmp_path):
+    pid = await _project(client, tmp_path)
+    sid = (await client.post(f"/api/projects/{pid}/analysis")).json()["session_id"]
+
+    res = await client.post(
+        f"/api/analysis/{sid}/attachments",
+        files={"file": ("Tela Início.png", b"\x89PNG-fake", "image/png")},
+    )
+    assert res.status_code == 200, res.text
+    path = res.json()["path"]
+    assert path.startswith(f".painkiller/uploads/{sid}/")
+    assert path.endswith("_Tela-In-cio.png")
+
+    repo = (await client.get(f"/api/projects/{pid}")).json()["repo_path"]
+    with open(os.path.join(repo, *path.split("/")), "rb") as f:
+        assert f.read() == b"\x89PNG-fake"
+
+    res = await client.post(
+        f"/api/analysis/{sid}/message",
+        json={"answer": "veja a tela", "attachments": [path, "../../etc/passwd"]},
+    )
+    assert res.status_code == 200
+    sent = client.agent.sent[-1]
+    assert sent.startswith("veja a tela\n\nAnexos enviados pelo analista")
+    assert f"- `{path}` (imagem)" in sent
+    assert "passwd" not in sent
+
+
+async def test_message_with_neither_text_nor_attachments_is_400(client, tmp_path):
+    pid = await _project(client, tmp_path)
+    sid = (await client.post(f"/api/projects/{pid}/analysis")).json()["session_id"]
+
+    res = await client.post(f"/api/analysis/{sid}/message", json={"answer": "  "})
+
+    assert res.status_code == 400
 
 
 async def test_finish_closes_the_agent_input(client, tmp_path):
