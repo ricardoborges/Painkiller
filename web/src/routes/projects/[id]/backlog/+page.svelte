@@ -244,7 +244,10 @@
     try {
       if (!(await sessionStore.finalizeSession(activeSession.id))) {
         alert(sessionStore.error ?? 'Falha ao encerrar a sessão.');
+        return;
       }
+      // Com uma sessão encerrada a entrada do projeto é o painel.
+      await goto(`/projects/${data.project.id}`);
     } finally {
       finalizing = false;
     }
