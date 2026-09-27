@@ -25,7 +25,11 @@ import type {
   SetupState,
   CoolifyStatus,
   CoolifyBootstrapResult,
-  KeyValidation
+  KeyValidation,
+  RegisterData,
+  RegisterResult,
+  VerifyCodeData,
+  SmtpConfigData
 } from './types';
 
 const TOKEN_KEY = 'pk_token';
@@ -104,6 +108,24 @@ export const api = {
 
   authConfig: () => request<AuthConfig>('/auth/config'),
 
+  register: (body: RegisterData) =>
+    request<RegisterResult>('/auth/register', {
+      method: 'POST',
+      ...json(body)
+    }),
+
+  verifyCode: (body: VerifyCodeData) =>
+    request<{ token: string; user: User }>('/auth/verify-code', {
+      method: 'POST',
+      ...json(body)
+    }),
+
+  resendCode: (email: string) =>
+    request<{ status: string; message: string }>('/auth/resend-code', {
+      method: 'POST',
+      ...json({ email })
+    }),
+
   /** Instalação nova: cria o administrador e já devolve a sessão dele. */
   firstAccess: (username: string, password: string) =>
     request<{ token: string; user: User }>('/auth/first-access', {
@@ -147,6 +169,15 @@ export const api = {
 
   skipSetupStep: (step: string) =>
     request<SetupState>(`/setup/steps/${step}/skip`, { method: 'POST' }),
+
+  saveSetupSmtp: (body: SmtpConfigData) =>
+    request<SetupState>('/setup/smtp', { method: 'PUT', ...json(body) }),
+
+  testSetupSmtp: (to_email: string) =>
+    request<{ status: string; message: string }>('/setup/smtp/test', {
+      method: 'POST',
+      ...json({ to_email })
+    }),
 
   completeSetup: () => request<SetupState>('/setup/complete', { method: 'POST' }),
 

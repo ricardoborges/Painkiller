@@ -255,6 +255,34 @@ export interface AuthConfig {
   first_access: boolean;
 }
 
+export interface RegisterData {
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+  confirm_password: string;
+}
+
+export interface RegisterResult {
+  status: string;
+  email: string;
+  message: string;
+}
+
+export interface VerifyCodeData {
+  email: string;
+  code: string;
+}
+
+export interface SmtpConfigData {
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_user?: string;
+  smtp_password?: string;
+  smtp_from?: string;
+  smtp_tls?: boolean;
+}
+
 export interface InterrogationStart {
   session_id: string;
   project_id?: string;
@@ -533,6 +561,15 @@ export interface SetupCoolify {
   has_root_password: boolean;
 }
 
+export interface SetupSmtp {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_user: string;
+  smtp_password_set: boolean;
+  smtp_from: string;
+  smtp_tls: boolean;
+}
+
 export interface SetupState {
   completed: boolean;
   admin_username: string | null;
@@ -540,6 +577,7 @@ export interface SetupState {
   environment: SetupEnvironment;
   google: SetupGoogle;
   coolify: SetupCoolify;
+  smtp?: SetupSmtp;
 }
 
 export interface CoolifyCheck {
