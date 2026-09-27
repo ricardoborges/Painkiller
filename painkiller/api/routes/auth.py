@@ -1,5 +1,4 @@
-"""Authentication routes: break-glass admin and Google sign-in."""
-
+from datetime import datetime, timezone, timedelta
 import logging
 import secrets
 import urllib.parse
@@ -19,8 +18,10 @@ from painkiller.api.security import (
     break_glass_user,
     check_break_glass,
     current_user,
+    hash_password,
     issue_token,
     user_payload,
+    verify_password,
     verify_token,
 )
 from painkiller.core.domain.models import User
@@ -41,6 +42,23 @@ class LoginRequest(BaseModel):
 class FirstAccessRequest(BaseModel):
     username: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    first_name: str
+    last_name: str
+    email: str
+    password: str
+    confirm_password: str
+
+
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str
+
+
+class ResendCodeRequest(BaseModel):
+    email: str
 
 
 async def ensure_gitea_account(app, user: User) -> User:
@@ -97,11 +115,205 @@ def admin_session(response: Response) -> dict:
 
 
 @router.post("/login")
-async def login(req: LoginRequest, response: Response):
-    """Administrator login (the account created on the first access)."""
-    if not check_break_glass(req.username, req.password):
-        raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
-    return admin_session(response)
+async def login(req: LoginRequest, request: Request, response: Response):
+    """User login: admin break-glass or regular registered user."""
+    if check_break_glass(req.username, req.password):
+        return admin_session(response)
+
+    tracker = getattr(request.app.state, "tracker", None)
+    if tracker:
+        user = await tracker.get_user_by_email_or_username(req.username)
+        if user and user.password_hash:
+            if not user.is_active:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Sua conta ainda não foi ativada. Verifique o código enviado ao seu e-mail.",
+                )
+            if verify_password(req.password, user.password_hash):
+                user = await ensure_gitea_account(request.app, user)
+                token = issue_token(user.id)
+                response.set_cookie(
+                    AUTH_COOKIE_NAME,
+                    token,
+                    max_age=7 * 86400,
+                    httponly=True,
+                    samesite="lax",
+                    path="/",
+                )
+                return {"token": token, "user": user_payload(user)}
+
+    raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
+
+
+@router.post("/register")
+async def register(req: RegisterRequest, request: Request):
+    first = req.first_name.strip()
+    last = req.last_name.strip()
+    email = req.email.strip().lower()
+    pw = req.password
+    confirm = req.confirm_password
+
+    if not first or not last or not email or not pw:
+        raise HTTPException(status_code=400, detail="Todos os campos são obrigatórios.")
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Formato de e-mail inválido.")
+    if pw != confirm:
+        raise HTTPException(status_code=400, detail="As senhas não coincidem.")
+    if len(pw) < 8:
+        raise HTTPException(status_code=400, detail="A senha deve ter pelo menos 8 caracteres.")
+
+    tracker = request.app.state.tracker
+    existing = await tracker.get_user_by_email_or_username(email)
+    if existing and existing.is_active:
+        raise HTTPException(status_code=400, detail="Este e-mail já está cadastrado.")
+
+    full_name = f"{first} {last}".strip()
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    pw_hash = hash_password(pw)
+
+    if existing and not existing.is_active:
+        await tracker.update_user(
+            existing.id,
+            email=email,
+            name=full_name,
+            password_hash=pw_hash,
+            verification_code=code,
+            verification_token=token,
+            verification_expires_at=expires_at,
+        )
+    else:
+        await tracker.create_user(
+            email=email,
+            name=full_name,
+            password_hash=pw_hash,
+            is_active=False,
+            email_verified=False,
+            verification_code=code,
+            verification_token=token,
+            verification_expires_at=expires_at,
+        )
+
+    platform = getattr(request.app.state, "platform", None)
+    base_url = ""
+    if platform and platform.settings.public_url:
+        base_url = platform.settings.public_url.rstrip("/")
+    if not base_url:
+        base_url = str(request.base_url).rstrip("/")
+
+    verify_link = f"{base_url}/api/auth/verify-link?token={token}"
+    email_sender = getattr(request.app.state, "email_sender", None)
+    if email_sender:
+        try:
+            await email_sender.send_verification_email(email, full_name, code, verify_link)
+        except Exception as e:
+            logger.warning(f"Failed to dispatch verification email to {email}: {e}")
+
+    return {
+        "status": "pending_verification",
+        "email": email,
+        "message": "Código de verificação enviado para o seu e-mail.",
+    }
+
+
+def _is_expired(expires_at: Optional[datetime]) -> bool:
+    if not expires_at:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return expires_at < datetime.now(timezone.utc)
+
+
+@router.post("/verify-code")
+async def verify_code(req: VerifyCodeRequest, request: Request, response: Response):
+    email = req.email.strip().lower()
+    code = req.code.strip()
+
+    tracker = request.app.state.tracker
+    user = await tracker.get_user_by_email_or_username(email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+
+    if not user.is_active:
+        if not user.verification_code or user.verification_code != code:
+            raise HTTPException(status_code=400, detail="Código de verificação incorreto.")
+        if _is_expired(user.verification_expires_at):
+            raise HTTPException(status_code=400, detail="Código de verificação expirado.")
+        user = await tracker.activate_user(user.id)
+
+    user = await ensure_gitea_account(request.app, user)
+    token = issue_token(user.id)
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        max_age=7 * 86400,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return {"token": token, "user": user_payload(user)}
+
+
+@router.get("/verify-link")
+async def verify_link(request: Request, token: str = ""):
+    token = token.strip()
+    if not token:
+        return _back_to_login({"error": "Link de verificação inválido."})
+
+    tracker = request.app.state.tracker
+    user = await tracker.get_user_by_verification_token(token)
+    if user is None:
+        return _back_to_login({"error": "Link de verificação inválido ou expirado."})
+
+    if _is_expired(user.verification_expires_at):
+        return _back_to_login({"error": "Link de verificação expirado. Solicite um novo código."})
+
+    if not user.is_active:
+        user = await tracker.activate_user(user.id)
+
+    user = await ensure_gitea_account(request.app, user)
+    session_token = issue_token(user.id)
+    return _back_to_login({"verified": "true"}, token=session_token)
+
+
+@router.post("/resend-code")
+async def resend_code(req: ResendCodeRequest, request: Request):
+    email = req.email.strip().lower()
+    tracker = request.app.state.tracker
+    user = await tracker.get_user_by_email_or_username(email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    if user.is_active:
+        raise HTTPException(status_code=400, detail="Esta conta já está ativada.")
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+
+    await tracker.update_user(
+        user.id,
+        verification_code=code,
+        verification_token=token,
+        verification_expires_at=expires_at,
+    )
+
+    platform = getattr(request.app.state, "platform", None)
+    base_url = ""
+    if platform and platform.settings.public_url:
+        base_url = platform.settings.public_url.rstrip("/")
+    if not base_url:
+        base_url = str(request.base_url).rstrip("/")
+
+    verify_link = f"{base_url}/api/auth/verify-link?token={token}"
+    email_sender = getattr(request.app.state, "email_sender", None)
+    if email_sender:
+        try:
+            await email_sender.send_verification_email(email, user.name or email, code, verify_link)
+        except Exception as e:
+            logger.warning(f"Failed to resend verification email to {email}: {e}")
+
+    return {"status": "ok", "message": "Novo código de verificação enviado."}
 
 
 @router.post("/first-access")

@@ -303,4 +303,16 @@ EN_US: dict[str, str] = {
         "The provider answered HTTP {status}; the key was not confirmed.",
     "Informe a chave de API.": "Enter the API key.",
     "{provider} recusou a chave (HTTP {status}).": "{provider} refused the key (HTTP {status}).",
+    # ---- registro e autenticação ----
+    "Todos os campos são obrigatórios.": "All fields are required.",
+    "Formato de e-mail inválido.": "Invalid email format.",
+    "As senhas não coincidem.": "Passwords do not match.",
+    "A senha deve ter pelo menos 8 caracteres.": "Password must be at least 8 characters.",
+    "Este e-mail já está cadastrado.": "This email is already registered.",
+    "Usuário não encontrado.": "User not found.",
+    "Código de verificação incorreto.": "Incorrect verification code.",
+    "Código de verificação expirado.": "Verification code expired.",
+    "Esta conta já está ativada.": "This account is already active.",
+    "Sua conta ainda não foi ativada. Verifique o código enviado ao seu e-mail.":
+        "Your account has not been activated yet. Please check the code sent to your email.",
 }
