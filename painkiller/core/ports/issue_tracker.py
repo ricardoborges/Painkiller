@@ -39,6 +39,7 @@ class IssueTrackerPort(ABC):
         model: Optional[str] = None,
         effort: Optional[str] = None,
         project_id: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> Project:
         """Create or register a project."""
         pass
@@ -62,6 +63,7 @@ class IssueTrackerPort(ABC):
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         effort: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> Project:
         """Update an existing project."""
         pass

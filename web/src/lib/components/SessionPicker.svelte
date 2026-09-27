@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import type { IterationSession, SessionStatus } from '$lib/types';
 
@@ -18,12 +19,12 @@
     oncreate: () => void;
   } = $props();
 
-  const STATUS_LABEL: Record<SessionStatus, string> = {
-    PLANNING: 'Análise',
-    BACKLOG: 'Backlog',
-    IN_SPRINT: 'Execução',
-    COMPLETED: 'Concluída'
-  };
+  const STATUS_LABEL = $derived<Record<SessionStatus, string>>({
+    PLANNING: t('sessionStatus.PLANNING'),
+    BACKLOG: t('sessionStatus.BACKLOG'),
+    IN_SPRINT: t('sessionStatus.IN_SPRINT'),
+    COMPLETED: t('sessionStatus.COMPLETED')
+  });
 
   let open = $state(false);
   let root = $state<HTMLElement | null>(null);
@@ -56,20 +57,20 @@
     aria-haspopup="listbox"
     aria-expanded={open}
     onclick={() => (open = !open)}
-    title={active ? `#${active.number} ${active.title}` : 'Sessões'}
+    title={active ? `#${active.number} ${active.title}` : t('sessionPicker.sessions')}
   >
     {#if active}
       <span class="mono faint">#{active.number}</span>
       <span class="name truncate">{active.title}</span>
     {:else}
-      <span class="name">Sessão</span>
+      <span class="name">{t('sessionPicker.session')}</span>
     {/if}
     <Icon name="chevron-down" size={10} />
   </button>
 
   {#if open}
     <div class="menu">
-      <ul role="listbox" aria-label="Sessões do projeto">
+      <ul role="listbox" aria-label={t('sessionPicker.projectSessions')}>
         {#each [...sessions].reverse() as s (s.id)}
           {@const current = s.id === active?.id}
           <li role="option" aria-selected={current}>
@@ -85,7 +86,7 @@
       </ul>
       <button type="button" class="item create" onclick={create} disabled={creating}>
         <Icon name="plus" size={10} />
-        <span>{creating ? 'Criando…' : 'Nova sessão'}</span>
+        <span>{creating ? t('sessionPicker.creating') : t('sessionPicker.new')}</span>
       </button>
     </div>
   {/if}

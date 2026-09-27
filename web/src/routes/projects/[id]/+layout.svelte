@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import Icon from '$lib/components/Icon.svelte';
@@ -27,9 +28,9 @@
      diante o primeiro passo é uma conversa livre com o agente, não uma entrevista. */
   const chatMode = $derived((sessionStore.activeSession?.number ?? 1) > 1);
   const steps = $derived([
-    { href: `${base}/initial-analysis`, label: chatMode ? 'Chat' : 'Análise', exact: false },
-    { href: `${base}/backlog`, label: 'Backlog', exact: false },
-    { href: `${base}/artifacts`, label: 'Artefatos', exact: false }
+    { href: `${base}/initial-analysis`, label: chatMode ? t('projectNav.chat') : t('projectNav.analysis'), exact: false },
+    { href: `${base}/backlog`, label: t('projectNav.backlog'), exact: false },
+    { href: `${base}/artifacts`, label: t('projectNav.artifacts'), exact: false }
   ]);
 
   /* Quantas etapas a sessão ativa já cumpriu, pelo status dela:
@@ -51,11 +52,11 @@
   const aside = $derived([
     ...(sessionStore.hasCompleted
       ? [
-          { href: base, label: 'Painel', exact: true },
-          { href: `${base}/context`, label: 'Contexto', exact: false }
+          { href: base, label: t('projectNav.dashboard'), exact: true },
+          { href: `${base}/context`, label: t('projectNav.context'), exact: false }
         ]
-      : [{ href: base, label: 'Contexto', exact: true }]),
-    { href: `${base}/costs`, label: 'Custos', exact: false }
+      : [{ href: base, label: t('projectNav.context'), exact: true }]),
+    { href: `${base}/costs`, label: t('projectNav.costs'), exact: false }
   ]);
 
   /* Uma sessão nova começa pelo primeiro passo do ciclo, o Chat. */
@@ -88,7 +89,7 @@
   <header class="head" class:compact>
     <div class="top">
       <a href="/projects" class="back label">
-        <Icon name="arrow-left" size={11} /> Projetos
+        <Icon name="arrow-left" size={11} /> {t('layout.nav.projects')}
       </a>
 
       {#if data.project.repo_url}
@@ -98,7 +99,7 @@
           rel="noopener noreferrer"
           class="repo label"
         >
-          Repositório <Icon name="external" size={10} />
+          {t('projectNav.repository')} <Icon name="external" size={10} />
         </a>
       {/if}
     </div>
@@ -108,12 +109,12 @@
     <div class="ident mono faint">
       <span>{data.project.id}</span>
       <span class="sep" aria-hidden="true">·</span>
-      <span>branch base {data.project.default_branch}</span>
+      <span>{t('projectNav.baseBranch', { branch: data.project.default_branch })}</span>
       <span class="sep" aria-hidden="true">·</span>
       <span>{HARNESS_LABELS[data.project.harness ?? 'agy_superpowers']}</span>
     </div>
 
-    <nav aria-label="Seções do projeto">
+    <nav aria-label={t('projectNav.aria')}>
       {#if !projectView}
         {#if sessionStore.sessions.length}
           <SessionPicker
@@ -138,7 +139,7 @@
                   {#if done}<Icon name="check" size={10} />{:else}{i + 1}{/if}
                 </span>
                 {tab.label}
-                {#if done}<span class="sr-only">(concluída)</span>{/if}
+                {#if done}<span class="sr-only">({t('projectNav.stepDone')})</span>{/if}
               </a>
             </li>
           {/each}

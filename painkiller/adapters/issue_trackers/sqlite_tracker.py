@@ -76,6 +76,7 @@ class ProjectRecord(Base):
     api_key = Column(String, nullable=True)
     model = Column(String, nullable=True)
     effort = Column(String, nullable=True)
+    language = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -309,6 +310,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         model: Optional[str] = None,
         effort: Optional[str] = None,
         project_id: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> Project:
         proj_id = project_id or f"proj-{uuid.uuid4().hex[:8]}"
         harness_val = (harness.value if isinstance(harness, HarnessType) else harness) or HarnessType.AGY_SUPERPOWERS.value
@@ -327,6 +329,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             api_key=api_key or None,
             model=model or None,
             effort=effort or None,
+            language=language or None,
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
@@ -364,6 +367,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         effort: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> Project:
         values: dict[str, Any] = {}
         if name is not None:
@@ -386,6 +390,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             values["model"] = model or None
         if effort is not None:
             values["effort"] = effort or None
+        if language is not None:
+            values["language"] = language or None
 
         async with self.session_factory() as session:
             if values:
@@ -434,6 +440,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             api_key=getattr(record, "api_key", None) or None,
             model=getattr(record, "model", None) or None,
             effort=getattr(record, "effort", None) or None,
+            # Projetos anteriores ao campo ficam no idioma em que foram feitos.
+            language=getattr(record, "language", None) or "pt-BR",
             created_at=record.created_at,
         )
 

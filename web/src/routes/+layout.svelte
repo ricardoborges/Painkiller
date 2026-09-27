@@ -8,9 +8,11 @@
   import { setup } from '$lib/stores/setup.svelte';
   import { deploys } from '$lib/stores/deploys.svelte';
   import { theme } from '$lib/stores/theme.svelte';
+  import { t } from '$lib/i18n/index.svelte';
 
   import Icon from '$lib/components/Icon.svelte';
   import Toaster from '$lib/components/Toaster.svelte';
+  import LocaleSwitch from '$lib/components/LocaleSwitch.svelte';
 
   let { children } = $props();
 
@@ -63,12 +65,12 @@
   }
 
   const nav = $derived([
-    { href: '/projects', label: 'Projetos', external: false },
-    { href: '/gitea/', label: 'Repositórios', external: true },
+    { href: '/projects', label: t('layout.nav.projects'), external: false },
+    { href: '/gitea/', label: t('layout.nav.repositories'), external: true },
     ...(auth.isAdmin
       ? [
-          { href: '/pending', label: 'Pendências', external: false },
-          { href: '/admin/templates', label: 'Admin', external: false }
+          { href: '/pending', label: t('layout.nav.pending'), external: false },
+          { href: '/admin/templates', label: t('layout.nav.admin'), external: false }
         ]
       : [])
   ]);
@@ -86,12 +88,12 @@
 {:else}
   <header>
     <div class="shell bar" class:fluid={isFluid}>
-      <a href="/projects" class="brand" aria-label="Painkiller, início">
+      <a href="/projects" class="brand" aria-label={t('layout.home')}>
         <span class="mark" aria-hidden="true"></span>
         <span class="word">Painkiller</span>
       </a>
 
-      <nav aria-label="Principal">
+      <nav aria-label={t('layout.mainNav')}>
         {#each nav as item (item.href)}
           {@const active = !item.external && page.url.pathname.startsWith(item.href)}
           {#if item.external}
@@ -100,7 +102,7 @@
               target="_blank"
               rel="noopener noreferrer"
               class="nav-link"
-              title="Acessar repositórios no Gitea"
+              title={t('layout.giteaTitle')}
             >
               <span>{item.label}</span>
               <Icon name="external" size={11} />
@@ -118,16 +120,17 @@
 
       <div class="who">
         <span class="label user">{auth.user?.username}</span>
+        <LocaleSwitch />
         <button
           type="button"
           class="btn-icon"
           onclick={() => theme.toggle()}
-          aria-label={theme.current === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}
-          title={theme.current === 'dark' ? 'Tema claro' : 'Tema escuro'}
+          aria-label={theme.current === 'dark' ? t('layout.useLight') : t('layout.useDark')}
+          title={theme.current === 'dark' ? t('layout.lightTheme') : t('layout.darkTheme')}
         >
           <Icon name={theme.current === 'dark' ? 'sun' : 'moon'} />
         </button>
-        <button type="button" class="btn btn-quiet btn-sm" onclick={signOut}>Sair</button>
+        <button type="button" class="btn btn-quiet btn-sm" onclick={signOut}>{t('layout.signOut')}</button>
       </div>
     </div>
   </header>

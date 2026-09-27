@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import type { Snippet } from 'svelte';
 
   /**
@@ -19,7 +20,7 @@
   } = $props();
 
   const word = $derived(
-    { ok: 'ok', pending: 'falta', fail: 'falhou', unknown: 'a verificar' }[state]
+    { ok: t('check.ok'), pending: t('check.pending'), fail: t('check.fail'), unknown: t('check.unknown') }[state]
   );
 </script>
 

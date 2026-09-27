@@ -1,3 +1,5 @@
+import { t } from './i18n/index.svelte';
+
 /** Espelha painkiller/core/domain/models.py */
 
 export const TASK_STATUSES = [
@@ -29,9 +31,24 @@ export type EffortLevel = 'low' | 'medium' | 'high';
 export const EFFORT_HARNESSES: readonly HarnessType[] = ['agy_superpowers', 'deepseek_superpowers'];
 
 export const EFFORT_LEVELS: { id: EffortLevel; label: string }[] = [
-  { id: 'low', label: 'Baixo — mais rápido e barato' },
-  { id: 'medium', label: 'Médio (padrão)' },
-  { id: 'high', label: 'Alto — pensa mais antes de agir' }
+  {
+    id: 'low',
+    get label() {
+      return t('effort.low');
+    }
+  },
+  {
+    id: 'medium',
+    get label() {
+      return t('effort.medium');
+    }
+  },
+  {
+    id: 'high',
+    get label() {
+      return t('effort.high');
+    }
+  }
 ];
 
 export const PROJECT_TYPES = [
@@ -50,40 +67,64 @@ export const PROJECT_TYPE_META: Record<
   { label: string; coolifyDefault: boolean; category: 'web' | 'other'; description: string }
 > = {
   api: {
-    label: 'API / Backend',
+    get label() {
+      return t('projectType.api.label');
+    },
     coolifyDefault: true,
     category: 'web',
-    description: 'Serviço HTTP ou REST conteinerizado, compatível com Coolify'
+    get description() {
+      return t('projectType.api.description');
+    }
   },
   web_static: {
-    label: 'Web Estática',
+    get label() {
+      return t('projectType.web_static.label');
+    },
     coolifyDefault: true,
     category: 'web',
-    description: 'Site HTML/CSS/JS ou SPA estática hospedada via Nginx no Coolify'
+    get description() {
+      return t('projectType.web_static.description');
+    }
   },
   web_fullstack: {
-    label: 'Web Fullstack',
+    get label() {
+      return t('projectType.web_fullstack.label');
+    },
     coolifyDefault: true,
     category: 'web',
-    description: 'Aplicação web completa com SSR/backend (Next.js, SvelteKit, etc.) no Coolify'
+    get description() {
+      return t('projectType.web_fullstack.description');
+    }
   },
   desktop: {
-    label: 'Desktop',
+    get label() {
+      return t('projectType.desktop.label');
+    },
     coolifyDefault: false,
     category: 'other',
-    description: 'Aplicação para Windows/Linux/macOS (Electron, Tauri, etc.). Não usa deploy Coolify'
+    get description() {
+      return t('projectType.desktop.description');
+    }
   },
   mobile_crossplatform: {
-    label: 'Mobile Cross-platform',
+    get label() {
+      return t('projectType.mobile_crossplatform.label');
+    },
     coolifyDefault: false,
     category: 'other',
-    description: 'App mobile multi-plataforma (Flutter, React Native). Não usa deploy Coolify'
+    get description() {
+      return t('projectType.mobile_crossplatform.description');
+    }
   },
   android_native: {
-    label: 'Android Nativo',
+    get label() {
+      return t('projectType.android_native.label');
+    },
     coolifyDefault: false,
     category: 'other',
-    description: 'App nativo Android com Kotlin/Compose. Suporte planejado para builds locais/CI'
+    get description() {
+      return t('projectType.android_native.description');
+    }
   }
 };
 
@@ -119,6 +160,8 @@ export interface Project {
   harness?: HarnessType;
   model?: string | null;
   effort?: EffortLevel | null;
+  /** Idioma do agente: entrevista, specs, backlog, código e commits. */
+  language?: 'pt-BR' | 'en-US';
   has_api_key?: boolean;
   masked_api_key?: string | null;
   created_at: string;
@@ -229,13 +272,48 @@ export const STATUS_META: Record<
   TaskStatus,
   { label: string; accent: boolean; hatch: boolean; done: boolean }
 > = {
-  BACKLOG: { label: 'Backlog', accent: false, hatch: false, done: false },
-  READY: { label: 'Pronta', accent: false, hatch: false, done: false },
-  RUNNING: { label: 'Executando', accent: false, hatch: false, done: false },
-  AWAITING_ANALYST: { label: 'Aguardando analista', accent: true, hatch: false, done: false },
-  IN_REVIEW: { label: 'Em revisão', accent: false, hatch: false, done: false },
-  COMPLETED: { label: 'Concluída', accent: false, hatch: false, done: true },
-  FAILED: { label: 'Falhou', accent: false, hatch: true, done: false }
+  BACKLOG: {
+    get label() {
+      return t('status.BACKLOG');
+    },
+    accent: false, hatch: false, done: false
+  },
+  READY: {
+    get label() {
+      return t('status.READY');
+    },
+    accent: false, hatch: false, done: false
+  },
+  RUNNING: {
+    get label() {
+      return t('status.RUNNING');
+    },
+    accent: false, hatch: false, done: false
+  },
+  AWAITING_ANALYST: {
+    get label() {
+      return t('status.AWAITING_ANALYST');
+    },
+    accent: true, hatch: false, done: false
+  },
+  IN_REVIEW: {
+    get label() {
+      return t('status.IN_REVIEW');
+    },
+    accent: false, hatch: false, done: false
+  },
+  COMPLETED: {
+    get label() {
+      return t('status.COMPLETED');
+    },
+    accent: false, hatch: false, done: true
+  },
+  FAILED: {
+    get label() {
+      return t('status.FAILED');
+    },
+    accent: false, hatch: true, done: false
+  }
 };
 
 /** Ordem de leitura do backlog: o que exige ação primeiro. */

@@ -1,3 +1,4 @@
+import { t } from '$lib/i18n/index.svelte';
 import { api } from '$lib/api';
 import type { SetupState } from '$lib/types';
 
@@ -26,7 +27,7 @@ class SetupStore {
       this.state = await api.setupState();
       this.error = null;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'Não foi possível carregar a configuração.';
+      this.error = e instanceof Error ? e.message : t('setupStore.loadFailed');
     }
   }
 

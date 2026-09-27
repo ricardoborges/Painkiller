@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, i18n, LOCALES, type Locale } from '$lib/i18n/index.svelte';
   import { api, baseName } from '$lib/api';
   import {
     DEEPSEEK_KEY_HARNESSES,
@@ -41,34 +42,36 @@
   const editing = $derived(project !== null);
   const existing = $derived(project?.attachments ?? []);
 
-  const MODEL_PRESETS: Record<HarnessType, { id: string; label: string }[]> = {
+  const MODEL_PRESETS: Record<HarnessType, { id: string; label: string }[]> = $derived({
     maki_superpowers: [
-      { id: 'deepseek/deepseek-v4-pro', label: 'deepseek/deepseek-v4-pro (Padrão / Recomendado)' },
+      { id: 'deepseek/deepseek-v4-pro', label: `deepseek/deepseek-v4-pro (${t('form.defaultRecommended')})` },
       { id: 'deepseek/deepseek-v4-flash', label: 'deepseek/deepseek-v4-flash' },
       { id: 'deepseek/deepseek-flash', label: 'deepseek/deepseek-flash' }
     ],
     agy_superpowers: [
-      { id: 'gemini-3.8-flash', label: 'gemini-3.8-flash (Padrão)' },
+      { id: 'gemini-3.8-flash', label: `gemini-3.8-flash (${t('form.default')})` },
       { id: 'gemini-3.8-pro', label: 'gemini-3.8-pro' },
       { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
       { id: 'gemini-2.5-pro', label: 'gemini-2.5-pro' }
     ],
     deepseek_superpowers: [
-      { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (Recomendado)' },
+      { id: 'deepseek-v4-pro', label: `deepseek-v4-pro (${t('form.recommended')})` },
       { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash' }
     ],
     // A Responses API da DeepSeek recebe o id sem o prefixo `provider/` do maki.
     unreal_superpowers: [
-      { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro (Padrão / Recomendado)' },
+      { id: 'deepseek-v4-pro', label: `deepseek-v4-pro (${t('form.defaultRecommended')})` },
       { id: 'deepseek-flash', label: 'deepseek-flash' }
     ]
-  };
+  });
 
   function defaultModelFor(h: HarnessType): string {
     return MODEL_PRESETS[h]?.[0]?.id ?? '';
   }
 
   let model = $state('');
+  /** Idioma em que o agente conduz a análise e escreve specs, código e commits. */
+  let language = $state<Locale>(i18n.current);
   let effort = $state<EffortLevel>('medium');
   const hasEffort = $derived(EFFORT_HARNESSES.includes(harness));
   let isCustomModel = $state(false);
@@ -137,6 +140,7 @@
       customModelText = currentModel;
     }
     effort = project?.effort ?? 'medium';
+    language = project?.language ?? i18n.current;
     apiKey = '';
     files = [];
     error = null;
@@ -217,7 +221,7 @@
       if (apiKey.trim()) {
         const check = await api.validateProjectKey(harness, apiKey.trim());
         if (check.valid === false) {
-          error = check.detail ?? 'O provedor recusou a chave.';
+          error = check.detail ?? t('form.keyRefused');
           return;
         }
       }
@@ -230,6 +234,7 @@
         api_key?: string;
         model?: string;
         effort?: string;
+        language: Locale;
       } = {
         name: name.trim(),
         description: description.trim(),
@@ -238,7 +243,8 @@
         harness: harness,
         model: effectiveModel || undefined,
         // Só agy e dsh têm o ajuste; para os demais o backend o descarta.
-        effort: hasEffort ? effort : undefined
+        effort: hasEffort ? effort : undefined,
+        language
       };
       if (apiKey.trim()) {
         body.api_key = apiKey.trim();
@@ -255,7 +261,7 @@
 
       onsaved(saved);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Não foi possível salvar o projeto.';
+      error = e instanceof Error ? e.message : t('form.saveFailed');
     } finally {
       busy = false;
     }
@@ -264,61 +270,61 @@
 
 <form id="project-form" onsubmit={save} novalidate>
   <div class="field">
-    <label for="pname">Nome <span class="req">*</span></label>
+    <label for="pname">{t('form.name')} <span class="req">*</span></label>
     <input
       id="pname"
       class="input"
       bind:value={name}
-      placeholder="Nome do projeto"
+      placeholder={t('form.namePlaceholder')}
       aria-invalid={touched && missing.name ? 'true' : undefined}
     />
-    {#if touched && missing.name}<p class="field-error">Informe um nome.</p>{/if}
+    {#if touched && missing.name}<p class="field-error">{t('form.nameError')}</p>{/if}
   </div>
 
   <div class="field">
-    <label for="pdesc">Descrição geral</label>
+    <label for="pdesc">{t('form.description')}</label>
     <textarea
       id="pdesc"
       class="textarea"
       bind:value={description}
-      placeholder="Visão panorâmica do que o projeto contempla."
+      placeholder={t('form.descriptionPlaceholder')}
     ></textarea>
   </div>
 
   <div class="field">
-    <label for="ppurp">Propósito <span class="req">*</span></label>
+    <label for="ppurp">{t('projects.purpose')} <span class="req">*</span></label>
     <textarea
       id="ppurp"
       class="textarea"
       bind:value={purpose}
-      placeholder="Que dor de negócio isto resolve?"
+      placeholder={t('form.purposePlaceholder')}
       aria-invalid={touched && missing.purpose ? 'true' : undefined}
     ></textarea>
-    {#if touched && missing.purpose}<p class="field-error">Informe o propósito.</p>{/if}
+    {#if touched && missing.purpose}<p class="field-error">{t('form.purposeError')}</p>{/if}
   </div>
 
   <div class="field">
     <label for={templates.length ? 'psol-options' : 'psol'}>
-      Solução desejada <span class="req">*</span>
+      {t('form.solution')} <span class="req">*</span>
     </label>
     {#if templates.length}
-      <p class="help">Escolha um template cadastrado ou descreva outra solução.</p>
+      <p class="help">{t('form.solutionHelp')}</p>
       <div id="psol-options" class="harness-options">
-        {#each templates as t (t.id)}
-          <label class="radio-card" class:active={solutionChoice === t.id}>
+        {#each templates as tpl (tpl.id)}
+          <label class="radio-card" class:active={solutionChoice === tpl.id}>
             <input
               type="radio"
               name="solution"
-              value={t.id}
-              checked={solutionChoice === t.id}
-              onchange={() => onSolutionChoice(t.id)}
+              value={tpl.id}
+              checked={solutionChoice === tpl.id}
+              onchange={() => onSolutionChoice(tpl.id)}
             />
             <div class="radio-info">
-              <span class="radio-title">{t.name}</span>
+              <span class="radio-title">{tpl.name}</span>
               <span class="radio-desc">
-                {PROJECT_TYPE_META[t.project_type]?.label || t.project_type}
-                {#if t.coolify_compatible}· Compatível com Coolify{/if}
-                {#if t.description}· {t.description}{/if}
+                {PROJECT_TYPE_META[tpl.project_type]?.label || tpl.project_type}
+                {#if tpl.coolify_compatible}· {t('form.coolifyCompatible')}{/if}
+                {#if tpl.description}· {tpl.description}{/if}
               </span>
             </div>
           </label>
@@ -332,8 +338,8 @@
             onchange={() => onSolutionChoice(OTHER_SOLUTION)}
           />
           <div class="radio-info">
-            <span class="radio-title">Outra</span>
-            <span class="radio-desc">Descrever a solução com as próprias palavras</span>
+            <span class="radio-title">{t('form.otherSolution')}</span>
+            <span class="radio-desc">{t('form.otherSolutionDesc')}</span>
           </div>
         </label>
       </div>
@@ -343,22 +349,20 @@
         id="psol"
         class="textarea"
         bind:value={solution}
-        placeholder="Como a arquitetura e as regras devem se comportar?"
+        placeholder={t('form.solutionPlaceholder')}
         aria-invalid={touched && missing.solution ? 'true' : undefined}
       ></textarea>
     {/if}
     {#if touched && missing.solution}
       <p class="field-error">
-        {writesSolution ? 'Descreva a solução.' : 'Escolha um template ou descreva outra solução.'}
+        {writesSolution ? t('form.solutionError') : t('form.solutionChoiceError')}
       </p>
     {/if}
   </div>
 
   <div class="field">
-    <label for="pharness-options">Harness do Agente</label>
-    <p class="help">
-      Escolha o motor de execução que rodará a análise e as tarefas de desenvolvimento.
-    </p>
+    <label for="pharness-options">{t('form.harness')}</label>
+    <p class="help">{t('form.harnessHelp')}</p>
     <div id="pharness-options" class="harness-options">
       <label class="radio-card" class:active={harness === 'agy_superpowers'}>
         <input
@@ -369,7 +373,7 @@
         />
         <div class="radio-info">
           <span class="radio-title">Antigravity CLI (agy) + Superpowers</span>
-          <span class="radio-desc">Google Gemini (3.8 Flash / Thinking) via agy CLI oficial</span>
+          <span class="radio-desc">{t('form.harness.agy')}</span>
         </div>
       </label>
       <label class="radio-card" class:active={harness === 'deepseek_superpowers'}>
@@ -381,7 +385,7 @@
         />
         <div class="radio-info">
           <span class="radio-title">DeepSeek Harness (dsh) + Superpowers</span>
-          <span class="radio-desc">DeepSeek V4 via @deepseek-ai/dsh oficial</span>
+          <span class="radio-desc">{t('form.harness.dsh')}</span>
         </div>
       </label>
       <label class="radio-card" class:active={harness === 'maki_superpowers'}>
@@ -393,7 +397,7 @@
         />
         <div class="radio-info">
           <span class="radio-title">Maki + Superpowers</span>
-          <span class="radio-desc">DeepSeek V4 via maki.sh, com a mesma chave DeepSeek</span>
+          <span class="radio-desc">{t('form.harness.maki')}</span>
         </div>
       </label>
       <label class="radio-card" class:active={harness === 'unreal_superpowers'}>
@@ -405,17 +409,25 @@
         />
         <div class="radio-info">
           <span class="radio-title">Unreal Agent + Superpowers</span>
-          <span class="radio-desc">DeepSeek V4 via Unreal Agent runner em Go, com chave DeepSeek</span>
+          <span class="radio-desc">{t('form.harness.unreal')}</span>
         </div>
       </label>
     </div>
   </div>
 
   <div class="field">
-    <label for="pmodel">Modelo de IA</label>
-    <p class="help">
-      Modelo que o harness executará. Para o Maki, o padrão selecionado é <span class="mono">deepseek/deepseek-v4-pro</span>; para o Unreal Agent, <span class="mono">deepseek-v4-pro</span>.
-    </p>
+    <label for="planguage">{t('form.language')}</label>
+    <p class="help">{t('form.languageHelp')}</p>
+    <select id="planguage" class="input select-input" bind:value={language}>
+      {#each LOCALES as option (option.code)}
+        <option value={option.code}>{option.label}</option>
+      {/each}
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="pmodel">{t('form.model')}</label>
+    <p class="help">{@html t('form.modelHelp')}</p>
     <div class="model-select-wrap">
       <select
         id="pmodel"
@@ -428,13 +440,13 @@
             {preset.label}
           </option>
         {/each}
-        <option value="__custom__">Outro modelo (personalizado)…</option>
+        <option value="__custom__">{t('form.customModel')}</option>
       </select>
       {#if isCustomModel}
         <input
           type="text"
           class="input mono custom-model-input"
-          placeholder={harness === 'maki_superpowers' ? 'deepseek/deepseek-v4-pro' : harness === 'unreal_superpowers' ? 'deepseek-v4-pro' : 'nome-do-modelo'}
+          placeholder={harness === 'maki_superpowers' ? 'deepseek/deepseek-v4-pro' : harness === 'unreal_superpowers' ? 'deepseek-v4-pro' : t('form.modelNamePlaceholder')}
           bind:value={customModelText}
         />
       {/if}
@@ -443,8 +455,8 @@
 
   {#if hasEffort}
     <div class="field">
-      <label for="peffort">Esforço de raciocínio</label>
-      <p class="help">Quanto o modelo pensa antes de responder. Mais esforço custa mais tokens.</p>
+      <label for="peffort">{t('form.effort')}</label>
+      <p class="help">{t('form.effortHelp')}</p>
       <select id="peffort" class="input select-input" bind:value={effort}>
         {#each EFFORT_LEVELS as level (level.id)}
           <option value={level.id}>{level.label}</option>
@@ -455,18 +467,18 @@
 
   <div class="field">
     <label for="papikey">
-      Chave de API {keyPage.name} <span class="req">*</span>
+      {t('form.apiKey', { provider: keyPage.name })} <span class="req">*</span>
     </label>
     <p class="help">
       {#if savedKeyUsable}
-        Chave configurada ({project?.masked_api_key}). Deixe em branco para mantê-la.
+        {t('form.keySaved', { masked: project?.masked_api_key ?? '' })}
       {:else if editing && project?.has_api_key}
-        Este harness usa outra conta de provedor: informe uma chave {keyPage.name}.
+        {t('form.keyOtherProvider', { provider: keyPage.name })}
       {:else}
-        Cada projeto usa a própria chave; o consumo sai da conta dona dela.
+        {t('form.keyPerProject')}
       {/if}
       <a href={keyPage.url} target="_blank" rel="noopener noreferrer" class="key-link">
-        Obter uma chave <Icon name="external" size={10} />
+        {t('form.getKey')} <Icon name="external" size={10} />
       </a>
     </p>
     <input
@@ -478,13 +490,13 @@
       autocomplete="off"
       aria-invalid={touched && missing.apiKey ? 'true' : undefined}
     />
-    {#if touched && missing.apiKey}<p class="field-error">Informe a chave de API.</p>{/if}
+    {#if touched && missing.apiKey}<p class="field-error">{t('form.keyError')}</p>{/if}
   </div>
 
   <div class="field">
-    <label for="pfiles">Documentos de contexto</label>
+    <label for="pfiles">{t('form.docs')}</label>
     <p class="help">
-      Lidos e injetados no prompt do agente de análise.
+      {t('form.docsHelp')}
       <span class="mono">.md .txt .json .pdf .docx</span>
     </p>
 
@@ -501,9 +513,9 @@
     >
       <Icon name="upload" size={16} />
       <span>
-        Arraste arquivos ou
+        {t('form.dragFiles')}
         <button type="button" class="linkish" onclick={() => fileInput?.click()}>
-          escolha do disco
+          {t('form.pickFromDisk')}
         </button>
       </span>
     </div>
@@ -528,9 +540,7 @@
           </li>
         {/each}
       </ul>
-      <p class="help">
-        Anexos já enviados. A API não expõe remoção — novos arquivos são acrescentados.
-      </p>
+      <p class="help">{t('form.existingAttachments')}</p>
     {/if}
 
     {#if files.length}
@@ -544,7 +554,7 @@
               type="button"
               class="chip-x"
               onclick={() => removeFile(file)}
-              aria-label="Remover {file.name}"
+              aria-label={t('form.removeFile', { name: file.name })}
             >
               <Icon name="close" size={9} />
             </button>
@@ -560,10 +570,10 @@
 
   <div class="form-actions">
     <button type="button" class="btn btn-line" onclick={oncancel} disabled={busy}>
-      Cancelar
+      {t('common.cancel')}
     </button>
     <button type="submit" class="btn btn-solid" disabled={busy}>
-      {busy ? 'Salvando…' : editing ? 'Salvar alterações' : 'Criar projeto'}
+      {busy ? t('common.saving') : editing ? t('form.saveChanges') : t('form.create')}
     </button>
   </div>
 </form>

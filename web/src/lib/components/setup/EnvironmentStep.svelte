@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { api } from '$lib/api';
   import { setup } from '$lib/stores/setup.svelte';
   import Check from './Check.svelte';
@@ -34,10 +35,10 @@
     overriding = setup.state.environment.host_root_source === 'settings';
   });
 
-  const SOURCE_LABEL = {
-    settings: 'definido aqui',
-    detected: 'detectado automaticamente'
-  } as const;
+  const SOURCE_LABEL = $derived({
+    settings: t('env.sourceSettings'),
+    detected: t('env.sourceDetected')
+  });
 
   const missingImages = $derived(env.images.filter((row) => !row.present));
 
@@ -47,7 +48,7 @@
     try {
       probe = await api.testSetupEnvironment();
     } catch (e) {
-      probe = { ok: false, detail: e instanceof Error ? e.message : 'Falha no teste.' };
+      probe = { ok: false, detail: e instanceof Error ? e.message : t('env.testFailed') };
     } finally {
       probing = false;
     }
@@ -69,7 +70,7 @@
       saved = true;
       onsaved?.();
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Não foi possível salvar.';
+      error = err instanceof Error ? err.message : t('common.saveFailed');
     } finally {
       busy = false;
     }
@@ -78,22 +79,22 @@
 
 <form class="step" onsubmit={save}>
   <section class="block">
-    <h3 class="label">Verificações</h3>
+    <h3 class="label">{t('env.checks')}</h3>
     <ul class="checks">
       <Check
         state={env.docker_ok ? 'ok' : 'fail'}
-        label="Docker acessível pela API"
+        label={t('env.dockerCheck')}
         detail={env.docker_ok
-          ? 'Os agentes rodam em contêineres criados pelo socket do Docker.'
-          : 'Sem o socket do Docker nenhum agente sobe. No compose ele é montado em /var/run/docker.sock.'}
+          ? t('env.dockerOk')
+          : t('env.dockerMissing')}
       />
       {#if env.docker_ok}
         <Check
           state={missingImages.length ? 'pending' : 'ok'}
-          label="Imagens dos harnesses"
+          label={t('env.images')}
           detail={missingImages.length
-            ? `Faltam: ${missingImages.map((r) => r.harness).join(', ')}. Construa com o comando abaixo; o harness sem imagem não roda.`
-            : 'Todas construídas.'}
+            ? t('env.imagesMissing', { list: missingImages.map((r) => r.harness).join(', ') })
+            : t('env.imagesOk')}
         >
           {#if missingImages.length}
             <code class="mono cmd">docker compose --profile build build</code>
@@ -105,40 +106,34 @@
 
   <section class="block">
     <div class="field">
-      <label for="pk-public-url">URL pública do Painkiller</label>
+      <label for="pk-public-url">{t('env.publicUrl')}</label>
       <input id="pk-public-url" class="input mono" bind:value={publicUrl} placeholder="http://localhost:8000" />
       <p class="help">
-        O endereço que o navegador usa. Dele saem o retorno do login Google, o link do Coolify e o
-        endereço do Gitea (<span class="mono">{publicUrl.replace(/\/$/, '')}/gitea</span>).
-        {#if !env.public_url_saved}Preenchido a partir desta página.{/if}
+        {t('env.publicUrlHelp')}
+        (<span class="mono">{publicUrl.replace(/\/$/, '')}/gitea</span>).
+        {#if !env.public_url_saved}{t('env.publicUrlFromPage')}{/if}
       </p>
     </div>
     <div class="field ttl">
-      <label for="pk-ttl">Validade da sessão (horas)</label>
+      <label for="pk-ttl">{t('env.ttl')}</label>
       <input id="pk-ttl" class="input mono" type="number" min="1" max="720" bind:value={sessionTtl} />
-      <p class="help">Depois disso é preciso entrar de novo. Padrão: 12.</p>
+      <p class="help">{t('env.ttlHelp')}</p>
     </div>
   </section>
 
   <section class="block">
-    <h3 class="label">Pasta de projetos no host</h3>
+    <h3 class="label">{t('env.hostFolder')}</h3>
     {#if !env.in_container}
-      <p class="lede small">
-        A API roda direto no host, então os agentes montam os repositórios pelo mesmo caminho. Nada a
-        configurar.
-      </p>
+      <p class="lede small">{t('env.onHost')}</p>
     {:else}
-      <p class="lede small">
-        A API cria os contêineres dos agentes como irmãos, pelo Docker do host. Eles precisam do caminho de
-        <span class="mono">./storage</span> <em>no host</em>, não do caminho dentro do contêiner.
-      </p>
+      <p class="lede small">{@html t('env.inContainer')}</p>
       {#if !overriding}
         <div class="value-row">
           {#if env.host_root}
             <code class="mono value">{env.host_root}</code>
             <span class="label">{SOURCE_LABEL[env.host_root_source ?? 'detected']}</span>
           {:else}
-            <span class="value hatch missing">Não detectado</span>
+            <span class="value hatch missing">{t('env.notDetected')}</span>
           {/if}
           <button
             type="button"
@@ -146,12 +141,12 @@
             onclick={() => {
               overriding = true;
               probe = null;
-            }}>Informar outro</button
+            }}>{t('env.override')}</button
           >
         </div>
       {:else}
         <div class="field">
-          <label for="pk-host-root">Caminho absoluto no host</label>
+          <label for="pk-host-root">{t('env.absolutePath')}</label>
           <input
             id="pk-host-root"
             class="input mono"
@@ -160,7 +155,7 @@
             placeholder={env.detected_host_root ?? 'D:\\dev\\Painkiller\\storage'}
           />
           <p class="help">
-            {#if env.detected_host_root}Vazio volta ao valor detectado.{:else}Não foi possível detectar: informe o caminho.{/if}
+            {#if env.detected_host_root}{t('env.emptyDetected')}{:else}{t('env.cannotDetect')}{/if}
             <button
               type="button"
               class="linkish"
@@ -168,7 +163,7 @@
                 overriding = false;
                 hostRoot = '';
                 probe = null;
-              }}>Usar o automático</button
+              }}>{t('env.useAuto')}</button
             >
           </p>
         </div>
@@ -176,12 +171,12 @@
     {/if}
     <div class="probe">
       <button type="button" class="btn btn-line btn-sm" onclick={testMount} disabled={probing || !env.docker_ok}>
-        {probing ? 'Testando…' : 'Testar montagem'}
+        {probing ? t('env.testing') : t('env.testMount')}
       </button>
       {#if probe}
         <p class="probe-result" class:hatch={!probe.ok} class:bad={!probe.ok} role="status">{probe.detail}</p>
       {:else}
-        <p class="help">Sobe um contêiner descartável que monta a pasta como o dispatch fará.</p>
+        <p class="help">{t('env.testHelp')}</p>
       {/if}
     </div>
   </section>
@@ -189,19 +184,19 @@
   {#if error}<p class="field-error" role="alert">{error}</p>{/if}
 
   <div class="actions">
-    {#if saved && mode === 'settings'}<span class="help">Salvo.</span>{/if}
+    {#if saved && mode === 'settings'}<span class="help">{t('common.saved')}</span>{/if}
     {#if !probe}
-      <span class="help">Teste a montagem para liberar o salvamento.</span>
+      <span class="help">{t('env.testToSave')}</span>
     {:else if !probe.ok}
-      <span class="help bad">O teste precisa passar para liberar o salvamento.</span>
+      <span class="help bad">{t('env.testMustPass')}</span>
     {/if}
     <button
       type="submit"
       class="btn btn-solid"
       disabled={busy || probing || !probe?.ok}
-      title={!probe?.ok ? 'Teste a montagem com sucesso para habilitar o salvamento' : undefined}
+      title={!probe?.ok ? t('env.testTitle') : undefined}
     >
-      {busy ? 'Salvando…' : mode === 'wizard' ? 'Salvar e continuar' : 'Salvar'}
+      {busy ? t('common.saving') : mode === 'wizard' ? t('setupStep.saveContinue') : t('common.save')}
     </button>
   </div>
 </form>

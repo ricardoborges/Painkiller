@@ -20,6 +20,7 @@ from painkiller.core.domain.models import (
     UsageSource,
     harness_model,
 )
+from painkiller.core.i18n import project_language, reset_locale, set_locale, tr, use_locale
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.sandbox import SandboxPort
 from painkiller.core.ports.git import GitPort
@@ -40,6 +41,12 @@ FAILURE_LOG_TAIL = 20_000
 STOPPED_MESSAGE = (
     "Execução interrompida pelo usuário. O trabalho parcial ficou na branch {branch}: "
     "use Repetir para continuar de onde parou."
+)
+
+TIMEOUT_MESSAGE = (
+    "O agente excedeu o tempo limite de {minutes} min e o contêiner foi encerrado. "
+    "O trabalho parcial ficou na branch {branch}: use Repetir para continuar de onde parou "
+    "ou aumente PAINKILLER_TASK_TIMEOUT."
 )
 
 
@@ -94,7 +101,7 @@ class PainkillerOrchestrator:
         if code == 0:
             return True
         logger.warning(f"Push de {branch} falhou (tarefa {task_id}): {out}")
-        self._note(task_id, f"Não foi possível enviar a branch {branch} ao Gitea: {out[-300:]}")
+        self._note(task_id, tr("Não foi possível enviar a branch {branch} ao Gitea: {output}", branch=branch, output=out[-300:]))
         return False
 
     async def dispatch_task(self, task_id: str) -> Task:
@@ -122,6 +129,9 @@ class PainkillerOrchestrator:
         self._stop_requested.discard(task.id)
         self._restart_requested.discard(task.id)
         self.activity.start(task.id)
+        # O que o despacho grava na tarefa (erros, comentários, notas ao vivo)
+        # sai no idioma do projeto, o mesmo em que o agente trabalha.
+        locale = set_locale(project_language(project))
         try:
             updated = await self._timed_dispatch(task, project)
             # "Abreviar testes" mata o contêiner e pede um reinício: roda de novo
@@ -129,11 +139,12 @@ class PainkillerOrchestrator:
             while updated is None:
                 self._restart_requested.discard(task.id)
                 task = await self.tracker.get_task(task.id) or task
-                self._note(task.id, "Reiniciando o agente sem testes, a pedido do analista")
+                self._note(task.id, tr("Reiniciando o agente sem testes, a pedido do analista"))
                 updated = await self._timed_dispatch(task, project, resuming=True)
             # Relido para levar o tempo que acabou de ser somado.
             return await self.tracker.get_task(task.id) or updated
         finally:
+            reset_locale(locale)
             self.activity.finish(task.id)
             self._stop_requested.discard(task.id)
             self._restart_requested.discard(task.id)
@@ -177,7 +188,7 @@ class PainkillerOrchestrator:
         )
 
         # Execute container
-        self._note(task.id, f"Iniciando contêiner na branch {branch_name}")
+        self._note(task.id, tr("Iniciando contêiner na branch {branch}", branch=branch_name))
         timeout = task_timeout_seconds()
         result = await self.sandbox.run_task(
             task,
@@ -190,7 +201,7 @@ class PainkillerOrchestrator:
             model=project.model,
             effort=project.effort,
         )
-        self._note(task.id, f"Agente encerrou com código {result.exit_code}")
+        self._note(task.id, tr("Agente encerrou com código {code}", code=result.exit_code))
         await self._record_usage(task, result, project)
 
         if task.id in self._restart_requested and result.exit_code not in (0, 42):
@@ -216,21 +227,21 @@ class PainkillerOrchestrator:
             await self.tracker.add_comment(
                 task.id,
                 author="system",
-                comment=f"🤖 Paused for clarification: {result.clarification.question}",
+                comment=tr("🤖 Pausada para esclarecimento: {question}", question=result.clarification.question),
             )
         elif result.exit_code == 0:
             if skip_tests:
-                self._note(task.id, "Testes abreviados pelo analista: suíte não executada")
+                self._note(task.id, tr("Testes abreviados pelo analista: suíte não executada"))
                 test_code, test_out = 0, ""
             else:
-                self._note(task.id, "Executando a suíte de testes do repositório")
+                self._note(task.id, tr("Executando a suíte de testes do repositório"))
                 test_code, test_out = await self.git.run_tests(project.repo_path)
             if test_code in (0, 5):
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
                 await self._push(project.repo_path, branch_name, task.id)
 
                 # Auto-merge é a regra do Painkiller: aprovada e incorporada na branch padrão
-                self._note(task.id, f"Incorporando branch na {project.default_branch}")
+                self._note(task.id, tr("Incorporando branch na {branch}", branch=project.default_branch))
                 code_m, out_m = await self.git.merge_branch(
                     project.repo_path,
                     source_branch=branch_name,
@@ -240,11 +251,11 @@ class PainkillerOrchestrator:
                     await self._push(project.repo_path, project.default_branch, task.id)
 
                     await self.tracker.update_task_status(task.id, TaskStatus.COMPLETED)
-                    comment = f"✅ Tarefa concluída, testada e incorporada na {project.default_branch}."
+                    comment = tr("✅ Tarefa concluída, testada e incorporada na {branch}.", branch=project.default_branch)
                     if skip_tests:
-                        comment += " Testes abreviados pelo analista: o teste manual fica por conta dele."
+                        comment += " " + tr("Testes abreviados pelo analista: o teste manual fica por conta dele.")
                     elif test_code == 5 or "Sem testes" in test_out:
-                        comment += " (Sem testes coletados no repositório)"
+                        comment += " " + tr("(Sem testes coletados no repositório)")
                     await self.tracker.add_comment(
                         task.id,
                         author="system",
@@ -255,12 +266,12 @@ class PainkillerOrchestrator:
                         task.id,
                         TaskStatus.FAILED,
                         assigned_branch=branch_name,
-                        error=f"Falha ao realizar merge na {project.default_branch}:\n{out_m}",
+                        error=tr("Falha ao realizar merge na {branch}:", branch=project.default_branch) + f"\n{out_m}",
                     )
                     await self.tracker.add_comment(
                         task.id,
                         author="system",
-                        comment=f"❌ Falha no auto-merge da branch {branch_name} na {project.default_branch}:\n{out_m}",
+                        comment=tr("❌ Falha no auto-merge da branch {branch} na {base}:", branch=branch_name, base=project.default_branch) + f"\n{out_m}",
                     )
             else:
                 await self.tracker.update_task_status(
@@ -272,11 +283,11 @@ class PainkillerOrchestrator:
                 await self.tracker.add_comment(
                     task.id,
                     author="system",
-                    comment=f"❌ Tests failed after agent execution:\n{test_out}",
+                    comment=tr("❌ Os testes falharam depois da execução do agente:") + f"\n{test_out}",
                 )
         else:
             if task.id in self._stop_requested:
-                error_msg = STOPPED_MESSAGE.format(branch=branch_name)
+                error_msg = tr(STOPPED_MESSAGE, branch=branch_name)
             else:
                 error_msg = self._describe_failure(result, timeout, branch_name)
             await self.tracker.update_task_status(
@@ -289,7 +300,7 @@ class PainkillerOrchestrator:
             await self.tracker.add_comment(
                 task.id,
                 author="system",
-                comment=f"{error_msg}\n\nFinal do log do agente:\n{tail}" if tail.strip() else error_msg,
+                comment=f"{error_msg}\n\n{tr('Final do log do agente:')}\n{tail}" if tail.strip() else error_msg,
             )
 
         updated_task = await self.tracker.get_task(task.id)
@@ -335,7 +346,7 @@ class PainkillerOrchestrator:
         await self.tracker.add_comment(
             clar.task_id,
             author="analyst",
-            comment=f"💬 Analyst clarified: {answer}",
+            comment=tr("💬 O analista respondeu: {answer}", answer=answer),
         )
         return await self.dispatch_task(clar.task_id)
 
@@ -347,11 +358,24 @@ class PainkillerOrchestrator:
         typically after an API restart — nothing would ever leave RUNNING, so
         the status is set here.
         """
+        with use_locale(await self._task_language(task_id)):
+            await self._stop_task(task_id)
+
+    async def _task_language(self, task_id: str) -> str:
+        """Language of the task's project, for what gets written on the task."""
+        try:
+            task = await self.tracker.get_task(task_id)
+            project = await self.tracker.get_project(task.project_id) if task else None
+        except Exception:
+            project = None
+        return project_language(project)
+
+    async def _stop_task(self, task_id: str) -> None:
         live = self._is_live(task_id)
         if live:
             self._stop_requested.add(task_id)
             self._restart_requested.discard(task_id)
-        self._note(task_id, "Interrompendo execução da tarefa a pedido do usuário")
+        self._note(task_id, tr("Interrompendo execução da tarefa a pedido do usuário"))
         await self.sandbox.stop_task(task_id)
         if live:
             return
@@ -360,7 +384,7 @@ class PainkillerOrchestrator:
         if task is None or task.status != TaskStatus.RUNNING:
             return
         branch = task.assigned_branch or f"feature/{task.id}"
-        message = STOPPED_MESSAGE.format(branch=branch)
+        message = tr(STOPPED_MESSAGE, branch=branch)
         await self.tracker.update_task_status(
             task.id,
             TaskStatus.FAILED,
@@ -387,12 +411,17 @@ class PainkillerOrchestrator:
         if task.status == TaskStatus.COMPLETED:
             raise RuntimeError("A tarefa já foi concluída.")
 
+        with use_locale(await self._task_language(task_id)):
+            return await self._abbreviate_tests(task)
+
+    async def _abbreviate_tests(self, task: Task) -> bool:
+        task_id = task.id
         if not task.skip_tests:
             await self.tracker.set_task_skip_tests(task_id, True)
             await self.tracker.add_comment(
                 task_id,
                 author="analyst",
-                comment="⏩ Testes abreviados: o analista assume o teste manual e os riscos.",
+                comment=tr("⏩ Testes abreviados: o analista assume o teste manual e os riscos."),
             )
 
         if task_id in self._stop_requested:
@@ -403,24 +432,20 @@ class PainkillerOrchestrator:
                 await self.stop_task(task_id)
             return False
         self._restart_requested.add(task_id)
-        self._note(task_id, "Testes abreviados pelo analista: reiniciando o agente sem testes")
+        self._note(task_id, tr("Testes abreviados pelo analista: reiniciando o agente sem testes"))
         await self.sandbox.stop_task(task_id)
         return True
 
     @staticmethod
     def _describe_failure(result: ExecutionResult, timeout: int, branch: str) -> str:
-        """Short pt-BR account of a failed run — the full log goes in the comment, not here."""
+        """Short account of a failed run, in the current locale — the full log goes in the comment."""
         if result.timed_out:
             minutes = max(1, round(timeout / 60))
-            head = (
-                f"O agente excedeu o tempo limite de {minutes} min e o contêiner foi encerrado. "
-                f"O trabalho parcial ficou na branch {branch}: use Repetir para continuar de onde parou "
-                f"ou aumente PAINKILLER_TASK_TIMEOUT."
-            )
+            head = tr(TIMEOUT_MESSAGE, minutes=minutes, branch=branch)
         else:
-            head = f"O agente encerrou com código {result.exit_code}."
+            head = tr("O agente encerrou com código {code}.", code=result.exit_code)
         if result.summary:
-            return f"{head}\n\nÚltima mensagem do agente:\n{result.summary}"
+            return f"{head}\n\n{tr('Última mensagem do agente:')}\n{result.summary}"
         return head
 
     def _build_task_instructions(
@@ -430,13 +455,20 @@ class PainkillerOrchestrator:
         retrying: bool = False,
         clarifications: Optional[list[ClarificationRequest]] = None,
     ) -> str:
+        english = project_language(project) == "en-US"
+
+        def L(pt: str, en: str) -> str:
+            return en if english else pt
+
         instructions = [
-            f"# Tarefa: {task.title}",
+            L(f"# Tarefa: {task.title}", f"# Task: {task.title}"),
+            L("Escreva mensagens, comentários e textos para pessoas em português do Brasil.",
+              "Write messages, comments and any text meant for people in US English."),
         ]
         # No topo e com precedência explícita: a spec e o plano do superpowers
         # mandam fazer TDD e verificar tudo, e o agente os lê no meio da tarefa.
         if task.skip_tests:
-            instructions.append(
+            instructions.append(L(
                 "\n## PRIORIDADE MÁXIMA: testes abreviados pelo analista\n"
                 "O analista vai testar manualmente e assume os riscos. Esta instrução prevalece sobre "
                 "a spec, o plano, os critérios de aceitação e qualquer skill (inclusive "
@@ -445,23 +477,36 @@ class PainkillerOrchestrator:
                 "- NÃO rode nada para conferir comportamento: nada de pytest, npm test, navegador, "
                 "`node -e`, `python -c` ou scripts de verificação.\n"
                 "- Critérios de aceitação que falam de testes ou verificação ficam a cargo do analista.\n"
-                "- Leia só o necessário para implementar, implemente, faça o commit e encerre."
-            )
-        instructions.append(f"\n## Descrição:\n{task.description}")
+                "- Leia só o necessário para implementar, implemente, faça o commit e encerre.",
+                "\n## TOP PRIORITY: tests skipped by the analyst\n"
+                "The analyst will test manually and takes on the risks. This instruction overrides "
+                "the spec, the plan, the acceptance criteria and any skill (including "
+                "test-driven-development and verification-before-completion):\n"
+                "- Do NOT read, create, edit or run test files (tests/, test_*, *.test.*, *.spec.*).\n"
+                "- Do NOT run anything to check behavior: no pytest, npm test, browser, "
+                "`node -e`, `python -c` or verification scripts.\n"
+                "- Acceptance criteria about tests or verification are the analyst's job.\n"
+                "- Read only what you need to implement, implement it, commit and finish."
+            ))
+        instructions.append(L(f"\n## Descrição:\n{task.description}", f"\n## Description:\n{task.description}"))
         if retrying:
-            instructions.append(
+            instructions.append(L(
                 "\n## Execução anterior interrompida:\n"
                 "Uma tentativa anterior desta tarefa falhou ou foi interrompida nesta mesma branch. "
                 "Antes de começar, inspecione o estado atual (git status, git log, arquivos já criados) "
-                "e continue a partir do que já existe em vez de refazer do zero."
-            )
+                "e continue a partir do que já existe em vez de refazer do zero.",
+                "\n## Previous run interrupted:\n"
+                "An earlier attempt at this task failed or was interrupted on this same branch. "
+                "Before starting, inspect the current state (git status, git log, files already created) "
+                "and continue from what exists instead of starting over."
+            ))
         if task.target_files:
-            instructions.append("\n## Arquivos Alvo:")
+            instructions.append(L("\n## Arquivos Alvo:", "\n## Target Files:"))
             for f in task.target_files:
                 instructions.append(f"- {f}")
 
         if task.acceptance_criteria:
-            instructions.append("\n## Critérios de Aceitação:")
+            instructions.append(L("\n## Critérios de Aceitação:", "\n## Acceptance Criteria:"))
             for c in task.acceptance_criteria:
                 instructions.append(f"- {c}")
 
@@ -470,36 +515,57 @@ class PainkillerOrchestrator:
             if c.status == ClarificationStatus.ANSWERED and c.answer
         ]
         if answered:
-            instructions.append(
+            instructions.append(L(
                 "\n## Esclarecimentos já respondidos pelo analista:\n"
                 "Estas dúvidas já foram resolvidas. NÃO pergunte de novo; siga as respostas. "
-                "O trabalho feito antes da pausa está commitado nesta mesma branch."
-            )
+                "O trabalho feito antes da pausa está commitado nesta mesma branch.",
+                "\n## Clarifications already answered by the analyst:\n"
+                "These questions are already resolved. Do NOT ask again; follow the answers. "
+                "The work done before the pause is committed on this same branch."
+            ))
             for c in answered:
-                where = f" (contexto: {c.context_summary})" if c.context_summary else ""
-                instructions.append(f"- Pergunta: {c.question}{where}\n  Resposta: {c.answer}")
+                where = L(f" (contexto: {c.context_summary})", f" (context: {c.context_summary})") if c.context_summary else ""
+                instructions.append(L(
+                    f"- Pergunta: {c.question}{where}\n  Resposta: {c.answer}",
+                    f"- Question: {c.question}{where}\n  Answer: {c.answer}",
+                ))
 
         if task.skip_tests:
-            guidelines = (
+            guidelines = L(
                 "\n## Diretrizes de Execução:\n"
                 "1. Não carregue skills de teste nem de verificação; se seguir um plano, pule os passos de teste.\n"
                 "2. Implemente o código solicitado com qualidade, sem testes (veja PRIORIDADE MÁXIMA acima).\n"
-                "3. Faça commit de suas alterações no repositório git local com uma mensagem descritiva (ex: feat: ... ou fix: ...).\n"
+                "3. Faça commit de suas alterações no repositório git local com uma mensagem descritiva (ex: feat: ... ou fix: ...).\n",
+                "\n## Execution Guidelines:\n"
+                "1. Do not load testing or verification skills; if you follow a plan, skip its test steps.\n"
+                "2. Implement the requested code with quality, without tests (see TOP PRIORITY above).\n"
+                "3. Commit your changes to the local git repository with a descriptive message (e.g. feat: ... or fix: ...).\n",
             )
         else:
-            guidelines = (
+            guidelines = L(
                 "\n## Diretrizes de Execução:\n"
                 "1. Utilize as skills e boas práticas do plugin Superpowers disponíveis (como test-driven-development e executing-plans).\n"
                 "2. Implemente o código solicitado com qualidade e crie ou execute testes quando aplicável.\n"
-                "3. Faça commit de suas alterações no repositório git local com uma mensagem descritiva (ex: feat: ... ou fix: ...).\n"
+                "3. Faça commit de suas alterações no repositório git local com uma mensagem descritiva (ex: feat: ... ou fix: ...).\n",
+                "\n## Execution Guidelines:\n"
+                "1. Use the available Superpowers plugin skills and practices (such as test-driven-development and executing-plans).\n"
+                "2. Implement the requested code with quality and write or run tests when applicable.\n"
+                "3. Commit your changes to the local git repository with a descriptive message (e.g. feat: ... or fix: ...).\n",
             )
         instructions.append(
             guidelines
-            + "\n## Protocolo de Dúvidas:\n"
-            "Se você encontrar qualquer ambiguidade crítica ou precisar de esclarecimento do analista, "
-            "NÃO adivinhe. Execute o comando no shell:\n"
-            "painkiller ask \"<sua dúvida>\" --context \"<arquivo e linha>\"\n"
-            "Isso salvará suas alterações e pausará a execução de forma limpa."
+            + L(
+                "\n## Protocolo de Dúvidas:\n"
+                "Se você encontrar qualquer ambiguidade crítica ou precisar de esclarecimento do analista, "
+                "NÃO adivinhe. Execute o comando no shell:\n"
+                "painkiller ask \"<sua dúvida>\" --context \"<arquivo e linha>\"\n"
+                "Isso salvará suas alterações e pausará a execução de forma limpa.",
+                "\n## Questions Protocol:\n"
+                "If you hit any critical ambiguity or need clarification from the analyst, "
+                "do NOT guess. Run this shell command:\n"
+                "painkiller ask \"<your question>\" --context \"<file and line>\"\n"
+                "This saves your changes and pauses the run cleanly."
+            )
         )
 
         return "\n".join(instructions)
@@ -533,7 +599,7 @@ class PainkillerOrchestrator:
         await self.tracker.add_comment(
             task.id,
             author="analyst",
-            comment=f"🚀 Tarefa aprovada e incorporada na branch principal ({project.default_branch}).",
+            comment=tr("🚀 Tarefa aprovada e incorporada na branch principal ({branch}).", locale=project_language(project), branch=project.default_branch),
         )
         updated_task = await self.tracker.get_task(task.id)
         return updated_task or task

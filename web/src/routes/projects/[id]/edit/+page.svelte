@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { goto, invalidateAll } from '$app/navigation';
   import ProjectForm from '$lib/components/ProjectForm.svelte';
 
@@ -12,9 +13,9 @@
   }
 </script>
 
-<svelte:head><title>Editar {data.project.name} — Painkiller</title></svelte:head>
+<svelte:head><title>{t('projects.editAria', { name: data.project.name })} — Painkiller</title></svelte:head>
 
-<h2 class="label heading">Editar projeto</h2>
+<h2 class="label heading">{t('projects.edit')}</h2>
 
 <ProjectForm project={data.project} onsaved={onSaved} oncancel={() => goto(back)} />
 

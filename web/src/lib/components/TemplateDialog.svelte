@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { api, authedUrl } from '$lib/api';
   import {
     PROJECT_TYPES,
@@ -83,7 +84,7 @@
       const file = input.files[0];
       const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
       if (ext !== '.zip' && ext !== '.md') {
-        error = 'O arquivo de skill deve ser .zip ou .md';
+        error = t('templateDialog.skillExt');
         return;
       }
       skillFile = file;
@@ -98,7 +99,7 @@
       const file = input.files[0];
       const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'));
       if (ext !== '.zip') {
-        error = 'O arquivo de arcabouço deve ser .zip';
+        error = t('templateDialog.scaffoldExt');
         return;
       }
       scaffoldFile = file;
@@ -162,14 +163,14 @@
       open = false;
       onsaved(saved);
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Falha ao salvar template.';
+      error = err instanceof Error ? err.message : t('templateDialog.saveFailed');
     } finally {
       busy = false;
     }
   }
 </script>
 
-<Modal bind:open title={editing ? 'Editar template' : 'Novo template de projeto'} width="50rem">
+<Modal bind:open title={editing ? t('templateDialog.editTitle') : t('templateDialog.newTitle')} width="50rem">
   {#snippet body()}
     <form id="template-form" onsubmit={submit}>
       {#if error}
@@ -182,35 +183,35 @@
       <!-- Nome -->
       <div class="field">
         <label for="tpl-name" class="label">
-          Nome do template <span class="req" aria-hidden="true">*</span>
+          {t('templateDialog.name')} <span class="req" aria-hidden="true">*</span>
         </label>
         <input
           id="tpl-name"
           type="text"
           class="input"
           class:invalid={touched && !name.trim()}
-          placeholder="ex: FastAPI REST API, SvelteKit Fullstack, Android Nativo"
+          placeholder={t('templateDialog.namePlaceholder')}
           bind:value={name}
           required
         />
         {#if touched && !name.trim()}
-          <span class="error mono">Nome é obrigatório.</span>
+          <span class="error mono">{t('templateDialog.nameRequired')}</span>
         {/if}
       </div>
 
       <!-- Tipo de Projeto -->
       <div class="field">
-        <label for="tpl-type" class="label">Tipo de aplicação</label>
+        <label for="tpl-type" class="label">{t('templateDialog.type')}</label>
         <select
           id="tpl-type"
           class="input"
           value={projectType}
           onchange={(e) => onTypeChange(e.currentTarget.value as ProjectType)}
         >
-          {#each PROJECT_TYPES as t}
-            <option value={t}>
-              {PROJECT_TYPE_META[t].label}
-              {PROJECT_TYPE_META[t].coolifyDefault ? '(Compatível com Coolify)' : '(Sem deploy Coolify)'}
+          {#each PROJECT_TYPES as type (type)}
+            <option value={type}>
+              {PROJECT_TYPE_META[type].label}
+              ({PROJECT_TYPE_META[type].coolifyDefault ? t('form.coolifyCompatible') : t('templateDialog.noCoolifyDeploy')})
             </option>
           {/each}
         </select>
@@ -224,12 +225,12 @@
         <label class="check-label">
           <input type="checkbox" bind:checked={coolifyCompatible} />
           <span class="check-text">
-            <strong>Compatível com deploy no Coolify</strong>
+            <strong>{t('templateDialog.coolifyCompatible')}</strong>
             <span class="help">
               {#if coolifyCompatible}
-                Aplicações Web e APIs são publicadas em contêineres e expostas via URL de teste / produção no Coolify.
+                {t('templateDialog.coolifyOn')}
               {:else}
-                Aplicações Desktop, Mobile ou Android nativo não geram deploys automáticos no servidor Coolify.
+                {t('templateDialog.coolifyOff')}
               {/if}
             </span>
           </span>
@@ -238,12 +239,12 @@
 
       <!-- Descrição -->
       <div class="field">
-        <label for="tpl-desc" class="label">Descrição do template</label>
+        <label for="tpl-desc" class="label">{t('templateDialog.description')}</label>
         <input
           id="tpl-desc"
           type="text"
           class="input"
-          placeholder="Breve resumo da pilha e arquitetura proposta"
+          placeholder={t('templateDialog.descriptionPlaceholder')}
           bind:value={description}
         />
       </div>
@@ -251,25 +252,25 @@
       <!-- Prompt do Harness -->
       <div class="field">
         <label for="tpl-prompt" class="label">
-          Prompt de orientação arquitetural / instruções para o harness
+          {t('templateDialog.prompt')}
         </label>
         <textarea
           id="tpl-prompt"
           class="textarea mono-text"
           rows="5"
-          placeholder="Exemplo: Utilize Clean Architecture com Fastify e Prisma. Estruture as rotas em /src/routes e entidades em /src/domain. Não utilize bibliotecas deprecadas..."
+          placeholder={t('templateDialog.promptPlaceholder')}
           bind:value={prompt}
         ></textarea>
         <span class="help">
-          Instruções injetadas no contexto do agente para guiar a análise inicial e a criação do código.
+          {t('templateDialog.promptHelp')}
         </span>
       </div>
 
       <div class="two-col">
         <!-- Anexo da Skill -->
         <div class="field file-field">
-          <span class="label">Skill do agente (opcional)</span>
-          <span class="help">Instruções ou skill especializada em arquivo <code>.md</code> ou <code>.zip</code>.</span>
+          <span class="label">{t('templateDialog.skill')}</span>
+          <span class="help">{@html t('templateDialog.skillHelp')}</span>
 
           {#if template?.skill_filename && !removeSkill && !skillFile}
             <div class="current-file">
@@ -278,7 +279,7 @@
                 <a
                   href={authedUrl(`/admin/templates/${template.id}/skill/download`)}
                   class="btn-quiet btn-sm"
-                  title="Baixar skill"
+                  title={t('templateDialog.downloadSkill')}
                   download
                 >
                   <Icon name="download" size={12} />
@@ -286,7 +287,7 @@
                 <button
                   type="button"
                   class="btn-quiet btn-sm"
-                  title="Remover skill"
+                  title={t('templateDialog.removeSkill')}
                   onclick={() => (removeSkill = true)}
                 >
                   <Icon name="trash" size={12} />
@@ -297,7 +298,7 @@
             <div class="file-upload-row">
               <label class="btn btn-line btn-sm file-btn">
                 <Icon name="clip" size={12} />
-                <span>{skillFile ? skillFile.name : 'Selecionar .md ou .zip'}</span>
+                <span>{skillFile ? skillFile.name : t('templateDialog.pickSkill')}</span>
                 <input
                   type="file"
                   accept=".zip,.md"
@@ -309,7 +310,7 @@
                 <button
                   type="button"
                   class="btn-quiet btn-sm"
-                  title="Limpar seleção"
+                  title={t('templateDialog.clear')}
                   onclick={() => (skillFile = null)}
                 >
                   <Icon name="close" size={12} />
@@ -317,15 +318,15 @@
               {/if}
             </div>
             {#if removeSkill}
-              <span class="faint mono hint-removed">O arquivo anterior será excluído ao salvar.</span>
+              <span class="faint mono hint-removed">{t('templateDialog.willRemove')}</span>
             {/if}
           {/if}
         </div>
 
         <!-- Anexo do Arcabouço (Scaffold) -->
         <div class="field file-field">
-          <span class="label">Arcabouço da aplicação (opcional)</span>
-          <span class="help">Estrutura inicial do projeto compactada em arquivo <code>.zip</code>.</span>
+          <span class="label">{t('templateDialog.scaffold')}</span>
+          <span class="help">{@html t('templateDialog.scaffoldHelp')}</span>
 
           {#if template?.scaffold_filename && !removeScaffold && !scaffoldFile}
             <div class="current-file">
@@ -334,7 +335,7 @@
                 <a
                   href={authedUrl(`/admin/templates/${template.id}/scaffold/download`)}
                   class="btn-quiet btn-sm"
-                  title="Baixar arcabouço"
+                  title={t('templateDialog.downloadScaffold')}
                   download
                 >
                   <Icon name="download" size={12} />
@@ -342,7 +343,7 @@
                 <button
                   type="button"
                   class="btn-quiet btn-sm"
-                  title="Remover arcabouço"
+                  title={t('templateDialog.removeScaffold')}
                   onclick={() => (removeScaffold = true)}
                 >
                   <Icon name="trash" size={12} />
@@ -353,7 +354,7 @@
             <div class="file-upload-row">
               <label class="btn btn-line btn-sm file-btn">
                 <Icon name="clip" size={12} />
-                <span>{scaffoldFile ? scaffoldFile.name : 'Selecionar .zip'}</span>
+                <span>{scaffoldFile ? scaffoldFile.name : t('templateDialog.pickScaffold')}</span>
                 <input
                   type="file"
                   accept=".zip"
@@ -365,7 +366,7 @@
                 <button
                   type="button"
                   class="btn-quiet btn-sm"
-                  title="Limpar seleção"
+                  title={t('templateDialog.clear')}
                   onclick={() => (scaffoldFile = null)}
                 >
                   <Icon name="close" size={12} />
@@ -373,7 +374,7 @@
               {/if}
             </div>
             {#if removeScaffold}
-              <span class="faint mono hint-removed">O arquivo anterior será excluído ao salvar.</span>
+              <span class="faint mono hint-removed">{t('templateDialog.willRemove')}</span>
             {/if}
           {/if}
         </div>
@@ -384,8 +385,8 @@
         <label class="check-label">
           <input type="checkbox" bind:checked={isActive} />
           <span class="check-text">
-            <strong>Template ativo</strong>
-            <span class="help">Disponível para seleção ao criar novos projetos.</span>
+            <strong>{t('templateDialog.active')}</strong>
+            <span class="help">{t('templateDialog.activeHelp')}</span>
           </span>
         </label>
       </div>
@@ -400,7 +401,7 @@
         disabled={busy}
         onclick={() => (open = false)}
       >
-        Cancelar
+        {t('common.cancel')}
       </button>
       <button
         type="submit"
@@ -409,11 +410,11 @@
         disabled={busy}
       >
         {#if busy}
-          Salvando…
+          {t('common.saving')}
         {:else if editing}
-          Salvar alterações
+          {t('form.saveChanges')}
         {:else}
-          Criar template
+          {t('templateDialog.create')}
         {/if}
       </button>
     </div>

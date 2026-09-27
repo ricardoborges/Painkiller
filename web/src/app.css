@@ -527,3 +527,11 @@ svg {
     transparent 6px
   );
 }
+
+/* Seletor de idioma nas telas sem cabeçalho (login, primeiro acesso) */
+.corner-switch {
+  position: fixed;
+  top: var(--s4);
+  right: var(--s4);
+  z-index: 10;
+}

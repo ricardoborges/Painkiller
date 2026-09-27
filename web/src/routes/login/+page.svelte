@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
   import type { AuthConfig } from '$lib/types';
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import LocaleSwitch from '$lib/components/LocaleSwitch.svelte';
 
   let username = $state('');
   let password = $state('');
@@ -29,7 +31,7 @@
         await goto('/projects', { replaceState: true });
         return;
       } catch (e) {
-        error = e instanceof Error ? e.message : 'Não foi possível entrar.';
+        error = e instanceof Error ? e.message : t('login.failed');
       } finally {
         busy = false;
       }
@@ -63,14 +65,16 @@
       await auth.signIn(username, password);
       await goto('/projects', { replaceState: true });
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Não foi possível entrar.';
+      error = e instanceof Error ? e.message : t('login.failed');
     } finally {
       busy = false;
     }
   }
 </script>
 
-<svelte:head><title>Entrar — Painkiller</title></svelte:head>
+<svelte:head><title>{t('login.pageTitle')} — Painkiller</title></svelte:head>
+
+<div class="corner-switch"><LocaleSwitch /></div>
 
 <!-- Assimétrico por decisão: formulário à esquerda, colofão à direita.
      Nenhum cartão centralizado. -->
@@ -82,26 +86,21 @@
         <span class="word">Painkiller</span>
       </div>
 
-      <h1 class="display">
-        Orquestração de<br />agentes de codificação.
-      </h1>
+      <h1 class="display">{@html t('login.headline')}</h1>
 
       {#if config.google}
         <div class="sso">
           <button type="button" class="btn btn-solid submit" onclick={signInWithGoogle} disabled={busy}>
-            Entrar com Google
+            {t('login.google')}
             {#if !busy}<Icon name="arrow-right" />{/if}
           </button>
-          <p class="help">
-            No primeiro acesso a conta é criada, junto com um usuário no Gitea que só
-            enxerga os seus repositórios.
-          </p>
+          <p class="help">{t('login.googleHelp')}</p>
           {#if error && !showBreakGlass}
             <p class="field-error" role="alert">{error}</p>
           {/if}
           {#if config.break_glass && !showBreakGlass}
             <button type="button" class="link" onclick={() => (showBreakGlass = true)}>
-              Acesso de emergência (administrador)
+              {t('login.breakGlass')}
             </button>
           {/if}
         </div>
@@ -110,7 +109,7 @@
       {#if showBreakGlass || (!config.google && !config.break_glass)}
       <form onsubmit={submit} novalidate>
         <div class="field">
-          <label for="u">Usuário</label>
+          <label for="u">{t('common.username')}</label>
           <input
             id="u"
             class="input"
@@ -122,7 +121,7 @@
         </div>
 
         <div class="field">
-          <label for="p">Senha</label>
+          <label for="p">{t('common.password')}</label>
           <input
             id="p"
             class="input"
@@ -143,15 +142,11 @@
           class="btn submit {config.google ? 'btn-line' : 'btn-solid'}"
           disabled={busy || !config.break_glass}
         >
-          {busy ? 'Entrando…' : 'Entrar'}
+          {busy ? t('login.signingIn') : t('login.signIn')}
           {#if !busy}<Icon name="arrow-right" />{/if}
         </button>
 
-        <p class="help">
-          Conta do administrador, criada no primeiro acesso à plataforma. Enxerga todos os
-          projetos. Esqueceu a senha? No servidor, rode
-          <span class="mono">painkiller admin-reset</span> e reinicie a API.
-        </p>
+        <p class="help">{@html t('login.adminHelp')}</p>
       </form>
       {/if}
     </div>
@@ -159,19 +154,15 @@
 
   <aside class="colophon">
     <div class="inner">
-      <span class="label">O sistema</span>
+      <span class="label">{t('login.system')}</span>
       <dl>
-        <div><dt>Arquitetura</dt><dd class="mono">Ports &amp; Adapters</dd></div>
-        <div><dt>Agente</dt><dd class="mono">Antigravity CLI (agy), contêiner efêmero</dd></div>
-        <div><dt>Isolamento</dt><dd class="mono">1 branch por tarefa</dd></div>
-        <div><dt>Interrupção</dt><dd class="mono">exit 42</dd></div>
+        <div><dt>{t('login.architecture')}</dt><dd class="mono">Ports &amp; Adapters</dd></div>
+        <div><dt>{t('login.agent')}</dt><dd class="mono">{t('login.agentValue')}</dd></div>
+        <div><dt>{t('login.isolation')}</dt><dd class="mono">{t('login.isolationValue')}</dd></div>
+        <div><dt>{t('login.interruption')}</dt><dd class="mono">exit 42</dd></div>
       </dl>
 
-      <p class="note lede">
-        Quando o agente encontra ambiguidade ele não chuta: roda
-        <span class="mono">painkiller ask</span>, commita o trabalho em andamento
-        e devolve a pergunta ao analista.
-      </p>
+      <p class="note lede">{@html t('login.note')}</p>
     </div>
   </aside>
 </div>

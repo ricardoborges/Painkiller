@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   /**
    * O que o agente de uma tarefa está fazendo agora, via SSE.
    *
@@ -20,7 +21,7 @@
     try {
       await api.stopTask(taskId);
     } catch (err) {
-      console.error('Falha ao interromper tarefa:', err);
+      console.error('Failed to stop task:', err);
       stopping = false;
     }
   }
@@ -90,7 +91,7 @@
         thinking = false;
         if (partial.trim()) push({ kind: 'text', text: partial.trim() });
         partial = '';
-        push({ kind: 'tool', text: e.text || 'ferramenta', detail: e.detail });
+        push({ kind: 'tool', text: e.text || t('activity.tool'), detail: e.detail });
         return;
       case 'SYSTEM':
         if (e.text) push({ kind: 'system', text: e.text });
@@ -145,8 +146,8 @@
   });
 
   $effect(() => {
-    const t = setInterval(() => (now = Date.now()), 1000);
-    return () => clearInterval(t);
+    const tick = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(tick);
   });
 
   // Acompanha o fim do log só enquanto o leitor já está no fim.
@@ -175,14 +176,11 @@
   <div class="head">
     <span class="pulse" class:still={active === false || stale} aria-hidden="true"></span>
     {#if active === null}
-      <span>Conectando ao agente…</span>
+      <span>{t('activity.connecting')}</span>
     {:else if active === false}
-      <span>
-        Nenhuma execução desta tarefa está sendo acompanhada pelo servidor — ele pode ter
-        sido reiniciado no meio dela. O status no banco ficou como executando.
-      </span>
+      <span>{t('activity.orphaned')}</span>
     {:else}
-      <span>{thinking ? 'Agente raciocinando' : 'Agente trabalhando'}</span>
+      <span>{thinking ? t('activity.thinking') : t('activity.working')}</span>
       {#if startedAt}
         <span class="sep">·</span>
         <Elapsed from={startedAt} />
@@ -190,7 +188,7 @@
       {#if silence !== null}
         <span class="sep">·</span>
         <span class="mono last" class:warn={stale}>
-          {stale ? `sem sinal há ${ago(silence)} — pode estar travado` : `última atividade há ${ago(silence)}`}
+          {stale ? t('activity.stale', { ago: ago(silence) }) : t('activity.lastActivity', { ago: ago(silence) })}
         </span>
       {/if}
     {/if}
@@ -201,10 +199,10 @@
         class="stop-btn label mono"
         disabled={stopping}
         onclick={handleStop}
-        title="Interromper execução da tarefa"
+        title={t('activity.stopTitle')}
       >
         <Icon name="square" size={9} />
-        <span>{stopping ? 'Interrompendo…' : 'Interromper'}</span>
+        <span>{stopping ? t('activity.stopping') : t('activity.stop')}</span>
       </button>
     {/if}
   </div>

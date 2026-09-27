@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tp, i18n } from '$lib/i18n/index.svelte';
   import { api, baseName } from '$lib/api';
   import type { Project } from '$lib/types';
   import { auth } from '$lib/stores/auth.svelte';
@@ -19,7 +20,7 @@
     try {
       projects = await api.listProjects();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Falha ao carregar projetos.';
+      error = e instanceof Error ? e.message : t('projects.loadFailed');
     } finally {
       loading = false;
     }
@@ -34,24 +35,26 @@
   }
 
   async function remove(p: Project) {
-    if (!confirm(`Excluir "${p.name}" e todas as suas tarefas?`)) return;
+    if (!confirm(t('projects.confirmDelete', { name: p.name }))) return;
     removing = p.id;
     try {
       await api.deleteProject(p.id);
       projects = projects.filter((x) => x.id !== p.id);
       pending.refresh();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Falha ao excluir.';
+      error = e instanceof Error ? e.message : t('projects.deleteFailed');
     } finally {
       removing = null;
     }
   }
 
-  const fmt = new Intl.DateTimeFormat('pt-BR', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
-  });
+  const fmt = $derived(
+    new Intl.DateTimeFormat(i18n.current, {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    })
+  );
 
   function when(iso: string) {
     const d = new Date(iso);
@@ -59,29 +62,26 @@
   }
 </script>
 
-<svelte:head><title>Projetos — Painkiller</title></svelte:head>
+<svelte:head><title>{t('layout.nav.projects')} — Painkiller</title></svelte:head>
 
 <header class="head spread">
   <div>
-    <h1 class="display">Projetos</h1>
-    <p class="lede sub">
-      Contexto, propósito e documentos que alimentam o agente de análise.
-    </p>
+    <h1 class="display">{t('layout.nav.projects')}</h1>
+    <p class="lede sub">{t('projects.lede')}</p>
   </div>
   <a class="btn btn-solid" href="/projects/new">
-    <Icon name="plus" /> Novo projeto
+    <Icon name="plus" /> {t('projects.new')}
   </a>
 </header>
 
 <p class="label tally">
   {#if loading}
-    Carregando
+    {t('common.loading')}
   {:else}
-    {projects.length}
-    {projects.length === 1 ? 'projeto' : 'projetos'}
+    {tp('projects.count', projects.length)}
     {#if auth.isAdmin && pending.count > 0}
       <span class="sep" aria-hidden="true">·</span>
-      <span class="blocked">{pending.count} aguardando analista</span>
+      <span class="blocked">{t('projects.awaitingAnalyst', { count: pending.count })}</span>
     {/if}
   {/if}
 </p>
@@ -91,19 +91,19 @@
 {#if loading}
   <Skeleton rows={3} />
 {:else if error}
-  <Placeholder kind="error" title="Não foi possível carregar os projetos" detail={error}>
+  <Placeholder kind="error" title={t('projects.loadFailedTitle')} detail={error}>
     {#snippet action()}
-      <button type="button" class="btn btn-solid" onclick={load}>Tentar de novo</button>
+      <button type="button" class="btn btn-solid" onclick={load}>{t('common.retry')}</button>
     {/snippet}
   </Placeholder>
 {:else if projects.length === 0}
   <Placeholder
-    title="Nenhum projeto ainda"
-    detail="Um projeto reúne o propósito, a solução desejada e os documentos de contexto. É a partir daí que o agente monta as perguntas de especificação."
+    title={t('projects.emptyTitle')}
+    detail={t('projects.emptyDetail')}
   >
     {#snippet action()}
       <a class="btn btn-solid" href="/projects/new">
-        <Icon name="plus" /> Criar o primeiro
+        <Icon name="plus" /> {t('projects.createFirst')}
       </a>
     {/snippet}
   </Placeholder>
@@ -129,19 +129,19 @@
             {#if auth.isAdmin && blocked > 0}
               <a class="blocked-tag label" href="/pending">
                 <span class="dot" aria-hidden="true"></span>
-                {blocked} aguardando
+                {t('projects.awaiting', { count: blocked })}
               </a>
             {/if}
           </div>
 
           <dl class="meta">
             <div>
-              <dt class="label">Propósito</dt>
-              <dd class="clamp-2">{p.purpose || 'Não informado'}</dd>
+              <dt class="label">{t('projects.purpose')}</dt>
+              <dd class="clamp-2">{p.purpose || t('projects.notProvided')}</dd>
             </div>
             <div>
-              <dt class="label">Solução</dt>
-              <dd class="clamp-2">{p.solution_description || 'Não informada'}</dd>
+              <dt class="label">{t('projects.solution')}</dt>
+              <dd class="clamp-2">{p.solution_description || t('projects.notProvided')}</dd>
             </div>
           </dl>
 
@@ -161,9 +161,9 @@
           <time class="faint mono date" datetime={p.created_at}>{when(p.created_at)}</time>
           <div class="actions">
             <a class="btn btn-line btn-sm" href="/projects/{p.id}">
-              Abrir <Icon name="arrow-right" size={11} />
+              {t('common.open')} <Icon name="arrow-right" size={11} />
             </a>
-            <a class="btn-icon" href="/projects/{p.id}/edit" aria-label="Editar {p.name}">
+            <a class="btn-icon" href="/projects/{p.id}/edit" aria-label={t('projects.editAria', { name: p.name })}>
               <Icon name="pencil" />
             </a>
             <button
@@ -171,7 +171,7 @@
               class="btn-icon danger"
               onclick={() => remove(p)}
               disabled={removing === p.id}
-              aria-label="Excluir {p.name}"
+              aria-label={t('projects.deleteAria', { name: p.name })}
             >
               <Icon name="trash" />
             </button>

@@ -6,13 +6,19 @@
     <meta name="theme-color" content="#ffffff" />
     <script>
       try {
+        // Idioma antes da pintura; o store de i18n confirma a escolha depois.
+        var lang = localStorage.getItem('pk_locale');
+        if (lang === 'pt-BR' || lang === 'en-US') document.documentElement.lang = lang;
+        else if (/^en(-|$)/i.test(navigator.language || '')) document.documentElement.lang = 'en-US';
+      } catch (e) {}
+      try {
         if (localStorage.getItem('pk_theme') === 'dark') {
           document.documentElement.dataset.theme = 'dark';
           document.querySelector('meta[name="theme-color"]').setAttribute('content', '#121214');
         }
       } catch (e) {}
     </script>
-    <meta name="description" content="Painkiller — orquestracao de agentes de codificacao." />
+    <meta name="description" content="Painkiller — coding agent orchestration." />
     <link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

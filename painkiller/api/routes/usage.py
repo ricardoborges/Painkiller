@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from painkiller.api.security import visible_project
 from painkiller.core.domain.models import ModelPrice, UsageSettings, key_provider
+from painkiller.core.i18n import translate
 from painkiller.core.usage import record_cost, summarize
 
 router = APIRouter(prefix="/api/usage", tags=["usage"])
@@ -89,4 +90,5 @@ async def get_project_balances(project_id: str, request: Request):
     project = await visible_project(request, project_id)
     if not project.api_key:
         return []
-    return await request.app.state.balance_lookup({key_provider(project.harness): project.api_key})
+    rows = await request.app.state.balance_lookup({key_provider(project.harness): project.api_key})
+    return [{**row, "error": translate(row.get("error"))} for row in rows]

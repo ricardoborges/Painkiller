@@ -17,6 +17,7 @@ from painkiller.core.domain.models import (
     harness_effort,
     harness_model,
 )
+from painkiller.core.i18n import tr
 from painkiller.core.ports.agent_session import AgentSessionPort
 from painkiller.adapters.sandbox.paths import daemon_path
 
@@ -628,7 +629,8 @@ def _harness_error(
 ) -> AgentEvent:
     """An ERROR the analyst must see — not container noise (see `harness_error`)."""
     code = (code or classify_harness_error(detail)).upper()
-    message = _HARNESS_ERROR_MESSAGES.get((provider, code)) or f"O agente falhou: {detail}"
+    known = _HARNESS_ERROR_MESSAGES.get((provider, code))
+    message = tr(known) if known else tr("O agente falhou: {detail}", detail=detail)
     return AgentEvent(
         type=AgentEventType.ERROR,
         text=message,

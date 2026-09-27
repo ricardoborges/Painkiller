@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tp, formatNumber } from '$lib/i18n/index.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { api } from '$lib/api';
@@ -18,7 +19,7 @@
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
-  import { deploys, isDeployActive, DEPLOY_STAGE, lastLogLine } from '$lib/stores/deploys.svelte';
+  import { deploys, isDeployActive, deployStage, lastLogLine } from '$lib/stores/deploys.svelte';
   import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
   import { onDestroy } from 'svelte';
 
@@ -182,8 +183,8 @@
     if (legacy) {
       head =
         legacy[1] === '137'
-          ? 'O contêiner foi encerrado à força (código 137) — provavelmente excedeu o tempo limite. Use Repetir para continuar de onde parou.'
-          : `O agente encerrou com código ${legacy[1]}.`;
+          ? t('backlog.killed137')
+          : t('backlog.exitCode', { code: legacy[1] });
     }
     const huge = rest.length > 2000;
     if (rest.length > ERROR_TAIL) rest = '…\n' + rest.slice(-ERROR_TAIL);
@@ -218,7 +219,7 @@
         candidatesForMigration = [];
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Falha ao carregar o backlog.';
+      error = e instanceof Error ? e.message : t('backlog.loadFailed');
     } finally {
       loading = false;
     }
@@ -232,13 +233,13 @@
     try {
       const res = await api.syncIssues(data.project.id);
       issuesNote = !res.enabled
-        ? 'Projeto sem repositório no Gitea.'
+        ? t('backlog.noGiteaRepo')
         : res.created
-          ? `${res.created} issue${res.created > 1 ? 's' : ''} criada${res.created > 1 ? 's' : ''} no Gitea.`
-          : 'Issues em dia com o backlog.';
+          ? tp('backlog.issuesCreated', res.created)
+          : t('backlog.issuesInSync');
       await load();
     } catch (e) {
-      issuesNote = e instanceof Error ? e.message : 'Falha ao sincronizar as issues.';
+      issuesNote = e instanceof Error ? e.message : t('backlog.syncFailed');
     } finally {
       syncingIssues = false;
     }
@@ -246,15 +247,12 @@
 
   async function finalizeSession() {
     if (!activeSession || finalizing) return;
-    const ok = confirm(
-      `Encerrar ${activeSession.title}? As branches das tarefas já incorporadas serão apagadas ` +
-        'localmente e no Gitea, e o "Testar" por tarefa deixa de existir. O código continua na branch principal.'
-    );
+    const ok = confirm(t('backlog.confirmFinalize', { title: activeSession.title }));
     if (!ok) return;
     finalizing = true;
     try {
       if (!(await sessionStore.finalizeSession(activeSession.id))) {
-        alert(sessionStore.error ?? 'Falha ao encerrar a sessão.');
+        alert(sessionStore.error ?? t('analysisStore.closeFailed'));
         return;
       }
       // Com uma sessão encerrada a entrada do projeto é o painel.
@@ -281,7 +279,7 @@
       );
       await load();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Falha ao migrar tarefas.');
+      alert(e instanceof Error ? e.message : t('backlog.migrateFailed'));
     } finally {
       migrating = false;
     }
@@ -337,7 +335,7 @@
       showDeployment(record.id);
       await loadEnvStatus();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Falha ao disparar deploy no ambiente de teste.');
+      alert(e instanceof Error ? e.message : t('backlog.deployTestFailed'));
     } finally {
       deployingEnv = null;
       deployingTaskId = null;
@@ -349,7 +347,7 @@
       showDeployment(productionDeploy.id);
       return;
     }
-    if (!confirm('Deseja iniciar o provisionamento e deploy para o ambiente de PRODUÇÃO no Coolify?')) {
+    if (!confirm(t('backlog.confirmProduction'))) {
       return;
     }
     deployingEnv = 'production';
@@ -364,7 +362,7 @@
       showDeployment(record.id);
       await loadEnvStatus();
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Falha ao disparar deploy no ambiente de produção.');
+      alert(e instanceof Error ? e.message : t('backlog.deployProductionFailed'));
     } finally {
       deployingEnv = null;
     }
@@ -412,7 +410,7 @@
 
       return updated;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao despachar no contêiner.';
+      const msg = e instanceof Error ? e.message : t('backlog.dispatchFailed');
       dispatchError = { id: task.id, message: msg };
       await load();
       return null;
@@ -428,7 +426,7 @@
       replace(updated);
       return updated;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao aprovar e incorporar (merge).';
+      const msg = e instanceof Error ? e.message : t('backlog.mergeFailed');
       dispatchError = { id: task.id, message: msg };
       return null;
     } finally {
@@ -438,10 +436,7 @@
 
   async function abbreviateTests(task: Task) {
     if (abbreviatingTaskId === task.id) return;
-    const ok = confirm(
-      'Abreviar testes: o agente será reiniciado nesta mesma branch sem escrever nem rodar testes, ' +
-        'e a suíte não será executada ao final. Você assume o teste manual e os riscos. Continuar?'
-    );
+    const ok = confirm(t('backlog.confirmAbbreviate'));
     if (!ok) return;
     abbreviatingTaskId = task.id;
     try {
@@ -455,7 +450,7 @@
         if (fresh && fresh.status !== 'RUNNING' && fresh.status !== 'COMPLETED') await dispatch(fresh);
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao abreviar os testes.';
+      const msg = e instanceof Error ? e.message : t('backlog.abbreviateFailed');
       dispatchError = { id: task.id, message: msg };
     } finally {
       abbreviatingTaskId = null;
@@ -467,12 +462,12 @@
     stoppingTaskId = id;
     if (isQueueRunning) {
       isQueueRunning = false;
-      queueMessage = 'Fila interrompida pelo usuário.';
+      queueMessage = t('backlog.queue.stopped');
     }
     try {
       await api.stopTask(id);
     } catch (e) {
-      console.error('Falha ao interromper tarefa:', e);
+      console.error('Failed to stop task:', e);
     } finally {
       setTimeout(() => {
         if (stoppingTaskId === id) stoppingTaskId = null;
@@ -488,19 +483,19 @@
   async function toggleRunAll() {
     if (isQueueRunning) {
       isQueueRunning = false;
-      queueMessage = 'Fila de execução pausada.';
+      queueMessage = t('backlog.queue.paused');
       return;
     }
 
     isQueueRunning = true;
-    queueMessage = 'Iniciando execução da fila…';
+    queueMessage = t('backlog.queue.starting');
 
     try {
       while (isQueueRunning) {
         // Encontra a próxima tarefa não concluída na ordem de execução
         const uncompleted = ordered.filter((t) => t.status !== 'COMPLETED');
         if (uncompleted.length === 0) {
-          queueMessage = 'Todas as tarefas do backlog foram concluídas com sucesso!';
+          queueMessage = t('backlog.queue.allDone');
           isQueueRunning = false;
           break;
         }
@@ -509,10 +504,10 @@
 
         // Caso a tarefa já esteja em revisão (ex: rodou e aguarda merge)
         if (candidate.status === 'IN_REVIEW') {
-          queueMessage = `Auto-merge: incorporando branch da tarefa "${candidate.title}"…`;
+          queueMessage = t('backlog.queue.merging', { title: candidate.title });
           const merged = await merge(candidate);
           if (!merged) {
-            queueMessage = `Falha ao incorporar tarefa "${candidate.title}". Fila pausada.`;
+            queueMessage = t('backlog.queue.mergeFailed', { title: candidate.title });
             isQueueRunning = false;
             break;
           }
@@ -522,7 +517,7 @@
 
         // Caso a tarefa esteja esperando esclarecimento humano
         if (candidate.status === 'AWAITING_ANALYST') {
-          queueMessage = `O agente precisa de esclarecimento na tarefa "${candidate.title}". Responda para continuar a fila.`;
+          queueMessage = t('backlog.queue.needsClarification', { title: candidate.title });
           isQueueRunning = false;
           break;
         }
@@ -530,19 +525,19 @@
         // Verifica bloqueios de dependência
         const stuck = blockers(candidate);
         if (stuck.length > 0) {
-          queueMessage = `Fila travada: a tarefa "${candidate.title}" depende de tarefas ainda não concluídas (${stuck.map((s) => s.title).join(', ')}).`;
+          queueMessage = t('backlog.queue.blocked', { title: candidate.title, deps: stuck.map((s) => s.title).join(', ') });
           isQueueRunning = false;
           break;
         }
 
         // Despacha a tarefa no contêiner
-        queueMessage = `Executando no contêiner: "${candidate.title}"…`;
+        queueMessage = t('backlog.queue.running', { title: candidate.title });
         const updated = await dispatch(candidate);
 
         if (!isQueueRunning) break; // Usuário pausou durante a execução
 
         if (!updated) {
-          queueMessage = `Falha na execução da tarefa "${candidate.title}". Fila pausada.`;
+          queueMessage = t('backlog.queue.runFailed', { title: candidate.title });
           isQueueRunning = false;
           break;
         }
@@ -550,15 +545,15 @@
         // Processa o resultado
         if (updated.status === 'IN_REVIEW') {
           // dispatch() já tentou o merge; se voltou IN_REVIEW, ele falhou
-          queueMessage = `Erro no auto-merge de "${updated.title}". Fila pausada.`;
+          queueMessage = t('backlog.queue.autoMergeError', { title: updated.title });
           isQueueRunning = false;
           break;
         } else if (updated.status === 'AWAITING_ANALYST') {
-          queueMessage = `Agente com dúvida em "${updated.title}". Responda para prosseguir.`;
+          queueMessage = t('backlog.queue.question', { title: updated.title });
           isQueueRunning = false;
           break;
         } else if (updated.status === 'FAILED') {
-          queueMessage = `Execução falhou na tarefa "${updated.title}". Verifique o erro e tente novamente.`;
+          queueMessage = t('backlog.queue.failed', { title: updated.title });
           isQueueRunning = false;
           break;
         }
@@ -568,7 +563,7 @@
       }
     } finally {
       if (ordered.length > 0 && ordered.every((t) => t.status === 'COMPLETED')) {
-        queueMessage = 'Todas as tarefas foram concluídas com sucesso!';
+        queueMessage = t('backlog.queue.allTasksDone');
         isQueueRunning = false;
       }
     }
@@ -581,7 +576,7 @@
     try {
       diffData = await api.getTaskDiff(taskId);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Falha ao obter diff.');
+      alert(e instanceof Error ? e.message : t('backlog.diffFailed'));
       diffOpen = false;
     } finally {
       diffLoading = false;
@@ -596,27 +591,26 @@
 {#if justCreated > 0}
   <p class="created label" role="status">
     <Icon name="check" size={12} />
-    {justCreated}
-    {justCreated === 1 ? 'tarefa decomposta' : 'tarefas decompostas'} a partir da especificação
+    {tp('backlog.justCreated', justCreated)}
   </p>
 {/if}
 
 {#if loading && !tasks.length}
   <div class="pad"><Skeleton variant="table" rows={5} /></div>
 {:else if error}
-  <Placeholder kind="error" title="Não foi possível carregar o backlog" detail={error}>
+  <Placeholder kind="error" title={t('backlog.loadFailedTitle')} detail={error}>
     {#snippet action()}
-      <button type="button" class="btn btn-solid" onclick={load}>Tentar de novo</button>
+      <button type="button" class="btn btn-solid" onclick={load}>{t('common.retry')}</button>
     {/snippet}
   </Placeholder>
 {:else if tasks.length === 0}
   <Placeholder
-    title="Backlog vazio"
-    detail="As tarefas nascem da análise inicial: quando o agente fecha a especificação, ele a decompõe em tarefas atômicas com critérios de aceitação e arquivos alvo."
+    title={t('backlog.emptyTitle')}
+    detail={t('backlog.emptyDetail')}
   >
     {#snippet action()}
       <a class="btn btn-solid" href="/projects/{data.project.id}/initial-analysis">
-        <Icon name="play" size={11} /> Ir para a análise inicial
+        <Icon name="play" size={11} /> {t('backlog.goToAnalysis')}
       </a>
     {/snippet}
   </Placeholder>
@@ -624,7 +618,7 @@
   {#if candidatesForMigration.length > 0}
     <div class="migration-banner spread">
       <span class="mono label">
-        Existem {candidatesForMigration.length} tarefa(s) pendente(s) de ciclos anteriores.
+        {tp('backlog.migrationPending', candidatesForMigration.length)}
       </span>
       <button
         type="button"
@@ -633,7 +627,7 @@
         disabled={migrating}
       >
         <Icon name="upload" size={11} />
-        {migrating ? 'Migrando…' : `Migrar para ${activeSession?.title ?? 'esta sessão'}`}
+        {migrating ? t('backlog.migrating') : t('backlog.migrateTo', { title: activeSession?.title ?? t('backlog.thisSession') })}
       </button>
     </div>
   {/if}
@@ -643,18 +637,18 @@
     <div class="spread progress-meta">
       <div class="meta-left">
         <span class="session-badge mono bold">
-          {activeSession ? `#${activeSession.number} ${activeSession.title}` : 'Sessão Ativa'}
+          {activeSession ? `#${activeSession.number} ${activeSession.title}` : t('backlog.activeSession')}
         </span>
         <span class="sep" aria-hidden="true">·</span>
         <span class="label mono">
-          Progresso: {completedCount} de {tasks.length} concluídas
+          {t('backlog.progress', { done: completedCount, total: tasks.length })}
         </span>
         <span class="sep" aria-hidden="true">·</span>
         <span
           class="label mono"
-          title="Soma das execuções das tarefas desta sessão: {sessionTotals.input.toLocaleString('pt-BR')} tokens de entrada, {sessionTotals.output.toLocaleString('pt-BR')} de saída"
+          title={t('backlog.sessionTotalsTitle', { input: formatNumber(sessionTotals.input), output: formatNumber(sessionTotals.output) })}
         >
-          {formatDuration(sessionTotals.seconds)} · {formatTokens(sessionTotals.input)} entrada / {formatTokens(sessionTotals.output)} saída
+          {formatDuration(sessionTotals.seconds)} · {t('backlog.inOut', { input: formatTokens(sessionTotals.input), output: formatTokens(sessionTotals.output) })}
         </span>
       </div>
       <span class="mono bold">{progressPercent}%</span>
@@ -666,7 +660,7 @@
     {#if activeSession && (sessionClosed || (allDone && branchesAlive))}
       <div class="session-close spread">
         {#if sessionClosed}
-          <span class="mono">Sessão encerrada. As branches das tarefas foram removidas.</span>
+          <span class="mono">{t('backlog.sessionClosed')}</span>
           {#if activeSession.id === sessionStore.sessions[sessionStore.sessions.length - 1]?.id}
             <button
               type="button"
@@ -675,20 +669,20 @@
               disabled={sessionStore.creating}
             >
               <Icon name="plus" size={11} />
-              {sessionStore.creating ? 'Criando…' : 'Nova sessão'}
+              {sessionStore.creating ? t('sessionPicker.creating') : t('sessionPicker.new')}
             </button>
           {/if}
         {:else}
-          <span class="mono">Todas as tarefas concluídas. Encerre a sessão quando terminar de testar.</span>
+          <span class="mono">{t('backlog.allDoneClose')}</span>
           <button
             type="button"
             class="btn btn-solid btn-sm"
             onclick={finalizeSession}
             disabled={finalizing || isQueueRunning}
-            title="Marcar a sessão como concluída e apagar as branches das tarefas incorporadas"
+            title={t('backlog.finalizeTitle')}
           >
             <Icon name="check" size={11} />
-            {finalizing ? 'Encerrando…' : 'Encerrar sessão'}
+            {finalizing ? t('analysis.closing') : t('analysis.close')}
           </button>
         {/if}
       </div>
@@ -715,15 +709,15 @@
           disabled={deployingEnv === 'production' ||
             (!productionDeploy && (isQueueRunning || (tasks.length > 0 && completedCount < tasks.length)))}
           title={productionDeploy
-            ? 'Deploy em produção em andamento — ver o log'
+            ? t('backlog.prodInProgress')
             : completedCount < tasks.length
-              ? 'Conclua as tarefas do backlog para liberar o deploy em produção'
-              : 'Disparar provisionamento e deploy em produção no Coolify'}
+              ? t('backlog.prodLocked')
+              : t('backlog.prodTrigger')}
         >
           {#if deployingEnv === 'production'}
-            <span class="spinner-inline" aria-hidden="true"></span> Preparando…
+            <span class="spinner-inline" aria-hidden="true"></span> {t('backlog.preparing')}
           {:else if productionDeploy}
-            <span class="spinner-inline" aria-hidden="true"></span> Publicando
+            <span class="spinner-inline" aria-hidden="true"></span> {t('dashboard.deploy.BUILDING')}
             <span class="mono tabular">{deploys.elapsed(productionDeploy)}</span>
           {:else}
             <Icon name="upload" size={11} /> Deploy
@@ -736,7 +730,7 @@
             href="{data.project.repo_url}/issues?labels=&state=all"
             target="_blank"
             rel="noopener noreferrer"
-            title="Abrir as issues do backlog no Gitea"
+            title={t('backlog.issuesTitle')}
           >
             <Icon name="external" size={11} /> Issues
           </a>
@@ -745,9 +739,9 @@
             class="btn btn-line btn-sm"
             onclick={syncIssues}
             disabled={syncingIssues}
-            title="Criar no Gitea as issues que faltam e realinhar estado e rótulos"
+            title={t('backlog.syncTitle')}
           >
-            {syncingIssues ? 'Sincronizando…' : 'Sincronizar issues'}
+            {syncingIssues ? t('backlog.syncing') : t('backlog.sync')}
           </button>
         {/if}
 
@@ -758,12 +752,12 @@
           class="btn {isQueueRunning ? 'btn-line active-pulse' : 'btn-line'} btn-sm"
           onclick={toggleRunAll}
           disabled={tasks.length === 0 || (completedCount === tasks.length && !isQueueRunning)}
-          title={isQueueRunning ? 'Pausar execução da fila' : 'Executar todas as tarefas em ordem sequencial (uma por vez)'}
+          title={isQueueRunning ? t('backlog.pauseQueueTitle') : t('backlog.runAllTitle')}
         >
           {#if isQueueRunning}
-            <Icon name="close" size={11} /> Pausar Fila
+            <Icon name="close" size={11} /> {t('backlog.pauseQueue')}
           {:else}
-            <Icon name="play" size={11} /> Executar Todas
+            <Icon name="play" size={11} /> {t('backlog.runAll')}
           {/if}
         </button>
       </div>
@@ -776,45 +770,45 @@
     <!-- Barra de Ambientes Coolify -->
     <div class="env-bar spread">
       <div class="env-group">
-        <span class="label mono">Ambientes:</span>
+        <span class="label mono">{t('backlog.environments')}:</span>
 
         <div class="env-item">
-          <span class="env-name mono">Teste:</span>
+          <span class="env-name mono">{t('dashboard.test')}:</span>
           {#if envStatus?.test?.url}
             <a
               href={envStatus.test.url}
               target="_blank"
               rel="noopener noreferrer"
               class="env-url mono"
-              title="Abrir ambiente de teste provisionado no Coolify"
+              title={t('backlog.openTestEnv')}
             >
               <span class="dot {envStatus.test.status === 'HEALTHY' ? 'dot-green' : 'dot-amber'}" aria-hidden="true"></span>
               {envStatus.test.url}
               <Icon name="external" size={9} />
             </a>
           {:else}
-            <span class="env-url mono dim">Não provisionado</span>
+            <span class="env-url mono dim">{t('backlog.notProvisioned')}</span>
           {/if}
         </div>
 
         <span class="sep" aria-hidden="true">·</span>
 
         <div class="env-item">
-          <span class="env-name mono">Produção:</span>
+          <span class="env-name mono">{t('deploys.env.production')}:</span>
           {#if envStatus?.production?.url}
             <a
               href={envStatus.production.url}
               target="_blank"
               rel="noopener noreferrer"
               class="env-url mono"
-              title="Abrir ambiente de produção provisionado no Coolify"
+              title={t('backlog.openProdEnv')}
             >
               <span class="dot {envStatus.production.status === 'HEALTHY' ? 'dot-green' : 'dot-amber'}" aria-hidden="true"></span>
               {envStatus.production.url}
               <Icon name="external" size={9} />
             </a>
           {:else}
-            <span class="env-url mono dim">Não provisionada</span>
+            <span class="env-url mono dim">{t('backlog.notProvisioned')}</span>
           {/if}
         </div>
       </div>
@@ -825,7 +819,7 @@
           class="btn btn-ghost btn-xs mono"
           onclick={() => showDeployment(currentDeployment.id)}
         >
-          Ver último deploy
+          {t('backlog.lastDeploy')}
         </button>
       {/if}
     </div>
@@ -837,7 +831,7 @@
         <div class="deploy-progress-row">
           <span class="spinner-inline" aria-hidden="true"></span>
           <span class="mono deploy-progress-title">
-            {runningDeploy.environment === 'test' ? 'Teste' : 'Produção'} · {DEPLOY_STAGE[runningDeploy.status]}
+            {runningDeploy.environment === 'test' ? t('dashboard.test') : t('deploys.env.production')} · {deployStage(runningDeploy.status)}
             <span class="faint">· {runningDeploy.branch}</span>
           </span>
           <span class="mono tabular deploy-progress-clock">{deploys.elapsed(runningDeploy)}</span>
@@ -846,7 +840,7 @@
             class="btn btn-ghost btn-xs mono"
             onclick={() => showDeployment(runningDeploy.id)}
           >
-            Ver log
+            {t('backlog.seeLog')}
           </button>
         </div>
         {#if tail}
@@ -870,11 +864,11 @@
 
   <!-- Lista de Tarefas em Ordem de Execução Sequencial -->
   <div class="list-tools">
-    <span class="label mono">{ordered.length} tarefas em ordem de execução</span>
+    <span class="label mono">{tp('backlog.inOrder', ordered.length)}</span>
     <div class="list-tools-actions">
-      <button type="button" class="btn-link label" onclick={() => setAll(true)}>Expandir todas</button>
+      <button type="button" class="btn-link label" onclick={() => setAll(true)}>{t('backlog.expandAll')}</button>
       <span class="sep" aria-hidden="true">·</span>
-      <button type="button" class="btn-link label" onclick={() => setAll(false)}>Recolher todas</button>
+      <button type="button" class="btn-link label" onclick={() => setAll(false)}>{t('backlog.collapseAll')}</button>
     </div>
   </div>
 
@@ -896,7 +890,7 @@
       >
         <!-- Número de Ordem de Execução Sequencial -->
         <div class="step-col">
-          <span class="step-num mono" class:done={isCompleted} title="Ordem de execução sequencial">
+          <span class="step-num mono" class:done={isCompleted} title={t('backlog.orderTitle')}>
             {#if isCompleted}
               <Icon name="check" size={12} />
             {:else}
@@ -919,13 +913,13 @@
             {#if !open}
               <span class="row-hint mono">
                 {#if isRunning}
-                  <span class="spinner-inline" aria-hidden="true"></span> em execução
+                  <span class="spinner-inline" aria-hidden="true"></span> {t('backlog.hint.running')}
                 {:else if isMerging}
-                  incorporando…
+                  {t('backlog.hint.merging')}
                 {:else if hasError}
-                  <Icon name="alert" size={10} /> falhou
+                  <Icon name="alert" size={10} /> {t('check.fail')}
                 {:else if stuck.length}
-                  aguarda {stuck.map((d) => stepLabel(d.id)).join(', ')}
+                  {t('backlog.hint.waits', { steps: stuck.map((d) => stepLabel(d.id)).join(', ') })}
                 {/if}
               </span>
             {/if}
@@ -936,7 +930,7 @@
               <p class="desc muted">{task.description}</p>
 
               <div class="facts mono">
-                <span title="Identificador da tarefa">{task.id}</span>
+                <span title={t('backlog.taskId')}>{task.id}</span>
                 {#if task.issue_url}
                   <span class="sep" aria-hidden="true">·</span>
                   <a
@@ -944,7 +938,7 @@
                     target="_blank"
                     rel="noopener noreferrer"
                     class="branch-link"
-                    title="Ver a issue desta tarefa no Gitea"
+                    title={t('backlog.issueTitle')}
                   >
                     #{task.issue_number} <Icon name="external" size={9} />
                   </a>
@@ -957,7 +951,7 @@
                       target="_blank"
                       rel="noopener noreferrer"
                       class="branch-link"
-                      title="Ver branch no Gitea"
+                      title={t('backlog.branchTitle')}
                     >
                       {task.assigned_branch} <Icon name="external" size={9} />
                     </a>
@@ -967,27 +961,27 @@
                 {/if}
                 {#if task.target_files.length}
                   <span class="sep" aria-hidden="true">·</span>
-                  <span>{task.target_files.length} arquivo{task.target_files.length > 1 ? 's' : ''}</span>
+                  <span>{tp('backlog.files', task.target_files.length)}</span>
                 {/if}
                 {#if task.elapsed_seconds || task.input_tokens || task.output_tokens}
                   <span class="sep" aria-hidden="true">·</span>
-                  <span title="Tempo e tokens somados de todas as execuções desta tarefa">
-                    {formatDuration(task.elapsed_seconds ?? 0)} · {formatTokens(task.input_tokens ?? 0)} entrada / {formatTokens(task.output_tokens ?? 0)} saída
+                  <span title={t('backlog.taskTotalsTitle')}>
+                    {formatDuration(task.elapsed_seconds ?? 0)} · {t('backlog.inOut', { input: formatTokens(task.input_tokens ?? 0), output: formatTokens(task.output_tokens ?? 0) })}
                   </span>
                 {/if}
                 {#if task.skip_tests}
                   <span class="sep" aria-hidden="true">·</span>
-                  <span class="skip-tests" title="O analista assumiu o teste manual e os riscos">testes abreviados</span>
+                  <span class="skip-tests" title={t('backlog.skipTestsTitle')}>{t('backlog.skipTests')}</span>
                 {/if}
               </div>
 
               {#if task.target_files.length || task.acceptance_criteria.length}
                 <details>
-                  <summary class="label">Critérios e arquivos alvo</summary>
+                  <summary class="label">{t('backlog.criteriaFiles')}</summary>
                   <div class="detail-grid">
                     {#if task.acceptance_criteria.length}
                       <div>
-                        <span class="label">Critérios de aceitação</span>
+                        <span class="label">{t('backlog.criteria')}</span>
                         <ul class="bullets">
                           {#each task.acceptance_criteria as c, ci (ci)}
                             <li>{c}</li>
@@ -997,7 +991,7 @@
                     {/if}
                     {#if task.target_files.length}
                       <div>
-                        <span class="label">Arquivos alvo</span>
+                        <span class="label">{t('backlog.targetFiles')}</span>
                         <ul class="bullets mono files">
                           {#each task.target_files as f (f)}
                             <li>{f}</li>
@@ -1011,11 +1005,11 @@
 
               {#if stuck.length > 0}
                 <p class="blocked-note">
-                  Travada por
+                  {t('backlog.blockedBy')}
                   {#each stuck as d, di (d.id)}
                     <span class="mono bold">{stepLabel(d.id)} {d.title}</span>{#if di < stuck.length - 1}, {/if}
                   {/each}
-                  — o orquestrador exige a conclusão da dependência antes de despachar.
+                  {t('backlog.blockedTail')}
                 </p>
               {/if}
 
@@ -1047,7 +1041,7 @@
             {#if isMerging}
               <div class="merging-banner">
                 <span class="spinner-inline" aria-hidden="true"></span>
-                <span>Incorporando alterações na branch principal ({data.project.default_branch || 'main'})…</span>
+                <span>{t('backlog.mergingBanner', { branch: data.project.default_branch || 'main' })}</span>
               </div>
             {/if}
 
@@ -1062,7 +1056,7 @@
                 {#if err.rest}
                   <details class="error-more">
                     <summary class="label">
-                      {err.huge ? 'Log bruto do agente' : 'Detalhes'}
+                      {err.huge ? t('backlog.rawLog') : t('backlog.details')}
                     </summary>
                     <pre class="error-pre mono">{err.rest}</pre>
                   </details>
@@ -1086,22 +1080,22 @@
               onclick={() => deployTest(task.id)}
               disabled={deployingTaskId === task.id || (isQueueRunning && !taskDeploy)}
               title={taskDeploy
-                ? 'Deploy desta branch em andamento — ver o log'
-                : 'Provisionar ambiente de teste no Coolify com a branch desta tarefa'}
+                ? t('backlog.testInProgress')
+                : t('backlog.testTitle')}
             >
               {#if deployingTaskId === task.id}
-                <span class="spinner-inline" aria-hidden="true"></span> Preparando…
+                <span class="spinner-inline" aria-hidden="true"></span> {t('backlog.preparing')}
               {:else if taskDeploy}
-                <span class="spinner-inline" aria-hidden="true"></span> Publicando
+                <span class="spinner-inline" aria-hidden="true"></span> {t('dashboard.deploy.BUILDING')}
                 <span class="mono tabular">{deploys.elapsed(taskDeploy)}</span>
               {:else}
-                <Icon name="play" size={10} /> Testar
+                <Icon name="play" size={10} /> {t('backlog.test')}
               {/if}
             </button>
             {/if}
           {:else if isMerging}
             <span class="completed-tag label mono">
-              <span class="spinner-inline" aria-hidden="true"></span> Incorporando…
+              <span class="spinner-inline" aria-hidden="true"></span> {t('backlog.merging')}
             </span>
           {:else if isRunning}
             <button
@@ -1109,10 +1103,10 @@
               class="btn btn-line btn-sm danger"
               onclick={() => stopTask(task.id)}
               disabled={stoppingTaskId === task.id}
-              title="Interromper execução da tarefa imediatamente"
+              title={t('backlog.stopTitle')}
             >
               <Icon name="square" size={10} />
-              <span>{stoppingTaskId === task.id ? 'Interrompendo…' : 'Interromper'}</span>
+              <span>{stoppingTaskId === task.id ? t('activity.stopping') : t('activity.stop')}</span>
             </button>
             {#if !task.skip_tests}
               <button
@@ -1120,9 +1114,9 @@
                 class="btn btn-line btn-sm"
                 onclick={() => abbreviateTests(task)}
                 disabled={abbreviatingTaskId === task.id || stoppingTaskId === task.id}
-                title="Reinicia o agente sem escrever nem rodar testes; você assume o teste manual e os riscos"
+                title={t('backlog.abbreviateTitle')}
               >
-                <span>{abbreviatingTaskId === task.id ? 'Abreviando…' : 'Abreviar testes'}</span>
+                <span>{abbreviatingTaskId === task.id ? t('backlog.abbreviating') : t('backlog.abbreviate')}</span>
               </button>
             {/if}
           {:else}
@@ -1131,12 +1125,12 @@
               class="btn btn-line btn-sm"
               onclick={() => dispatch(task)}
               disabled={!canDispatch(task)}
-              title={stuck.length ? 'Aguardando dependências' : 'Executar individualmente'}
+              title={stuck.length ? t('backlog.waitingDeps') : t('backlog.runOne')}
             >
               {#if task.status === 'FAILED'}
-                <Icon name="play" size={11} /> Repetir
+                <Icon name="play" size={11} /> {t('backlog.retry')}
               {:else}
-                <Icon name="play" size={11} /> Executar
+                <Icon name="play" size={11} /> {t('backlog.run')}
               {/if}
             </button>
           {/if}
@@ -1147,21 +1141,21 @@
 {/if}
 
 <!-- Modal de Diff -->
-<Modal bind:open={diffOpen} title="Diff da Tarefa">
+<Modal bind:open={diffOpen} title={t('backlog.diffTitle')}>
   {#snippet body()}
     {#if diffLoading}
       <Skeleton variant="lines" rows={8} />
     {:else if diffData}
       <div class="diff-container">
         <div class="diff-meta spread mono faint">
-          <span>Branch: {diffData.branch} → {diffData.base_branch}</span>
+          <span>{t('deploys.branch', { branch: `${diffData.branch} → ${diffData.base_branch}` })}</span>
           {#if diffData.gitea_url}
             <a href={diffData.gitea_url} target="_blank" rel="noopener noreferrer" class="link-ext">
-              Abrir no Repositório <Icon name="external" size={10} />
+              {t('backlog.openInRepo')} <Icon name="external" size={10} />
             </a>
           {/if}
         </div>
-        <pre class="diff-code mono">{diffData.diff || 'Sem alterações identificadas.'}</pre>
+        <pre class="diff-code mono">{diffData.diff || t('backlog.noChanges')}</pre>
       </div>
     {/if}
   {/snippet}
@@ -1169,19 +1163,19 @@
     <div class="spread modal-foot">
       <div></div>
       <button type="button" class="btn btn-line btn-sm" onclick={() => (diffOpen = false)}>
-        Fechar
+        {t('common.close')}
       </button>
     </div>
   {/snippet}
 </Modal>
 
 <!-- Modal de Deploy Coolify -->
-<Modal bind:open={deploymentModalOpen} title="Provisionamento e Deploy no Coolify">
+<Modal bind:open={deploymentModalOpen} title={t('backlog.deployModal')}>
   {#snippet body()}
     {#if currentDeployment}
       <div class="deploy-modal-content">
         <div class="spread mono faint deploy-meta">
-          <span>Ambiente: <strong class="upper">{currentDeployment.environment}</strong></span>
+          <span>{t('backlog.environment')}: <strong class="upper">{currentDeployment.environment === 'test' ? t('dashboard.test') : t('deploys.env.production')}</strong></span>
           <span>Branch: <strong>{currentDeployment.branch}</strong></span>
         </div>
 
@@ -1191,20 +1185,17 @@
               {#if isDeployActive(currentDeployment)}
                 <span class="spinner-inline" aria-hidden="true"></span>
               {/if}
-              <strong>{DEPLOY_STAGE[currentDeployment.status]}</strong>
+              <strong>{deployStage(currentDeployment.status)}</strong>
               <span class="faint tabular">{deploys.elapsed(currentDeployment)}</span>
             </span>
             {#if currentDeployment.url && currentDeployment.status === 'HEALTHY'}
               <a href={currentDeployment.url} target="_blank" rel="noopener noreferrer" class="link-ext bold">
-                Abrir Aplicação <Icon name="external" size={10} />
+                {t('deploys.openApp')} <Icon name="external" size={10} />
               </a>
             {/if}
           </div>
           {#if isDeployActive(currentDeployment)}
-            <p class="faint deploy-hint">
-              O Coolify está clonando, construindo e publicando a aplicação. Pode fechar esta janela:
-              o andamento continua na barra de ambientes e você recebe um aviso quando terminar.
-            </p>
+            <p class="faint deploy-hint">{t('backlog.deployHint')}</p>
           {/if}
           {#if currentDeployment.url}
             <div class="deploy-url-line">
@@ -1218,20 +1209,20 @@
 
         {#if currentDeployment.logs}
           <div class="deploy-logs">
-            <span class="label mono">Logs do Deploy</span>
+            <span class="label mono">{t('backlog.deployLogs')}</span>
             <pre class="log-pre mono" bind:this={logBox}>{currentDeployment.logs}</pre>
           </div>
         {/if}
       </div>
     {:else}
-      <p class="muted">Nenhum deploy selecionado.</p>
+      <p class="muted">{t('backlog.noDeploy')}</p>
     {/if}
   {/snippet}
   {#snippet footer()}
     <div class="spread modal-foot">
       <div></div>
       <button type="button" class="btn btn-line btn-sm" onclick={() => (deploymentModalOpen = false)}>
-        Fechar
+        {t('common.close')}
       </button>
     </div>
   {/snippet}

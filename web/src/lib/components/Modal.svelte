@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import type { Snippet } from 'svelte';
   import Icon from './Icon.svelte';
 
@@ -34,7 +35,7 @@
   <div class="panel">
     <header>
       <h2 class="title">{title}</h2>
-      <button type="button" class="btn-icon" onclick={() => (open = false)} aria-label="Fechar">
+      <button type="button" class="btn-icon" onclick={() => (open = false)} aria-label={t('common.close')}>
         <Icon name="close" />
       </button>
     </header>

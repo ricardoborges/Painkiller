@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { page } from '$app/state';
 </script>
 
@@ -7,12 +8,12 @@
 <div class="wrap">
   <span class="code mono">{page.status}</span>
   <h1 class="display">
-    {page.status === 404 ? 'Esta página não existe.' : 'Algo quebrou no caminho.'}
+    {page.status === 404 ? t('error.notFound') : t('error.broken')}
   </h1>
   {#if page.error?.message}
     <p class="lede detail">{page.error.message}</p>
   {/if}
-  <a class="btn btn-solid back" href="/projects">Voltar aos projetos</a>
+  <a class="btn btn-solid back" href="/projects">{t('error.back')}</a>
 </div>
 
 <style>

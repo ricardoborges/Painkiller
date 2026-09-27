@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { pending } from '$lib/stores/pending.svelte';
   import type { Task } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
@@ -15,16 +16,12 @@
   }
 </script>
 
-<svelte:head><title>Pendências — Painkiller</title></svelte:head>
+<svelte:head><title>{t('layout.nav.pending')} — Painkiller</title></svelte:head>
 
 <header class="head spread">
   <div>
-    <h1 class="display">Pendências</h1>
-    <p class="lede sub">
-      Agentes que pararam no meio do trabalho. Cada um rodou
-      <span class="mono">painkiller ask</span>, commitou o que já tinha feito e saiu com
-      <span class="mono">42</span> em vez de adivinhar.
-    </p>
+    <h1 class="display">{t('layout.nav.pending')}</h1>
+    <p class="lede sub">{@html t('pending.lede')}</p>
   </div>
   <button
     type="button"
@@ -32,7 +29,7 @@
     onclick={() => pending.refresh()}
     disabled={pending.loading}
   >
-    {pending.loading ? 'Verificando…' : 'Verificar agora'}
+    {pending.loading ? t('pending.checking') : t('pending.checkNow')}
   </button>
 </header>
 
@@ -41,20 +38,20 @@
 {#if pending.loading && !pending.loaded}
   <Skeleton variant="table" rows={2} />
 {:else if pending.error}
-  <Placeholder kind="error" title="Não foi possível varrer os projetos" detail={pending.error}>
+  <Placeholder kind="error" title={t('pending.scanFailed')} detail={pending.error}>
     {#snippet action()}
       <button type="button" class="btn btn-solid" onclick={() => pending.refresh()}>
-        Tentar de novo
+        {t('common.retry')}
       </button>
     {/snippet}
   </Placeholder>
 {:else if pending.entries.length === 0}
   <Placeholder
-    title="Nenhum agente bloqueado"
-    detail="Toda tarefa despachada ou terminou, ou ainda está rodando. Quando um agente esbarrar numa ambiguidade, a pergunta dele aparece aqui."
+    title={t('pending.emptyTitle')}
+    detail={t('pending.emptyDetail')}
   >
     {#snippet action()}
-      <a class="btn btn-line" href="/projects">Ver projetos</a>
+      <a class="btn btn-line" href="/projects">{t('pending.seeProjects')}</a>
     {/snippet}
   </Placeholder>
 {:else}
@@ -86,8 +83,7 @@
 
   <p class="footnote help">
     <Icon name="alert" size={12} />
-    Esta tela varre os projetos e lista as tarefas de cada um — a API ainda não expõe um
-    endpoint único de pendências.
+    {t('pending.footnote')}
   </p>
 {/if}
 

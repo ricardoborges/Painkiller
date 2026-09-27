@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, formatDate } from '$lib/i18n/index.svelte';
   import { marked } from 'marked';
   import { api } from '$lib/api';
   import type { ProjectDoc, ProjectDocContent } from '$lib/types';
@@ -35,12 +36,12 @@
     }
   });
 
-  const categoryLabel: Record<string, string> = {
-    spec: 'Especificação (Design)',
-    plan: 'Plano de Implementação',
-    backlog: 'Backlog Decomposto',
-    doc: 'Documento'
-  };
+  const categoryLabel = $derived<Record<string, string>>({
+    spec: t('docViewer.category.spec'),
+    plan: t('docViewer.category.plan'),
+    backlog: t('docViewer.category.backlog'),
+    doc: t('docViewer.category.doc')
+  });
 
   const giteaFileUrl = $derived.by(() => {
     if (!repoUrl || !doc) return null;
@@ -56,7 +57,7 @@
     try {
       docContent = await api.getProjectDocContent(projectId, doc.path);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Falha ao carregar conteúdo do documento.';
+      error = e instanceof Error ? e.message : t('docViewer.loadFailed');
     } finally {
       loading = false;
     }
@@ -85,18 +86,18 @@
   }
 </script>
 
-<Modal bind:open title={doc?.filename ?? 'Documento'} width="54rem">
+<Modal bind:open title={doc?.filename ?? t('docViewer.category.doc')} width="54rem">
   {#snippet body()}
     <div class="doc-viewer">
       <!-- Cabeçalho visível exclusivamente na impressão / PDF -->
       <div class="print-header">
-        <h1 class="print-title">{doc?.filename ?? 'Documento'}</h1>
+        <h1 class="print-title">{doc?.filename ?? t('docViewer.category.doc')}</h1>
         <div class="print-meta mono">
           <span>{doc?.path}</span>
           <span>·</span>
           <span>Painkiller Agile Iteration</span>
           <span>·</span>
-          <span>{new Date().toLocaleDateString('pt-BR')}</span>
+          <span>{formatDate(new Date(), { dateStyle: 'short' })}</span>
         </div>
       </div>
 
@@ -116,20 +117,20 @@
               target="_blank"
               rel="noopener noreferrer"
               class="btn btn-line btn-sm"
-              title="Abrir arquivo no Gitea"
+              title={t('docViewer.openInGitea')}
             >
               <Icon name="external" size={11} /> Gitea
             </a>
           {/if}
 
-          <div class="seg-control" role="group" aria-label="Modo de visualização">
+          <div class="seg-control" role="group" aria-label={t('docViewer.viewMode')}>
             <button
               type="button"
               class="seg-btn"
               class:active={viewMode === 'rendered'}
               onclick={() => (viewMode = 'rendered')}
             >
-              Renderizado
+              {t('docViewer.rendered')}
             </button>
             <button
               type="button"
@@ -148,9 +149,9 @@
             disabled={!docContent?.content}
           >
             {#if copied}
-              <Icon name="check" size={11} /> Copiado!
+              <Icon name="check" size={11} /> {t('docViewer.copied')}
             {:else}
-              <Icon name="clip" size={11} /> Copiar
+              <Icon name="clip" size={11} /> {t('common.copy')}
             {/if}
           </button>
 
@@ -159,9 +160,9 @@
             class="btn btn-solid btn-sm"
             onclick={downloadPdf}
             disabled={!docContent?.content}
-            title="Exportar documento como PDF"
+            title={t('docViewer.exportPdf')}
           >
-            <Icon name="upload" size={11} /> Baixar como PDF
+            <Icon name="upload" size={11} /> {t('docViewer.downloadPdf')}
           </button>
         </div>
       </div>
@@ -171,7 +172,7 @@
         {#if loading}
           <div class="loading-box">
             <p class="working">
-              <span class="pulse" aria-hidden="true"></span> Carregando documento…
+              <span class="pulse" aria-hidden="true"></span> {t('docViewer.loading')}
             </p>
             <Skeleton variant="lines" rows={8} />
           </div>

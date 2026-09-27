@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { composeAnswer, pickedFrom, OTHER_LABEL, type Choices } from '$lib/choices';
+  import { t } from '$lib/i18n/index.svelte';
+  import { composeAnswer, pickedFrom, otherLabel, type Choices } from '$lib/choices';
   import Icon from '$lib/components/Icon.svelte';
 
   let {
@@ -24,9 +25,9 @@
      vê em nenhuma alternativa. Marcado, abre o campo de texto livre. */
   const options = $derived([
     ...choices.options,
-    { label: OTHER_LABEL, description: 'Responder com as minhas palavras' }
+    { label: otherLabel(), description: t('choices.otherDescription') }
   ]);
-  const otherOn = $derived(selected.includes(OTHER_LABEL));
+  const otherOn = $derived(selected.includes(otherLabel()));
   const shown = $derived(active ? new Set(selected) : pickedFrom(answer, choices));
   const ready = $derived(
     selected.length > 0 && (!otherOn || note.trim().length > 0)
@@ -41,7 +42,7 @@
     } else {
       selected = selected[0] === label ? [] : [label];
     }
-    if (label === OTHER_LABEL && selected.includes(OTHER_LABEL)) {
+    if (label === otherLabel() && selected.includes(otherLabel())) {
       queueMicrotask(() => otherInput?.focus());
     }
   }
@@ -65,7 +66,7 @@
 
 <div class="choices" class:is-active={active}>
   <p class="label hint">
-    {choices.multiple ? 'Marque uma ou mais' : 'Escolha uma'}
+    {choices.multiple ? t('choices.pickMany') : t('choices.pickOne')}
   </p>
 
   <ul role={choices.multiple ? 'group' : 'radiogroup'}>
@@ -98,15 +99,15 @@
           type="text"
           bind:this={otherInput}
           bind:value={note}
-          placeholder="Escreva a sua resposta"
-          aria-label="Resposta livre (Outro)"
+          placeholder={t('choices.writeAnswer')}
+          aria-label={t('choices.freeAnswer')}
           onkeydown={onKeydown}
         />
       {:else}
         <span class="spacer" aria-hidden="true"></span>
       {/if}
       <button type="button" class="btn btn-solid btn-sm" onclick={submit} disabled={!ready}>
-        Responder <Icon name="send" size={12} />
+        {t('choices.answer')} <Icon name="send" size={12} />
       </button>
     </div>
   {/if}

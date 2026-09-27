@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, i18n, formatDate, formatNumber } from '$lib/i18n/index.svelte';
   import { goto } from '$app/navigation';
   import { api, authedUrl } from '$lib/api';
   import type {
@@ -78,19 +79,19 @@
 
   /* ---- ambientes ---- */
 
-  const DEPLOY_LABEL: Record<DeploymentStatus, string> = {
-    PENDING: 'Na fila',
-    BUILDING: 'Publicando',
-    HEALTHY: 'No ar',
-    FAILED: 'Falhou',
-    STOPPED: 'Parado'
-  };
+  const DEPLOY_LABEL = $derived<Record<DeploymentStatus, string>>({
+    PENDING: t('dashboard.deploy.PENDING'),
+    BUILDING: t('dashboard.deploy.BUILDING'),
+    HEALTHY: t('deploys.stage.HEALTHY'),
+    FAILED: t('deploys.stage.FAILED'),
+    STOPPED: t('dashboard.deploy.STOPPED')
+  });
 
   /* O status do Coolify manda; sem registro de deploy, vale a URL fixa do projeto. */
   const environments = $derived([
     {
       key: 'production',
-      label: 'Produção',
+      label: t('deploys.env.production'),
       url: env?.production.url ?? project.production_url ?? null,
       status: env?.production.status ?? null,
       branch: env?.production.branch ?? null,
@@ -98,7 +99,7 @@
     },
     {
       key: 'test',
-      label: 'Teste',
+      label: t('dashboard.test'),
       url: env?.test.url ?? project.test_url ?? null,
       status: env?.test.status ?? null,
       branch: env?.test.branch ?? null,
@@ -118,12 +119,12 @@
     failed: tasks.filter((t) => t.status === 'FAILED').length
   });
 
-  const SESSION_LABEL: Record<SessionStatus, string> = {
-    PLANNING: 'Análise',
-    BACKLOG: 'Backlog',
-    IN_SPRINT: 'Execução',
-    COMPLETED: 'Concluída'
-  };
+  const SESSION_LABEL = $derived<Record<SessionStatus, string>>({
+    PLANNING: t('sessionStatus.PLANNING'),
+    BACKLOG: t('sessionStatus.BACKLOG'),
+    IN_SPRINT: t('sessionStatus.IN_SPRINT'),
+    COMPLETED: t('sessionStatus.COMPLETED')
+  });
 
   function sessionTally(id: string) {
     const own = tasks.filter((t) => t.session_id === id);
@@ -142,7 +143,7 @@
   function money(value: number, code = 'USD'): string {
     const tiny = value !== 0 && Math.abs(value) < 0.01;
     try {
-      return new Intl.NumberFormat('pt-BR', {
+      return new Intl.NumberFormat(i18n.current, {
         style: 'currency',
         currency: code,
         minimumFractionDigits: tiny ? 4 : 2,
@@ -158,12 +159,12 @@
     return r ? money(usd * r, usage!.currency.local) : null;
   }
 
-  const tokens = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
+  const compactTokens = (n: number) => formatNumber(n, { notation: 'compact', maximumFractionDigits: 1 });
 
   function when(iso: string | null | undefined): string {
     if (!iso) return '';
     const date = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`);
-    return date.toLocaleString('pt-BR', {
+    return formatDate(date, {
       day: '2-digit',
       month: '2-digit',
       hour: '2-digit',
@@ -185,17 +186,17 @@
     <div class="lead-text">
       {#if openSession}
         <p class="state">
-          Sessão #{openSession.number} em {SESSION_LABEL[openSession.status].toLowerCase()}.
+          {t('dashboard.sessionIn', { number: openSession.number, status: SESSION_LABEL[openSession.status].toLowerCase() })}
         </p>
         <p class="help">{openSession.title}</p>
       {:else}
-        <p class="state">Todas as sessões foram encerradas.</p>
-        <p class="help">Uma nova sessão abre um chat com o agente sobre o que vem a seguir.</p>
+        <p class="state">{t('dashboard.allClosed')}</p>
+        <p class="help">{t('dashboard.allClosedHelp')}</p>
       {/if}
       {#if tally.awaiting}
         <button type="button" class="blocked label" onclick={openBlocked}>
           <span class="dot" aria-hidden="true"></span>
-          {tally.awaiting} aguardando analista
+          {t('projects.awaitingAnalyst', { count: tally.awaiting })}
         </button>
       {/if}
     </div>
@@ -203,7 +204,7 @@
     <div class="lead-acts">
       {#if openSession}
         <button type="button" class="btn btn-line" onclick={() => openSessionPage(openSession)}>
-          Continuar sessão #{openSession.number} <Icon name="arrow-right" size={11} />
+          {t('dashboard.continueSession', { number: openSession.number })} <Icon name="arrow-right" size={11} />
         </button>
       {/if}
       <button
@@ -213,7 +214,7 @@
         disabled={sessionStore.creating}
       >
         <Icon name="plus" size={11} />
-        {sessionStore.creating ? 'Criando…' : 'Nova sessão'}
+        {sessionStore.creating ? t('sessionPicker.creating') : t('sessionPicker.new')}
       </button>
     </div>
   </section>
@@ -225,7 +226,7 @@
     <div class="main">
       <!-- Ambientes publicados -->
       <section class="panel rise" style="--i: 1">
-        <h2 class="label">Publicado</h2>
+        <h2 class="label">{t('dashboard.published')}</h2>
         {#if !ready}
           <Skeleton rows={2} />
         {:else if published}
@@ -259,28 +260,25 @@
                     {#if e.updated}<span>{when(e.updated)}</span>{/if}
                   </p>
                   <a class="env-open btn btn-line btn-sm" href={e.url} target="_blank" rel="noopener noreferrer">
-                    Abrir <Icon name="external" size={10} />
+                    {t('common.open')} <Icon name="external" size={10} />
                   </a>
                 {:else}
-                  <p class="env-none">Ainda não publicado.</p>
+                  <p class="env-none">{t('dashboard.notPublished')}</p>
                 {/if}
               </li>
             {/each}
           </ul>
         {:else}
-          <p class="faint none">
-            Nada publicado ainda. Uma tarefa concluída pode ser publicada no ambiente de teste pelo
-            botão "Testar" do backlog.
-          </p>
+          <p class="faint none">{t('dashboard.nothingPublished')}</p>
         {/if}
 
         {#if deployments.length}
-          <h3 class="label sub">Últimos deploys</h3>
+          <h3 class="label sub">{t('dashboard.lastDeploys')}</h3>
           <ul class="deploys divide">
             {#each deployments as d (d.id)}
               <li class="deploy" class:hatch={d.status === 'FAILED'}>
                 <span class="mono faint">{when(d.created_at)}</span>
-                <span class="label">{d.environment === 'production' ? 'Produção' : 'Teste'}</span>
+                <span class="label">{d.environment === 'production' ? t('deploys.env.production') : t('dashboard.test')}</span>
                 <span class="mono truncate branch" title={d.branch}>{d.branch}</span>
                 <span class="mono" class:live={d.status === 'HEALTHY'}>{DEPLOY_LABEL[d.status]}</span>
               </li>
@@ -291,23 +289,23 @@
 
       <!-- Sessões -->
       <section class="panel rise" style="--i: 2">
-        <h2 class="label">Sessões</h2>
+        <h2 class="label">{t('sessionPicker.sessions')}</h2>
         <ul class="sessions divide">
           {#each [...sessionStore.sessions].reverse() as s (s.id)}
-            {@const t = sessionTally(s.id)}
+            {@const st = sessionTally(s.id)}
             <li>
               <button type="button" class="session" onclick={() => openSessionPage(s)}>
                 <span class="mono faint num">#{s.number}</span>
                 <span class="s-title truncate" class:closed={s.status === 'COMPLETED'}>{s.title}</span>
                 <span class="mono faint s-count">
-                  {#if t.total}{t.done}/{t.total} tarefas{/if}
+                  {#if st.total}{t('dashboard.sessionTasks', { done: st.done, total: st.total })}{/if}
                 </span>
                 <span
                   class="mono faint s-spent"
-                  title="Tempo das tarefas · tokens de entrada / saída"
+                  title={t('dashboard.spentTitle')}
                 >
-                  {#if t.spent.seconds || t.spent.input || t.spent.output}
-                    {formatDuration(t.spent.seconds)} · {formatTokens(t.spent.input)} / {formatTokens(t.spent.output)}
+                  {#if st.spent.seconds || st.spent.input || st.spent.output}
+                    {formatDuration(st.spent.seconds)} · {formatTokens(st.spent.input)} / {formatTokens(st.spent.output)}
                   {/if}
                 </span>
                 <span class="badge mono label" class:closed={s.status === 'COMPLETED'}>
@@ -324,7 +322,7 @@
     <aside>
       <!-- Custos -->
       <section class="panel rise" style="--i: 1">
-        <h2 class="label">Custos</h2>
+        <h2 class="label">{t('projectNav.costs')}</h2>
         {#if !ready}
           <Skeleton rows={2} variant="lines" />
         {:else if usage}
@@ -339,77 +337,77 @@
             </div>
             <p class="small" class:over>
               {#if over}
-                Orçamento estourado em {money(-(usage.budget.remaining_usd ?? 0))}
+                {t('dashboard.overBudget', { amount: money(-(usage.budget.remaining_usd ?? 0)) })}
               {:else}
-                {money(usage.budget.remaining_usd ?? 0)} disponíveis de {money(usage.budget.budget_usd)}
+                {t('dashboard.available', { remaining: money(usage.budget.remaining_usd ?? 0), budget: money(usage.budget.budget_usd) })}
               {/if}
             </p>
           {:else}
-            <p class="faint small">Sem orçamento definido.</p>
+            <p class="faint small">{t('dashboard.noBudget')}</p>
           {/if}
 
           <p class="mono faint small">
-            {tokens.format(usage.totals.total_tokens)} tokens · {usage.totals.calls} chamadas
-            {#if usage.totals.unpriced_calls}· {usage.totals.unpriced_calls} sem preço{/if}
+            {t('dashboard.tokensCalls', { tokens: compactTokens(usage.totals.total_tokens), calls: usage.totals.calls })}
+            {#if usage.totals.unpriced_calls}· {t('dashboard.unpriced', { count: usage.totals.unpriced_calls })}{/if}
           </p>
         {:else}
-          <p class="faint small">Não foi possível ler os custos.</p>
+          <p class="faint small">{t('dashboard.costsFailed')}</p>
         {/if}
-        <a class="more label" href="{base}/costs">Ver custos <Icon name="arrow-right" size={10} /></a>
+        <a class="more label" href="{base}/costs">{t('dashboard.seeCosts')} <Icon name="arrow-right" size={10} /></a>
       </section>
 
       <!-- Entregas -->
       <section class="panel rise" style="--i: 2">
-        <h2 class="label">Tarefas</h2>
+        <h2 class="label">{t('dashboard.tasks')}</h2>
         {#if !ready}
           <Skeleton rows={1} variant="lines" />
         {:else}
           <p class="figure">{tally.done}<span class="faint">/{tally.total}</span></p>
           <p class="mono faint small">
-            concluídas{#if tally.running}&nbsp;· {tally.running} executando{/if}{#if tally.failed}&nbsp;· {tally.failed} com falha{/if}
+            {t('dashboard.completed')}{#if tally.running}&nbsp;· {t('context.tallyRunning', { count: tally.running })}{/if}{#if tally.failed}&nbsp;· {t('context.tallyFailed', { count: tally.failed })}{/if}
           </p>
         {/if}
-        <p class="faint small">Por sessão, na lista ao lado.</p>
+        <p class="faint small">{t('dashboard.perSession')}</p>
       </section>
 
       <!-- Tempo e tokens das tarefas, somados de todas as sessões -->
       <section class="panel rise" style="--i: 3">
-        <h2 class="label">Tempo das tarefas</h2>
+        <h2 class="label">{t('dashboard.taskTime')}</h2>
         {#if !ready}
           <Skeleton rows={1} variant="lines" />
         {:else}
           <p class="figure">{formatDuration(spent.seconds)}</p>
           <dl class="spent mono small">
-            <dt class="faint">Tokens de entrada</dt>
-            <dd title={spent.input.toLocaleString('pt-BR')}>{formatTokens(spent.input)}</dd>
-            <dt class="faint">Tokens de saída</dt>
-            <dd title={spent.output.toLocaleString('pt-BR')}>{formatTokens(spent.output)}</dd>
+            <dt class="faint">{t('dashboard.inputTokens')}</dt>
+            <dd title={formatNumber(spent.input)}>{formatTokens(spent.input)}</dd>
+            <dt class="faint">{t('dashboard.outputTokens')}</dt>
+            <dd title={formatNumber(spent.output)}>{formatTokens(spent.output)}</dd>
           </dl>
-          <p class="faint small">Somatório de todas as sessões, só execução de tarefas.</p>
+          <p class="faint small">{t('dashboard.spentHelp')}</p>
         {/if}
       </section>
 
       <!-- Repositório -->
       <section class="panel rise" style="--i: 4">
-        <h2 class="label">Repositório</h2>
+        <h2 class="label">{t('projectNav.repository')}</h2>
         <a
           class="btn btn-line btn-sm download"
           href={authedUrl(`/projects/${project.id}/archive`)}
           download
-          title="Arquivos versionados da branch {project.default_branch}, sem .git"
+          title={t('dashboard.zipTitle', { branch: project.default_branch })}
         >
-          <Icon name="download" size={12} /> Baixar .zip
+          <Icon name="download" size={12} /> {t('dashboard.downloadZip')}
         </a>
         <ul class="links">
           {#if project.repo_url}
             <li>
               <a href={project.repo_url} target="_blank" rel="noopener noreferrer">
-                <Icon name="external" size={11} /> Código no Gitea
+                <Icon name="external" size={11} /> {t('dashboard.codeInGitea')}
               </a>
             </li>
           {/if}
-          <li><a href="{base}/artifacts"><Icon name="file-text" size={11} /> Artefatos</a></li>
-          <li><a href="{base}/context"><Icon name="info" size={11} /> Contexto do projeto</a></li>
+          <li><a href="{base}/artifacts"><Icon name="file-text" size={11} /> {t('projectNav.artifacts')}</a></li>
+          <li><a href="{base}/context"><Icon name="info" size={11} /> {t('dashboard.projectContext')}</a></li>
         </ul>
       </section>
     </aside>

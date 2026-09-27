@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import Icon from '../Icon.svelte';
 
   /** Valor em mono com botão de copiar — URIs de redirect, credenciais. */
@@ -23,9 +24,9 @@
   {#if label}<span class="label">{label}</span>{/if}
   <div class="line">
     <code class="mono value">{value}</code>
-    <button type="button" class="btn btn-line btn-sm" onclick={copy} aria-label="Copiar {label || value}">
+    <button type="button" class="btn btn-line btn-sm" onclick={copy} aria-label={t('copyValue.aria', { what: label || value })}>
       <Icon name={copied ? 'check' : 'copy'} size={11} />
-      {copied ? 'Copiado' : 'Copiar'}
+      {copied ? t('copyValue.copied') : t('common.copy')}
     </button>
   </div>
 </div>

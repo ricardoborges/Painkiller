@@ -1,3 +1,4 @@
+import { formatNumber } from './i18n/index.svelte';
 import type { Task } from '$lib/types';
 
 /* Tempo e tokens gastos pelas tarefas. Cada tarefa guarda o acumulado de
@@ -31,8 +32,6 @@ export function formatDuration(seconds: number): string {
   return `${m}min ${String(s % 60).padStart(2, '0')}s`;
 }
 
-const compact = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
-
 export function formatTokens(n: number): string {
-  return compact.format(n);
+  return formatNumber(n, { notation: 'compact', maximumFractionDigits: 1 });
 }

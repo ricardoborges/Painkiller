@@ -29,6 +29,7 @@ from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
 from painkiller.core.usage import parse_agent_usage
 from painkiller.core.attachment_reader import extract_attachment_text
+from painkiller.core.i18n import DEFAULT_LOCALE, use_locale
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +61,15 @@ CHOICES_FENCE = "painkiller-choices"
 #: qualquer commit (o `git add -A` do `painkiller ask` os levaria junto).
 UPLOADS_RELATIVE = ".painkiller/uploads"
 
-#: Cabeçalho do bloco de anexos acrescentado à mensagem do analista. O mesmo
-#: texto está em web/src/lib/attachments.ts, que o esconde da transcrição e
-#: mostra os arquivos como etiquetas — mudar aqui exige mudar lá.
-ATTACHMENTS_HEADER = "Anexos enviados pelo analista"
+#: Cabeçalho do bloco de anexos acrescentado à mensagem do analista, no idioma
+#: do projeto. Os mesmos textos estão em web/src/lib/attachments.ts, que os
+#: esconde da transcrição e mostra os arquivos como etiquetas — mudar aqui
+#: exige mudar lá.
+ATTACHMENTS_HEADERS = {
+    "pt-BR": "Anexos enviados pelo analista",
+    "en-US": "Attachments sent by the analyst",
+}
+ATTACHMENTS_HEADER = ATTACHMENTS_HEADERS["pt-BR"]
 
 #: Extensões tratadas como imagem no aviso ao agente.
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
@@ -84,16 +90,22 @@ def safe_upload_name(filename: str) -> str:
     return f"{uuid.uuid4().hex[:6]}_{clean[:80]}{ext[:10]}"
 
 
-def with_attachments(text: str, paths: list[str]) -> str:
+def with_attachments(text: str, paths: list[str], language: str = DEFAULT_LOCALE) -> str:
     """Append the attachment block the agent reads (and the UI hides)."""
     if not paths:
         return text
+    english = language == "en-US"
+    header = ATTACHMENTS_HEADERS["en-US" if english else "pt-BR"]
     lines = [
-        f"{ATTACHMENTS_HEADER} (caminhos relativos à raiz do repositório; "
+        f"{header} (paths relative to the repository root; open each one with your "
+        "file-reading tool before answering):"
+        if english
+        else f"{header} (caminhos relativos à raiz do repositório; "
         "abra cada um com sua ferramenta de leitura de arquivos antes de responder):"
     ]
     for path in paths:
-        kind = "imagem" if os.path.splitext(path)[1].lower() in IMAGE_EXTENSIONS else "arquivo"
+        image = os.path.splitext(path)[1].lower() in IMAGE_EXTENSIONS
+        kind = ("image" if image else "file") if english else ("imagem" if image else "arquivo")
         lines.append(f"- `{path}` ({kind})")
     block = "\n".join(lines)
     return f"{text}\n\n{block}" if text else block
@@ -146,8 +158,17 @@ def _harness_name(harness: Optional[object]) -> str:
 class AnalysisRun:
     """In-process bookkeeping for one live session."""
 
-    def __init__(self, session: AnalysisSession, repo_path: str, model: str = "", harness: Optional[object] = None):
+    def __init__(
+        self,
+        session: AnalysisSession,
+        repo_path: str,
+        model: str = "",
+        harness: Optional[object] = None,
+        language: str = DEFAULT_LOCALE,
+    ):
         self.session = session
+        # Idioma do projeto: vale para o que o pump grava (erros do harness).
+        self.language = language
         self.repo_path = repo_path
         self.events: list[AgentEvent] = []
         self.subscribers: set[asyncio.Queue] = set()
@@ -237,7 +258,13 @@ class AnalysisOrchestrator:
             claude_session_id=claude_session_id,
             status=AnalysisStatus.STARTING,
         )
-        run = AnalysisRun(session=session, repo_path=project.repo_path, model=harness_model(project.harness, project.model), harness=project.harness)
+        run = AnalysisRun(
+            session=session,
+            repo_path=project.repo_path,
+            model=harness_model(project.harness, project.model),
+            harness=project.harness,
+            language=project.language,
+        )
         self.runs[session_id] = run
         try:
             await self.tracker.save_analysis_session(session)
@@ -330,7 +357,13 @@ class AnalysisOrchestrator:
 
         run = self.runs.get(session_id)
         if not run:
-            run = AnalysisRun(session=session, repo_path=project.repo_path, model=harness_model(project.harness, project.model), harness=project.harness)
+            run = AnalysisRun(
+            session=session,
+            repo_path=project.repo_path,
+            model=harness_model(project.harness, project.model),
+            harness=project.harness,
+            language=project.language,
+        )
             events = await self.tracker.list_analysis_events(session_id)
             run.events = list(events) if isinstance(events, (list, tuple)) else []
             self.runs[session_id] = run
@@ -376,6 +409,12 @@ class AnalysisOrchestrator:
 
     async def _pump(self, run: AnalysisRun) -> None:
         """Drain the adapter's event stream and fan it out to SSE subscribers."""
+        # O pump roda fora de qualquer requisição: o que ele grava para o
+        # analista (erros do harness) sai no idioma do projeto.
+        with use_locale(run.language):
+            await self._pump_events(run)
+
+    async def _pump_events(self, run: AnalysisRun) -> None:
         # O log do contêiner é relido do início a cada religada do pump, então
         # os primeiros `skip` eventos já estão no banco: reconstruímos o replay
         # em memória sem duplicá-los no histórico persistido.
@@ -589,7 +628,7 @@ class AnalysisOrchestrator:
         # Só aceita anexos desta sessão: o caminho vai para o prompt do agente.
         prefix = f"{UPLOADS_RELATIVE}/{session_id}/"
         paths = [p for p in (attachments or []) if p.startswith(prefix) and ".." not in p]
-        text = with_attachments(text, paths)
+        text = with_attachments(text, paths, run.language)
         # Um restart da API derruba o contêiner, mas a sessão restaurada ainda
         # mostra a vez do analista: sem religar, a resposta cairia numa fila que
         # ninguém lê e a tela ficaria em "agente trabalhando" para sempre. O
@@ -645,7 +684,8 @@ class AnalysisOrchestrator:
         repo_path = project.repo_path if isinstance(project, Project) else ""
         model = harness_model(project.harness, project.model) if isinstance(project, Project) else ""
         harness = project.harness if isinstance(project, Project) else None
-        run = AnalysisRun(session=session, repo_path=repo_path, model=model, harness=harness)
+        language = project.language if isinstance(project, Project) else DEFAULT_LOCALE
+        run = AnalysisRun(session=session, repo_path=repo_path, model=model, harness=harness, language=language)
         events = await self.tracker.list_analysis_events(session_id)
         run.events = list(events) if isinstance(events, (list, tuple)) else []
         self.runs[session_id] = run
@@ -843,122 +883,186 @@ def build_analysis_prompt(
     previous_sessions: Optional[list[IterationSession]] = None,
     previous_completed_tasks: Optional[list[Task]] = None,
 ) -> str:
-    """Compose the pt-BR kickoff prompt handed to the containerized agent.
+    """Compose the kickoff prompt handed to the containerized agent, in the project's language.
 
     Session 1 is a guided elicitation (superpowers:brainstorming from the first
     message). From session 2 on the agent starts in chat mode: it greets and
     follows the analyst, reaching for superpowers skills only when they fit.
     """
+    english = getattr(project, "language", DEFAULT_LOCALE) == "en-US"
+
+    def L(pt: str, en: str) -> str:
+        return en if english else pt
+
     chat_mode = isinstance(session_number, int) and session_number > 1
     if chat_mode:
         parts = [
-            "Você é o agente do Painkiller, em modo conversa com o analista.",
+            L("Você é o agente do Painkiller, em modo conversa com o analista.",
+              "You are the Painkiller agent, in conversation mode with the analyst."),
             "",
-            "Nesta sessão é o analista quem conduz: ele pode tirar dúvidas sobre o projeto "
-            "e o código, pedir ajustes, relatar problemas ou propor novas funcionalidades. "
-            "Regras desta sessão:",
-            "- Escreva sempre em português do Brasil.",
-            "- Responda diretamente ao que o analista pedir, de forma objetiva.",
-            "- Use as skills do superpowers quando fizerem sentido (por exemplo, "
-            "superpowers:brainstorming quando ele quiser especificar algo novo). "
-            "Ao conduzir as perguntas de uma skill, faça UMA pergunta por vez.",
-            "- Não escreva código de produção nem implemente nada nesta sessão: "
-            "o que for construído vira tarefa no backlog.",
-            "- O repositório do projeto está montado em /workspace.",
+            L("Nesta sessão é o analista quem conduz: ele pode tirar dúvidas sobre o projeto "
+              "e o código, pedir ajustes, relatar problemas ou propor novas funcionalidades. "
+              "Regras desta sessão:",
+              "In this session the analyst leads: they may ask about the project and the code, "
+              "request changes, report problems or propose new features. Rules for this session:"),
+            L("- Escreva sempre em português do Brasil.", "- Always write in US English."),
+            L("- Responda diretamente ao que o analista pedir, de forma objetiva.",
+              "- Answer exactly what the analyst asks, objectively."),
+            L("- Use as skills do superpowers quando fizerem sentido (por exemplo, "
+              "superpowers:brainstorming quando ele quiser especificar algo novo). "
+              "Ao conduzir as perguntas de uma skill, faça UMA pergunta por vez.",
+              "- Use the superpowers skills when they fit (for example, "
+              "superpowers:brainstorming when they want to specify something new). "
+              "When running a skill's questions, ask ONE question at a time."),
+            L("- Não escreva código de produção nem implemente nada nesta sessão: "
+              "o que for construído vira tarefa no backlog.",
+              "- Do not write production code or implement anything in this session: "
+              "whatever gets built becomes a backlog task."),
+            L("- O repositório do projeto está montado em /workspace.",
+              "- The project repository is mounted at /workspace."),
             "",
         ]
     else:
         parts = [
-            "Você é o agente de análise do Painkiller, uma plataforma em que uma pessoa "
-            "muitas vezes SEM formação técnica descreve o software que quer e o recebe pronto "
-            "e publicado na internet.",
+            L("Você é o agente de análise do Painkiller, uma plataforma em que uma pessoa "
+              "muitas vezes SEM formação técnica descreve o software que quer e o recebe pronto "
+              "e publicado na internet.",
+              "You are the Painkiller analysis agent. Painkiller is a platform where a person, "
+              "often WITHOUT a technical background, describes the software they want and "
+              "receives it built and published on the internet."),
             "",
-            "Conduza a elicitação de requisitos com essa pessoa usando a skill "
-            "superpowers:brainstorming. Regras desta sessão:",
-            "- Escreva sempre em português do Brasil, em linguagem simples, sem jargão técnico. "
-            "Quando um termo técnico for inevitável, explique-o em uma frase.",
-            "- Faça UMA pergunta por vez e espere a resposta. Prefira perguntas com exemplos ou "
-            "alternativas concretas a perguntas abertas.",
-            "- Pergunte sobre o que o software deve FAZER e para QUEM. As decisões técnicas "
-            "(linguagem, banco, framework, hospedagem) são suas: escolha o caminho mais simples "
-            "e comum e não peça que a pessoa decida isso.",
-            "- Não escreva código de produção nem implemente nada nesta sessão.",
-            "- O repositório do projeto está montado em /workspace.",
+            L("Conduza a elicitação de requisitos com essa pessoa usando a skill "
+              "superpowers:brainstorming. Regras desta sessão:",
+              "Run the requirements elicitation with this person using the "
+              "superpowers:brainstorming skill. Rules for this session:"),
+            L("- Escreva sempre em português do Brasil, em linguagem simples, sem jargão técnico. "
+              "Quando um termo técnico for inevitável, explique-o em uma frase.",
+              "- Always write in US English, in plain language, without technical jargon. "
+              "When a technical term is unavoidable, explain it in one sentence."),
+            L("- Faça UMA pergunta por vez e espere a resposta. Prefira perguntas com exemplos ou "
+              "alternativas concretas a perguntas abertas.",
+              "- Ask ONE question at a time and wait for the answer. Prefer questions with "
+              "examples or concrete alternatives over open-ended ones."),
+            L("- Pergunte sobre o que o software deve FAZER e para QUEM. As decisões técnicas "
+              "(linguagem, banco, framework, hospedagem) são suas: escolha o caminho mais simples "
+              "e comum e não peça que a pessoa decida isso.",
+              "- Ask about what the software must DO and for WHOM. Technical decisions "
+              "(language, database, framework, hosting) are yours: pick the simplest, most "
+              "common path and do not ask the person to decide them."),
+            L("- Não escreva código de produção nem implemente nada nesta sessão.",
+              "- Do not write production code or implement anything in this session."),
+            L("- O repositório do projeto está montado em /workspace.",
+              "- The project repository is mounted at /workspace."),
             "",
         ]
     parts += [
-        "Quando a pergunta tiver alternativas, a plataforma as mostra como opções "
-        "clicáveis. Para isso, escreva a pergunta normalmente e termine a mensagem "
-        f"com um único bloco de código `{CHOICES_FENCE}` contendo JSON, sem repetir "
-        "as alternativas no texto:",
+        L("Quando a pergunta tiver alternativas, a plataforma as mostra como opções "
+          "clicáveis. Para isso, escreva a pergunta normalmente e termine a mensagem "
+          f"com um único bloco de código `{CHOICES_FENCE}` contendo JSON, sem repetir "
+          "as alternativas no texto:",
+          "When a question has alternatives, the platform shows them as clickable options. "
+          "To do so, write the question normally and end the message with a single "
+          f"`{CHOICES_FENCE}` code block containing JSON, without repeating the "
+          "alternatives in the text:"),
         f"```{CHOICES_FENCE}",
         '{"multiple": false, "options": [',
-        '  {"label": "Rótulo curto", "description": "detalhe opcional"}',
+        L('  {"label": "Rótulo curto", "description": "detalhe opcional"}',
+          '  {"label": "Short label", "description": "optional detail"}'),
         "]}",
         "```",
-        "Use \"multiple\": true só quando fizer sentido marcar mais de uma. "
-        "Não inclua uma opção \"Outro\": a plataforma sempre acrescenta uma, para o "
-        "analista responder livremente.",
+        L("Use \"multiple\": true só quando fizer sentido marcar mais de uma. "
+          "Não inclua uma opção \"Outro\": a plataforma sempre acrescenta uma, para o "
+          "analista responder livremente.",
+          "Use \"multiple\": true only when picking more than one makes sense. "
+          "Do not include an \"Other\" option: the platform always adds one so the "
+          "analyst can answer freely."),
         "",
-        "Quando o analista aprovar uma especificação, faça as seguintes coisas:",
-        "1. Grave a especificação em docs/superpowers/specs/AAAA-MM-DD-<tema>-design.md.",
-        f"2. Grave o backlog decomposto em {backlog_path} (arquivo exclusivo desta sessão; "
-        "não leia nem reaproveite backlogs de outras sessões), exatamente neste formato:",
-        '   {"spec_path": "<caminho do spec>", "tasks": [',
+        L("Quando o analista aprovar uma especificação, faça as seguintes coisas:",
+          "When the analyst approves a specification, do the following:"),
+        L("1. Grave a especificação em docs/superpowers/specs/AAAA-MM-DD-<tema>-design.md.",
+          "1. Write the specification to docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md."),
+        L(f"2. Grave o backlog decomposto em {backlog_path} (arquivo exclusivo desta sessão; "
+          "não leia nem reaproveite backlogs de outras sessões), exatamente neste formato:",
+          f"2. Write the decomposed backlog to {backlog_path} (a file owned by this session; "
+          "do not read or reuse backlogs from other sessions), exactly in this format:"),
+        L('   {"spec_path": "<caminho do spec>", "tasks": [',
+          '   {"spec_path": "<spec path>", "tasks": ['),
         '     {"title": "...", "description": "...", "target_files": ["..."],',
-        '      "acceptance_criteria": ["..."], "dependencies": ["<title de outra task>"]}',
+        L('      "acceptance_criteria": ["..."], "dependencies": ["<title de outra task>"]}',
+          '      "acceptance_criteria": ["..."], "dependencies": ["<title of another task>"]}'),
         "   ]}",
-        "   Cada tarefa precisa ser atômica e executável por um agente de codificação isolado, "
-        "sem acesso a esta conversa: a descrição tem de ser autossuficiente.",
-        "   A aplicação será publicada automaticamente ao fim do backlog; inclua na primeira "
-        "tarefa o esqueleto do projeto pronto para rodar em produção (Dockerfile na raiz ou "
-        "projeto detectável pelo Nixpacks, porta única, configuração por variáveis de ambiente "
-        "com padrões seguros).",
-        "3. Na mensagem final confirmando a gravação do backlog, liste resumidamente as tarefas e termine OBRIGATORIAMENTE com o bloco de alternativas para o analista seguir:",
+        L("   Cada tarefa precisa ser atômica e executável por um agente de codificação isolado, "
+          "sem acesso a esta conversa: a descrição tem de ser autossuficiente.",
+          "   Each task must be atomic and executable by an isolated coding agent with no "
+          "access to this conversation: the description has to be self-contained."),
+        L("   Escreva títulos, descrições e critérios de aceitação em português do Brasil.",
+          "   Write titles, descriptions and acceptance criteria in US English."),
+        L("   A aplicação será publicada automaticamente ao fim do backlog; inclua na primeira "
+          "tarefa o esqueleto do projeto pronto para rodar em produção (Dockerfile na raiz ou "
+          "projeto detectável pelo Nixpacks, porta única, configuração por variáveis de ambiente "
+          "com padrões seguros).",
+          "   The application will be published automatically at the end of the backlog; make "
+          "the first task include the project skeleton ready to run in production (a Dockerfile "
+          "at the root or a project Nixpacks can detect, a single port, configuration through "
+          "environment variables with safe defaults)."),
+        L("3. Na mensagem final confirmando a gravação do backlog, liste resumidamente as tarefas "
+          "e termine OBRIGATORIAMENTE com o bloco de alternativas para o analista seguir:",
+          "3. In the final message confirming the backlog was written, briefly list the tasks "
+          "and you MUST end with the alternatives block for the analyst to proceed:"),
         f"```{CHOICES_FENCE}",
         '{"multiple": false, "options": [',
-        '  {"label": "Seguir para backlog", "description": "Importar as tarefas decompostas e abrir o painel de backlog"}',
+        L('  {"label": "Seguir para backlog", "description": "Importar as tarefas decompostas e abrir o painel de backlog"}',
+          '  {"label": "Go to backlog", "description": "Import the decomposed tasks and open the backlog panel"}'),
         "]}",
         "```",
         "",
-        "=== CONTEXTO DO PROJETO ===",
-        f"Nome: {project.name}",
-        f"Descrição geral: {project.description}",
-        f"Propósito de negócio: {project.purpose}",
-        f"Solução desejada: {project.solution_description}",
+        L("=== CONTEXTO DO PROJETO ===", "=== PROJECT CONTEXT ==="),
+        f"{L('Nome', 'Name')}: {project.name}",
+        f"{L('Descrição geral', 'General description')}: {project.description}",
+        f"{L('Propósito de negócio', 'Business purpose')}: {project.purpose}",
+        f"{L('Solução desejada', 'Desired solution')}: {project.solution_description}",
     ]
 
     if project.attachments:
         parts.append("")
-        parts.append("=== DOCUMENTOS DE CONTEXTO ANEXADOS ===")
+        parts.append(L("=== DOCUMENTOS DE CONTEXTO ANEXADOS ===", "=== ATTACHED CONTEXT DOCUMENTS ==="))
         for att_path in project.attachments:
             parts.append(extract_attachment_text(att_path))
 
     if isinstance(session_number, int) and session_number > 1:
         parts.append("")
-        parts.append(f"=== CICLO ÁGIL ITERATIVO: SESSÃO {session_number} ===")
-        parts.append(
+        parts.append(L(f"=== CICLO ÁGIL ITERATIVO: SESSÃO {session_number} ===",
+                       f"=== ITERATIVE AGILE CYCLE: SESSION {session_number} ==="))
+        parts.append(L(
             f"Esta é a iteração/sessão de número {session_number} deste projeto. "
             "O software já possui entregas anteriores consolidadas no repositório. "
-            "Use esse histórico para responder com contexto ao que o analista trouxer."
-        )
+            "Use esse histórico para responder com contexto ao que o analista trouxer.",
+            f"This is iteration/session number {session_number} of this project. "
+            "The software already has earlier deliveries consolidated in the repository. "
+            "Use that history to answer with context whatever the analyst brings."
+        ))
         if previous_sessions:
-            parts.append("\nHistórico de sessões anteriores:")
+            parts.append(L("\nHistórico de sessões anteriores:", "\nHistory of previous sessions:"))
             for ps in previous_sessions:
                 spec_note = f" (spec: {ps.spec_path})" if ps.spec_path else ""
                 parts.append(f"- {ps.title}: status {ps.status.value}{spec_note}")
         if previous_completed_tasks:
-            parts.append("\nTarefas concluídas com sucesso em ciclos anteriores:")
+            parts.append(L("\nTarefas concluídas com sucesso em ciclos anteriores:",
+                           "\nTasks completed successfully in previous cycles:"))
             for pt in previous_completed_tasks:
                 parts.append(f"- [{pt.id}] {pt.title}: {pt.description}")
 
     parts.append("")
     if chat_mode:
-        parts.append(
+        parts.append(L(
             "Comece com uma saudação curta (uma ou duas frases) dizendo que está pronto e "
             "pergunte o que o analista quer fazer nesta sessão. Não inicie uma elicitação "
-            "por conta própria nem ofereça alternativas nesta primeira mensagem."
-        )
+            "por conta própria nem ofereça alternativas nesta primeira mensagem.",
+            "Start with a short greeting (one or two sentences) saying you are ready and "
+            "ask what the analyst wants to do in this session. Do not start an elicitation "
+            "on your own or offer alternatives in this first message."
+        ))
     else:
-        parts.append("Comece cumprimentando o analista e fazendo a primeira pergunta.")
+        parts.append(L("Comece cumprimentando o analista e fazendo a primeira pergunta.",
+                       "Start by greeting the analyst and asking the first question."))
     return "\n".join(parts)

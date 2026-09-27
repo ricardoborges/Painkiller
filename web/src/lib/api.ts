@@ -1,3 +1,4 @@
+import { i18n, t } from '$lib/i18n/index.svelte';
 import type {
   AgentEvent,
   AuthConfig,
@@ -61,6 +62,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
+  // O backend traduz as mensagens de erro pelo idioma da interface.
+  headers.set('Accept-Language', i18n.current);
   if (init.body && !(init.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
@@ -69,14 +72,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     res = await fetch(`/api${path}`, { ...init, headers });
   } catch (e) {
-    throw new ApiError(
-      'Não foi possível falar com o servidor. Verifique se o uvicorn está no ar.',
-      0
-    );
+    throw new ApiError(t('api.unreachable'), 0);
   }
 
   if (!res.ok) {
-    let detail = `Erro HTTP ${res.status}`;
+    let detail = t('api.httpError', { status: res.status });
     try {
       const body = await res.json();
       if (typeof body?.detail === 'string') detail = body.detail;
@@ -170,6 +170,7 @@ export const api = {
     api_key?: string;
     model?: string;
     effort?: string;
+    language?: string;
   }) => request<Project>('/projects', { method: 'POST', ...json(body) }),
 
   updateProject: (
@@ -183,6 +184,7 @@ export const api = {
       api_key?: string;
       model?: string;
       effort?: string;
+      language?: string;
     }
   ) => request<Project>(`/projects/${id}`, { method: 'PUT', ...json(body) }),
 
@@ -475,8 +477,10 @@ export const api = {
  * os dois (ver api/security.py).
  */
 export function authedUrl(path: string): string {
+  const params = new URLSearchParams({ lang: i18n.current });
   const token = getToken();
-  return token ? `/api${path}?token=${encodeURIComponent(token)}` : `/api${path}`;
+  if (token) params.set('token', token);
+  return `/api${path}${path.includes('?') ? '&' : '?'}${params}`;
 }
 
 /**
@@ -514,7 +518,7 @@ export function openAnalysisStream(
     'ERROR',
     'EXIT'
   ];
-  for (const t of types) source.addEventListener(t, forward);
+  for (const type of types) source.addEventListener(type, forward);
 
   source.addEventListener('CLOSE', () => {
     source.close();
@@ -567,7 +571,7 @@ export function openTaskStream(
     'RESULT',
     'ERROR'
   ];
-  for (const t of types) source.addEventListener(t, forward);
+  for (const type of types) source.addEventListener(type, forward);
 
   // O stream termina junto com a execução; sem isto o EventSource reconectaria
   // e reemitiria o buffer em loop.

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tp, i18n, formatDate, formatNumber } from '$lib/i18n/index.svelte';
   import { api } from '$lib/api';
   import type {
     UsageEntry,
@@ -13,11 +14,11 @@
   let { data } = $props();
   const projectId = $derived(data.project.id);
 
-  const SOURCE_LABEL: Record<UsageSource, string> = {
-    ANALYSIS: 'Análise inicial',
-    TASK: 'Tarefas (Antigravity agy)',
-    LLM: 'Chamadas diretas'
-  };
+  const SOURCE_LABEL = $derived<Record<UsageSource, string>>({
+    ANALYSIS: t('context.initialAnalysis'),
+    TASK: t('costs.source.TASK'),
+    LLM: t('costs.source.LLM')
+  });
 
   let summary = $state<UsageSummary | null>(null);
   let records = $state<UsageEntry[]>([]);
@@ -70,7 +71,7 @@
     }));
   }
 
-  /** Aceita vírgula decimal, que é o que um analista brasileiro digita. */
+  /** Aceita vírgula decimal, que é o que um analista brasileiro digita (e ponto, em inglês). */
   function num(text: string): number | null {
     const clean = text.trim().replace(/\s/g, '').replace(',', '.');
     if (!clean) return null;
@@ -84,11 +85,11 @@
     const budgetN = num(budget);
     const rateN = num(rate);
     if (Number.isNaN(budgetN) || (budgetN ?? 0) < 0) {
-      saveError = 'Orçamento precisa ser um número positivo.';
+      saveError = t('costs.budgetInvalid');
       return;
     }
     if (Number.isNaN(rateN) || (rateN != null && rateN <= 0)) {
-      saveError = 'Câmbio precisa ser maior que zero.';
+      saveError = t('costs.rateInvalid');
       return;
     }
     const prices: UsageSettings['prices'] = {};
@@ -98,7 +99,7 @@
       const i = num(row.input) ?? 0;
       const o = num(row.output) ?? 0;
       if (Number.isNaN(i) || Number.isNaN(o) || i < 0 || o < 0) {
-        saveError = `Preço inválido para ${model}.`;
+        saveError = t('costs.priceInvalid', { model });
         return;
       }
       prices[model] = { input_per_mtok: i, output_per_mtok: o };
@@ -143,7 +144,7 @@
   function money(value: number, code = 'USD'): string {
     const tiny = value !== 0 && Math.abs(value) < 0.01;
     try {
-      return new Intl.NumberFormat('pt-BR', {
+      return new Intl.NumberFormat(i18n.current, {
         style: 'currency',
         currency: code,
         minimumFractionDigits: tiny ? 4 : 2,
@@ -160,18 +161,17 @@
     return money(usd * r, summary!.currency.local);
   }
 
-  const compact = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
-  const full = new Intl.NumberFormat('pt-BR');
-  const tokens = (n: number) => compact.format(n);
+  const full = { format: (n: number) => formatNumber(n) };
+  const tokens = (n: number) => formatNumber(n, { notation: 'compact', maximumFractionDigits: 1 });
 
   function day(iso: string): string {
-    const [, m, d] = iso.split('-');
-    return `${d}/${m}`;
+    const [y, m, d] = iso.split('-').map(Number);
+    return formatDate(new Date(y, m - 1, d), { day: '2-digit', month: '2-digit' });
   }
 
   function when(iso: string): string {
     const date = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`);
-    return date.toLocaleString('pt-BR', {
+    return formatDate(date, {
       day: '2-digit',
       month: '2-digit',
       hour: '2-digit',
@@ -193,64 +193,59 @@
 </script>
 
 <div class="spread head">
-  <p class="help">
-    Tokens que os agentes consumiram neste projeto, quanto isso custou e quanto do orçamento dele
-    ainda resta. Cada turno da análise inicial e cada execução de tarefa entram aqui assim que
-    terminam.
-  </p>
+  <p class="help">{t('costs.lede')}</p>
   <button
     type="button"
     class="btn btn-line btn-sm"
     onclick={load}
     disabled={loading}
   >
-    {loading ? 'Atualizando…' : 'Atualizar'}
+    {loading ? t('costs.refreshing') : t('costs.refresh')}
   </button>
 </div>
 
 {#if loading && !summary}
   <Skeleton variant="table" rows={3} />
 {:else if error}
-  <Placeholder kind="error" title="Não foi possível carregar os custos" detail={error}>
+  <Placeholder kind="error" title={t('costs.loadFailed')} detail={error}>
     {#snippet action()}
-      <button type="button" class="btn btn-solid" onclick={load}>Tentar de novo</button>
+      <button type="button" class="btn btn-solid" onclick={load}>{t('common.retry')}</button>
     {/snippet}
   </Placeholder>
 {:else if summary}
   <!-- ---- números principais ---- -->
-  <section class="stats" aria-label="Resumo">
+  <section class="stats" aria-label={t('costs.summary')}>
     <div class="stat">
-      <span class="label">Crédito disponível</span>
+      <span class="label">{t('costs.credit')}</span>
       {#if summary.budget.remaining_usd == null}
         <p class="big mono faint">—</p>
         <p class="help">
-          Nenhum orçamento para este projeto. <a class="link" href="#configuracao">Definir orçamento</a>
+          {t('costs.noBudget')} <a class="link" href="#configuracao">{t('costs.setBudget')}</a>
         </p>
       {:else}
         <p class="big mono" class:over>{money(summary.budget.remaining_usd)}</p>
         <p class="help mono">
           {#if local(summary.budget.remaining_usd)}{local(summary.budget.remaining_usd)} ·
-          {/if}de {money(summary.budget.budget_usd ?? 0)}
+          {/if}{t('costs.of', { budget: money(summary.budget.budget_usd ?? 0) })}
         </p>
       {/if}
     </div>
 
     <div class="stat">
-      <span class="label">Gasto no projeto</span>
+      <span class="label">{t('costs.spent')}</span>
       <p class="big mono">{money(summary.totals.cost_usd)}</p>
       <p class="help mono">
-        {local(summary.totals.cost_usd) ?? 'defina o câmbio para ver em moeda local'}
+        {local(summary.totals.cost_usd) ?? t('costs.setRate')}
       </p>
     </div>
 
     <div class="stat">
       <span class="label">Tokens</span>
-      <p class="big mono" title="{full.format(summary.totals.total_tokens)} tokens">
+      <p class="big mono" title={`${full.format(summary.totals.total_tokens)} tokens`}>
         {tokens(summary.totals.total_tokens)}
       </p>
       <p class="help mono">
-        {tokens(summary.totals.input_tokens)} entrada · {tokens(summary.totals.output_tokens)} saída
-        · {full.format(summary.totals.calls)} registros
+        {t('costs.tokensBreakdown', { input: tokens(summary.totals.input_tokens), output: tokens(summary.totals.output_tokens), records: full.format(summary.totals.calls) })}
       </p>
     </div>
   </section>
@@ -261,7 +256,7 @@
         class="meter"
         class:full={over}
         role="meter"
-        aria-label="Orçamento consumido"
+        aria-label={t('costs.budgetUsed')}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(Math.min(ratio, 1) * 100)}
@@ -270,9 +265,9 @@
       </div>
       <p class="meter-note mono">
         {#if over}
-          <strong>Orçamento estourado</strong> em {money(-(summary.budget.remaining_usd ?? 0))}
+          {t('dashboard.overBudget', { amount: money(-(summary.budget.remaining_usd ?? 0)) })}
         {:else}
-          {(ratio * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% do orçamento consumido
+          {t('costs.percentUsed', { percent: formatNumber(ratio * 100, { maximumFractionDigits: 1 }) })}
         {/if}
       </p>
     </div>
@@ -282,10 +277,8 @@
     <p class="notice help">
       <Icon name="alert" size={12} />
       <span>
-        {summary.totals.unpriced_calls}
-        {summary.totals.unpriced_calls === 1 ? 'registro está' : 'registros estão'} fora do gasto
-        total porque o modelo não tem preço conhecido. Cadastre o preço em
-        <a class="link" href="#configuracao">Configuração</a> e o valor é recalculado.
+        {tp('costs.unpricedNotice', summary.totals.unpriced_calls)}
+        <a class="link" href="#configuracao">{t('costs.configuration')}</a>{t('costs.unpricedNoticeTail')}
       </span>
     </p>
   {/if}
@@ -293,13 +286,13 @@
   <!-- ---- gasto diário ---- -->
   <section class="block">
     <div class="spread">
-      <h2 class="label section-title">Gasto por dia — últimos 30 dias</h2>
-      <span class="help mono">{money(dailyTotal)} no período</span>
+      <h2 class="label section-title">{t('costs.daily')}</h2>
+      <span class="help mono">{t('costs.inPeriod', { amount: money(dailyTotal) })}</span>
     </div>
     {#if dailyMax === 0}
-      <p class="help">Nenhum gasto com preço conhecido no período.</p>
+      <p class="help">{t('costs.noDaily')}</p>
     {:else}
-      <div class="chart" role="img" aria-label="Gasto diário em dólares nos últimos 30 dias">
+      <div class="chart" role="img" aria-label={t('costs.dailyAria')}>
         <span class="y-max mono">{money(dailyMax)}</span>
         <div class="bars" onmouseleave={() => (hover = null)} role="presentation">
           {#each summary.daily as d, i (d.date)}
@@ -310,7 +303,7 @@
               onmouseenter={() => (hover = i)}
               onfocus={() => (hover = i)}
               onblur={() => (hover = null)}
-              aria-label="{day(d.date)}: {money(d.cost_usd)}, {full.format(d.tokens)} tokens"
+              aria-label={`${day(d.date)}: ${money(d.cost_usd)}, ${full.format(d.tokens)} tokens`}
             >
               <span class="bar" style="height: {(d.cost_usd / dailyMax) * 100}%"></span>
               {#if hover === i}
@@ -325,7 +318,7 @@
         <div class="x mono">
           <span>{day(summary.daily[0].date)}</span>
           <span>{day(summary.daily[14].date)}</span>
-          <span>hoje</span>
+          <span>{t('costs.today')}</span>
         </div>
       </div>
     {/if}
@@ -333,9 +326,9 @@
 
   <!-- ---- quebras ---- -->
   <section class="block">
-    <h2 class="label section-title">Por etapa</h2>
+    <h2 class="label section-title">{t('costs.byStep')}</h2>
     <table class="table">
-      <thead><tr><th>Etapa</th><th class="num">Tokens</th><th class="num">Custo</th></tr></thead>
+      <thead><tr><th>{t('costs.step')}</th><th class="num">Tokens</th><th class="num">{t('costs.cost')}</th></tr></thead>
       <tbody>
         {#each summary.by_source as s (s.key)}
           <tr class:faint={s.calls === 0}>
@@ -351,33 +344,33 @@
   </section>
 
   <section class="block">
-    <h2 class="label section-title">Por modelo</h2>
+    <h2 class="label section-title">{t('costs.byModel')}</h2>
     {#if summary.by_model.length === 0}
-      <p class="help">Nenhum consumo registrado ainda.</p>
+      <p class="help">{t('costs.noUsage')}</p>
     {:else}
       <div class="scroll">
       <table class="table">
         <thead>
           <tr>
-            <th>Modelo</th>
-            <th class="num">Entrada</th>
-            <th class="num">Saída</th>
-            <th class="num">Preço / 1M</th>
-            <th class="num">Custo</th>
+            <th>{t('costs.model')}</th>
+            <th class="num">{t('costs.input')}</th>
+            <th class="num">{t('costs.output')}</th>
+            <th class="num">{t('costs.pricePerM')}</th>
+            <th class="num">{t('costs.cost')}</th>
           </tr>
         </thead>
         <tbody>
           {#each summary.by_model as m (m.key)}
             <tr>
-              <td class="mono nowrap">{m.key || 'desconhecido'}</td>
+              <td class="mono nowrap">{m.key || t('costs.unknown')}</td>
               <td class="num mono">{tokens(m.input_tokens)}</td>
               <td class="num mono">{tokens(m.output_tokens)}</td>
               <td class="num mono">
                 {#if m.price}
                   {money(m.price.input_per_mtok)} / {money(m.price.output_per_mtok)}
-                  <span class="tag">{m.price_source === 'settings' ? 'seu' : 'catálogo'}</span>
+                  <span class="tag">{m.price_source === 'settings' ? t('costs.yours') : t('costs.catalog')}</span>
                 {:else}
-                  <span class="tag unpriced">sem preço</span>
+                  <span class="tag unpriced">{t('costs.noPrice')}</span>
                 {/if}
               </td>
               <td class="num mono">
@@ -388,33 +381,27 @@
         </tbody>
       </table>
       </div>
-      <p class="help foot">
-        Preço cadastrado por você vence; sem ele vale o custo que o agente reportou,
-        e por último o catálogo do LiteLLM. * inclui registros sem preço, fora do custo.
-      </p>
+      <p class="help foot">{t('costs.priceOrder')}</p>
     {/if}
   </section>
 
   <!-- ---- registros recentes ---- -->
   <section class="block">
-    <h2 class="label section-title">Registros recentes</h2>
+    <h2 class="label section-title">{t('costs.recent')}</h2>
     {#if records.length === 0}
-      <p class="help">
-        Nada registrado ainda. O consumo aparece aqui depois do primeiro turno da análise inicial
-        ou da primeira tarefa despachada.
-      </p>
+      <p class="help">{t('costs.noRecords')}</p>
     {:else}
       <div class="scroll">
         <table class="table">
           <thead>
             <tr>
-              <th>Quando</th>
-              <th>Etapa</th>
-              <th>Tarefa</th>
-              <th>Modelo</th>
-              <th class="num">Entrada</th>
-              <th class="num">Saída</th>
-              <th class="num">Custo</th>
+              <th>{t('costs.when')}</th>
+              <th>{t('costs.step')}</th>
+              <th>{t('costs.task')}</th>
+              <th>{t('costs.model')}</th>
+              <th class="num">{t('costs.input')}</th>
+              <th class="num">{t('costs.output')}</th>
+              <th class="num">{t('costs.cost')}</th>
             </tr>
           </thead>
           <tbody>
@@ -437,48 +424,42 @@
 
   <!-- ---- configuração ---- -->
   <section class="block" id="configuracao">
-    <h2 class="label section-title">Configuração</h2>
-    <p class="help intro">
-      Google Gemini, OpenAI, Anthropic e NVIDIA não informam saldo por API. O crédito disponível
-      é o orçamento que você define para este projeto menos o que ele já gastou.
-    </p>
+    <h2 class="label section-title">{t('costs.configuration')}</h2>
+    <p class="help intro">{t('costs.noBalanceApi')}</p>
 
     <form class="settings" onsubmit={save}>
       <div class="fields">
         <div class="field">
-          <label for="budget">Orçamento do projeto (USD)</label>
-          <input id="budget" class="input mono" inputmode="decimal" placeholder="ex.: 50" bind:value={budget} />
+          <label for="budget">{t('costs.projectBudget')}</label>
+          <input id="budget" class="input mono" inputmode="decimal" placeholder={t('costs.budgetPlaceholder')} bind:value={budget} />
         </div>
       </div>
 
-      <h3 class="label sub-title">Compartilhado por todos os projetos</h3>
-      <p class="help">
-        Câmbio e preço de modelo não mudam de um projeto para outro: alterar aqui recalcula o
-        custo de todos.
-      </p>
+      <h3 class="label sub-title">{t('costs.shared')}</h3>
+      <p class="help">{t('costs.sharedHelp')}</p>
       <div class="fields">
         <div class="field">
-          <label for="currency">Moeda local</label>
+          <label for="currency">{t('costs.localCurrency')}</label>
           <input id="currency" class="input mono" maxlength="5" bind:value={currency} />
         </div>
         <div class="field">
-          <label for="rate">Câmbio (1 USD =)</label>
-          <input id="rate" class="input mono" inputmode="decimal" placeholder="ex.: 5,40" bind:value={rate} />
+          <label for="rate">{t('costs.rate')}</label>
+          <input id="rate" class="input mono" inputmode="decimal" placeholder={t('costs.ratePlaceholder')} bind:value={rate} />
         </div>
       </div>
 
-      <h3 class="label sub-title">Preços por modelo (USD por 1 milhão de tokens)</h3>
+      <h3 class="label sub-title">{t('costs.pricesTitle')}</h3>
       {#if priceRows.length > 0}
         <div class="prices">
-          <span class="label">Modelo</span>
-          <span class="label">Entrada</span>
-          <span class="label">Saída</span>
+          <span class="label">{t('costs.model')}</span>
+          <span class="label">{t('costs.input')}</span>
+          <span class="label">{t('costs.output')}</span>
           <span></span>
           {#each priceRows as row, i (i)}
-            <input class="input mono" aria-label="Modelo" placeholder="gemini-3.8-flash" bind:value={row.model} />
-            <input class="input mono" aria-label="Preço de entrada" inputmode="decimal" bind:value={row.input} />
-            <input class="input mono" aria-label="Preço de saída" inputmode="decimal" bind:value={row.output} />
-            <button type="button" class="btn-icon" aria-label="Remover preço" onclick={() => removePrice(i)}>
+            <input class="input mono" aria-label={t('costs.model')} placeholder="gemini-3.8-flash" bind:value={row.model} />
+            <input class="input mono" aria-label={t('costs.inputPrice')} inputmode="decimal" bind:value={row.input} />
+            <input class="input mono" aria-label={t('costs.outputPrice')} inputmode="decimal" bind:value={row.output} />
+            <button type="button" class="btn-icon" aria-label={t('costs.removePrice')} onclick={() => removePrice(i)}>
               <Icon name="trash" />
             </button>
           {/each}
@@ -487,7 +468,7 @@
 
       <div class="row gap">
         <button type="button" class="btn btn-line btn-sm" onclick={() => addPrice()}>
-          <Icon name="plus" size={12} /> Adicionar modelo
+          <Icon name="plus" size={12} /> {t('costs.addModel')}
         </button>
         {#each unpricedModels as m (m.key)}
           <button
@@ -500,19 +481,19 @@
                 m.price ? String(m.price.output_per_mtok) : ''
               )}
           >
-            + {m.key || 'desconhecido'}
+            + {m.key || t('costs.unknown')}
           </button>
         {/each}
       </div>
 
       <div class="row gap actions">
         <button type="submit" class="btn btn-solid" disabled={saving}>
-          {saving ? 'Salvando…' : 'Salvar configuração'}
+          {saving ? t('common.saving') : t('costs.saveSettings')}
         </button>
         {#if saveError}
           <span class="field-error">{saveError}</span>
         {:else if savedAt}
-          <span class="help row gap-s"><Icon name="check" size={12} /> Salvo e recalculado</span>
+          <span class="help row gap-s"><Icon name="check" size={12} /> {t('costs.savedRecalculated')}</span>
         {/if}
       </div>
     </form>

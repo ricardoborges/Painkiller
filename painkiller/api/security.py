@@ -224,7 +224,7 @@ async def require_task(request: Request, task_id: str, user: User = Depends(curr
         return
     task = await request.app.state.tracker.get_task(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
     await visible_project(request, task.project_id)
 
 

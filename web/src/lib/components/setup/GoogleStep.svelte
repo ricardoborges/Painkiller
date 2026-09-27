@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { api } from '$lib/api';
   import { setup } from '$lib/stores/setup.svelte';
   import Icon from '../Icon.svelte';
@@ -49,7 +50,7 @@
       saved = true;
       onsaved?.();
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Não foi possível salvar.';
+      error = err instanceof Error ? err.message : t('common.saveFailed');
     } finally {
       busy = false;
     }
@@ -62,7 +63,7 @@
       setup.set(await api.skipSetupStep('google'));
       onsaved?.();
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Não foi possível pular a etapa.';
+      error = err instanceof Error ? err.message : t('setupStep.skipFailed');
     } finally {
       busy = false;
     }
@@ -70,52 +71,47 @@
 </script>
 
 <form class="step" onsubmit={save}>
-  <p class="lede small">
-    Opcional. Sem ele, só o administrador entra, com usuário e senha. Com ele, cada pessoa entra com a
-    própria conta Google, ganha a própria conta no Gitea e vê só os próprios projetos.
-  </p>
+  <p class="lede small">{t('google.intro')}</p>
 
   <section class="tutorial">
-    <h3 class="label">No Google Cloud Console</h3>
+    <h3 class="label">{t('google.inConsole')}</h3>
     <ol class="steps">
       <li>
         <span class="n mono">1</span>
         <div>
-          Configure a tela de consentimento (tipo <strong>Externo</strong> ou <strong>Interno</strong>, se
-          for Google Workspace).
+          {@html t('google.step1')}
           <a href={CONSENT} target="_blank" rel="noopener noreferrer" class="ext">
-            Abrir Google Auth Platform <Icon name="external" size={11} />
+            {t('google.openAuthPlatform')} <Icon name="external" size={11} />
           </a>
         </div>
       </li>
       <li>
         <span class="n mono">2</span>
         <div>
-          Em <strong>Credenciais</strong>, crie um <strong>ID do cliente OAuth</strong> do tipo
-          <strong>Aplicativo da Web</strong>.
+          {@html t('google.step2')}
           <a href={CONSOLE} target="_blank" rel="noopener noreferrer" class="ext">
-            Abrir Credenciais <Icon name="external" size={11} />
+            {t('google.openCredentials')} <Icon name="external" size={11} />
           </a>
         </div>
       </li>
       <li>
         <span class="n mono">3</span>
         <div class="uris">
-          Em <strong>URIs de redirecionamento autorizados</strong>, cadastre as duas:
+          {@html t('google.step3')}
           <CopyValue label="Painkiller" value={google.redirect_uris.painkiller} />
-          <CopyValue label="Gitea (login único)" value={google.redirect_uris.gitea} />
+          <CopyValue label={t('google.giteaSso')} value={google.redirect_uris.gitea} />
         </div>
       </li>
       <li>
         <span class="n mono">4</span>
-        <div>Copie o <strong>ID do cliente</strong> e a <strong>Chave secreta</strong> para os campos abaixo.</div>
+        <div>{@html t('google.step4')}</div>
       </li>
     </ol>
   </section>
 
   <div class="grid">
     <div class="field">
-      <label for="g-id">ID do cliente</label>
+      <label for="g-id">{t('google.clientId')}</label>
       <input
         id="g-id"
         class="input mono"
@@ -125,33 +121,33 @@
       />
     </div>
     <div class="field">
-      <label for="g-secret">Chave secreta do cliente</label>
+      <label for="g-secret">{t('google.clientSecret')}</label>
       <input
         id="g-secret"
         type="password"
         class="input mono"
         bind:value={clientSecret}
-        placeholder={google.has_secret ? `Salva (${google.masked_secret}) — deixe em branco para manter` : 'GOCSPX-…'}
+        placeholder={google.has_secret ? t('google.secretSaved', { masked: google.masked_secret ?? '' }) : 'GOCSPX-…'}
         autocomplete="off"
       />
     </div>
   </div>
 
   <div class="field">
-    <label for="g-domains">Domínios permitidos</label>
-    <input id="g-domains" class="input mono" bind:value={domains} placeholder="empresa.com.br, parceiro.com" />
-    <p class="help">Vazio = qualquer conta Google com e-mail verificado pode se cadastrar.</p>
+    <label for="g-domains">{t('google.domains')}</label>
+    <input id="g-domains" class="input mono" bind:value={domains} placeholder={t('google.domainsPlaceholder')} />
+    <p class="help">{t('google.domainsHelp')}</p>
   </div>
 
   {#if error}<p class="field-error" role="alert">{error}</p>{/if}
 
   <div class="actions">
-    {#if saved && mode === 'settings'}<span class="help">Salvo. O botão "Entrar com Google" já está ativo.</span>{/if}
+    {#if saved && mode === 'settings'}<span class="help">{t('google.saved')}</span>{/if}
     {#if mode === 'wizard'}
-      <button type="button" class="btn btn-quiet" onclick={skip} disabled={busy}>Pular — configuro depois</button>
+      <button type="button" class="btn btn-quiet" onclick={skip} disabled={busy}>{t('setupStep.skip')}</button>
     {/if}
     <button type="submit" class="btn btn-solid" disabled={busy || !clientId.trim()}>
-      {busy ? 'Salvando…' : mode === 'wizard' ? 'Salvar e continuar' : 'Salvar'}
+      {busy ? t('common.saving') : mode === 'wizard' ? t('setupStep.saveContinue') : t('common.save')}
     </button>
   </div>
 </form>
@@ -189,7 +185,7 @@
     color: var(--ink-2);
   }
 
-  .steps strong {
+  .steps :global(strong) {
     color: var(--ink);
     font-weight: 500;
   }

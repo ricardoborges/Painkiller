@@ -1,3 +1,4 @@
+import { t } from '$lib/i18n/index.svelte';
 import { api } from '$lib/api';
 import type { DeploymentRecord, DeploymentStatus, EnvironmentType } from '$lib/types';
 import { toast } from '$lib/stores/toast.svelte';
@@ -24,18 +25,22 @@ export function isDeployActive(r: DeploymentRecord | null | undefined): boolean 
   return !!r && (r.status === 'PENDING' || r.status === 'BUILDING');
 }
 
-export const DEPLOY_STAGE: Record<DeploymentStatus, string> = {
-  PENDING: 'Na fila do Coolify',
-  BUILDING: 'Construindo e publicando',
-  HEALTHY: 'No ar',
-  FAILED: 'Falhou',
-  STOPPED: 'Interrompido'
-};
+const STAGE_KEYS = {
+  PENDING: 'deploys.stage.PENDING',
+  BUILDING: 'deploys.stage.BUILDING',
+  HEALTHY: 'deploys.stage.HEALTHY',
+  FAILED: 'deploys.stage.FAILED',
+  STOPPED: 'deploys.stage.STOPPED'
+} as const satisfies Record<DeploymentStatus, string>;
 
-const ENV_LABEL: Record<EnvironmentType, string> = {
-  test: 'Ambiente de teste',
-  production: 'Produção'
-};
+/** Etapa do deploy, no idioma atual. */
+export function deployStage(status: DeploymentStatus): string {
+  return t(STAGE_KEYS[status]);
+}
+
+function envLabel(env: EnvironmentType): string {
+  return env === 'test' ? t('deploys.env.test') : t('deploys.env.production');
+}
 
 /** O SQLite devolve datas sem fuso; o backend grava em UTC. */
 function parseUtc(iso: string): number {
@@ -153,8 +158,8 @@ class DeployTracker {
         if (this.now - this.started(current) > GIVE_UP_MS) {
           toast.show({
             tone: 'failed',
-            title: `${ENV_LABEL[current.environment]}: sem resposta do Coolify`,
-            detail: 'O deploy passou de 30 minutos sem terminar. Confira no Coolify.',
+            title: t('deploys.noResponse', { env: envLabel(current.environment) }),
+            detail: t('deploys.noResponseDetail'),
             duration: 12000
           });
           return;
@@ -171,8 +176,8 @@ class DeployTracker {
           if (++errors >= MAX_ERRORS) {
             toast.show({
               tone: 'failed',
-              title: 'Perdi o contato com o deploy',
-              detail: 'Não consegui consultar o andamento. Recarregue a página para tentar de novo.',
+              title: t('deploys.lostContact'),
+              detail: t('deploys.lostContactDetail'),
               duration: 12000
             });
             return;
@@ -188,22 +193,22 @@ class DeployTracker {
   private finish(r: DeploymentRecord) {
     this.finishedAt.set(r.id, Date.now());
     this.settled++;
-    const env = ENV_LABEL[r.environment];
+    const env = envLabel(r.environment);
     const took = this.elapsed(r);
     if (r.status === 'HEALTHY') {
       toast.show({
         tone: 'done',
-        title: r.environment === 'test' ? `${env} pronto` : 'Deploy em produção concluído',
-        detail: `Branch ${r.branch} · ${took}`,
+        title: r.environment === 'test' ? t('deploys.testReady', { env }) : t('deploys.productionDone'),
+        detail: `${t('deploys.branch', { branch: r.branch })} · ${took}`,
         href: r.url ?? undefined,
-        hrefLabel: r.url ? 'Abrir aplicação' : undefined,
+        hrefLabel: r.url ? t('deploys.openApp') : undefined,
         duration: 9000
       });
     } else {
       toast.show({
         tone: 'failed',
-        title: r.status === 'STOPPED' ? `${env}: deploy interrompido` : `${env}: deploy falhou`,
-        detail: lastLogLine(r.logs) || `Branch ${r.branch}`,
+        title: r.status === 'STOPPED' ? t('deploys.stopped', { env }) : t('deploys.failed', { env }),
+        detail: lastLogLine(r.logs) || t('deploys.branch', { branch: r.branch }),
         duration: 12000
       });
     }

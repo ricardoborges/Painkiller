@@ -1,19 +1,18 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { goto } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
   import ProjectForm from '$lib/components/ProjectForm.svelte';
 </script>
 
-<svelte:head><title>Novo projeto — Painkiller</title></svelte:head>
+<svelte:head><title>{t('projects.new')} — Painkiller</title></svelte:head>
 
 <header class="head">
   <a href="/projects" class="back label">
-    <Icon name="arrow-left" size={11} /> Projetos
+    <Icon name="arrow-left" size={11} /> {t('layout.nav.projects')}
   </a>
-  <h1 class="display">Novo projeto</h1>
-  <p class="lede sub">
-    Contexto, propósito e documentos que alimentam o agente de análise.
-  </p>
+  <h1 class="display">{t('projects.new')}</h1>
+  <p class="lede sub">{t('projects.lede')}</p>
 </header>
 
 <hr class="rule rule-ink" />

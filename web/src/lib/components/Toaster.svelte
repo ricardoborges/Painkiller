@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
@@ -6,33 +7,33 @@
 </script>
 
 <div class="toaster" aria-live="polite" aria-atomic="false">
-  {#each toast.items as t (t.id)}
+  {#each toast.items as item (item.id)}
     <div
       class="toast"
-      class:done={t.tone === 'done'}
-      class:failed={t.tone === 'failed'}
-      role={t.tone === 'failed' ? 'alert' : 'status'}
-      onmouseenter={() => toast.pause(t.id)}
-      onmouseleave={() => toast.resume(t.id)}
-      onfocusin={() => toast.pause(t.id)}
-      onfocusout={() => toast.resume(t.id)}
+      class:done={item.tone === 'done'}
+      class:failed={item.tone === 'failed'}
+      role={item.tone === 'failed' ? 'alert' : 'status'}
+      onmouseenter={() => toast.pause(item.id)}
+      onmouseleave={() => toast.resume(item.id)}
+      onfocusin={() => toast.pause(item.id)}
+      onfocusout={() => toast.resume(item.id)}
     >
-      <span class="ico" aria-hidden="true"><Icon name={ICON[t.tone]} size={14} /></span>
+      <span class="ico" aria-hidden="true"><Icon name={ICON[item.tone]} size={14} /></span>
       <div class="text">
-        <strong>{t.title}</strong>
-        {#if t.detail}<span class="detail mono">{t.detail}</span>{/if}
-        {#if t.href}
-          <a href={t.href} target="_blank" rel="noopener noreferrer" class="link mono">
-            {t.hrefLabel ?? t.href}
+        <strong>{item.title}</strong>
+        {#if item.detail}<span class="detail mono">{item.detail}</span>{/if}
+        {#if item.href}
+          <a href={item.href} target="_blank" rel="noopener noreferrer" class="link mono">
+            {item.hrefLabel ?? item.href}
             <Icon name="external" size={10} />
           </a>
         {/if}
       </div>
-      <button type="button" class="btn-icon close" aria-label="Fechar aviso" onclick={() => toast.dismiss(t.id)}>
+      <button type="button" class="btn-icon close" aria-label={t('common.closeNotice')} onclick={() => toast.dismiss(item.id)}>
         <Icon name="close" size={12} />
       </button>
       <!-- Contagem regressiva visível: o aviso some quando a linha esvazia -->
-      <span class="timer" style="animation-duration: {t.duration}ms" aria-hidden="true"></span>
+      <span class="timer" style="animation-duration: {item.duration}ms" aria-hidden="true"></span>
     </div>
   {/each}
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   /** Esqueleto com a métrica do conteúdo real. Nunca um spinner circular. */
   let {
     rows = 3,
@@ -7,7 +8,7 @@
 </script>
 
 {#if variant === 'list'}
-  <ul class="divide" aria-busy="true" aria-label="Carregando">
+  <ul class="divide" aria-busy="true" aria-label={t('common.loading')}>
     {#each { length: rows } as _, i (i)}
       <li class="item">
         <span class="skel idx"></span>
@@ -19,7 +20,7 @@
     {/each}
   </ul>
 {:else if variant === 'table'}
-  <ul class="divide" aria-busy="true" aria-label="Carregando">
+  <ul class="divide" aria-busy="true" aria-label={t('common.loading')}>
     {#each { length: rows } as _, i (i)}
       <li class="trow">
         <span class="skel bar" style="width: {55 - i * 7}%"></span>
@@ -28,7 +29,7 @@
     {/each}
   </ul>
 {:else}
-  <div class="lines" aria-busy="true" aria-label="Carregando">
+  <div class="lines" aria-busy="true" aria-label={t('common.loading')}>
     {#each { length: rows } as _, i (i)}
       <span class="skel bar thin" style="width: {[92, 78, 85, 54][i % 4]}%"></span>
     {/each}

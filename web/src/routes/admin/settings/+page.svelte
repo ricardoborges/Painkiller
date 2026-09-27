@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { setup } from '$lib/stores/setup.svelte';
   import AdminTabs from '$lib/components/AdminTabs.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
@@ -13,22 +14,20 @@
     setup.reload();
   });
 
-  const SECTIONS = [
-    { id: 'admin', title: 'Administrador' },
-    { id: 'environment', title: 'Ambiente' },
-    { id: 'google', title: 'Login com Google' },
+  const SECTIONS = $derived([
+    { id: 'admin', title: t('adminSettings.admin') },
+    { id: 'environment', title: t('setup.environment') },
+    { id: 'google', title: t('setup.google') },
     { id: 'coolify', title: 'Coolify' }
-  ];
+  ]);
 </script>
 
-<svelte:head><title>Configurações — Administração — Painkiller</title></svelte:head>
+<svelte:head><title>{t('adminTabs.settings')} — {t('admin.title')} — Painkiller</title></svelte:head>
 
 <header class="head spread">
   <div>
-    <h1 class="display">Administração</h1>
-    <p class="lede sub">
-      Configuração da plataforma, guardada no banco. Entra em vigor sem reiniciar.
-    </p>
+    <h1 class="display">{t('admin.title')}</h1>
+    <p class="lede sub">{t('adminSettings.lede')}</p>
   </div>
 </header>
 
@@ -39,32 +38,30 @@
 {#if !setup.state && !setup.error}
   <Skeleton rows={6} />
 {:else if setup.error}
-  <Placeholder kind="error" title="Não foi possível carregar a configuração" detail={setup.error}>
+  <Placeholder kind="error" title={t('setup.loadFailed')} detail={setup.error}>
     {#snippet action()}
-      <button type="button" class="btn btn-solid" onclick={() => setup.reload()}>Tentar de novo</button>
+      <button type="button" class="btn btn-solid" onclick={() => setup.reload()}>{t('common.retry')}</button>
     {/snippet}
   </Placeholder>
 {:else if setup.state}
   <div class="layout">
-    <nav class="toc" aria-label="Seções">
+    <nav class="toc" aria-label={t('adminSettings.sections')}>
       {#each SECTIONS as s (s.id)}
         <a href={`#${s.id}`}>{s.title}</a>
       {/each}
-      <p class="help env-note">
-        No .env ficam só ajustes de infraestrutura (imagens, portas, senha da conta de serviço do Gitea).
-      </p>
+      <p class="help env-note">{t('adminSettings.envNote')}</p>
     </nav>
     <div class="sections">
       <section id="admin">
-        <h2 class="title">Administrador</h2>
+        <h2 class="title">{t('adminSettings.admin')}</h2>
         <AdminAccountForm />
       </section>
       <section id="environment">
-        <h2 class="title">Ambiente</h2>
+        <h2 class="title">{t('setup.environment')}</h2>
         <EnvironmentStep mode="settings" />
       </section>
       <section id="google">
-        <h2 class="title">Login com Google</h2>
+        <h2 class="title">{t('setup.google')}</h2>
         <GoogleStep mode="settings" />
       </section>
       <section id="coolify">

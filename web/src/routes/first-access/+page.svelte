@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, ApiError } from '$lib/api';
   import { auth } from '$lib/stores/auth.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import LocaleSwitch from '$lib/components/LocaleSwitch.svelte';
 
   const MIN_PASSWORD = 12;
 
@@ -47,7 +49,7 @@
       // O layout manda o admin ao wizard de setup, que ainda não foi concluído.
       await goto('/setup', { replaceState: true });
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Não foi possível criar o administrador.';
+      error = err instanceof Error ? err.message : t('firstAccess.failed');
       if (err instanceof ApiError && err.status === 409) {
         setTimeout(() => goto('/login', { replaceState: true }), 1500);
       }
@@ -57,7 +59,9 @@
   }
 </script>
 
-<svelte:head><title>Primeiro acesso — Painkiller</title></svelte:head>
+<svelte:head><title>{t('firstAccess.title')} — Painkiller</title></svelte:head>
+
+<div class="corner-switch"><LocaleSwitch /></div>
 
 <div class="page">
   <section class="form-side">
@@ -67,13 +71,13 @@
         <span class="word">Painkiller</span>
       </div>
 
-      <span class="label">Primeiro acesso</span>
-      <h1 class="display">Crie a conta<br />do administrador.</h1>
+      <span class="label">{t('firstAccess.title')}</span>
+      <h1 class="display">{@html t('firstAccess.headline')}</h1>
 
       {#if !checking}
         <form onsubmit={submit} novalidate>
           <div class="field">
-            <label for="fa-user">Usuário</label>
+            <label for="fa-user">{t('common.username')}</label>
             <input
               id="fa-user"
               class="input"
@@ -81,11 +85,11 @@
               autocomplete="username"
               aria-invalid={touched && problems.username ? 'true' : undefined}
             />
-            {#if touched && problems.username}<p class="field-error">Informe um usuário, sem espaços.</p>{/if}
+            {#if touched && problems.username}<p class="field-error">{t('firstAccess.usernameError')}</p>{/if}
           </div>
 
           <div class="field">
-            <label for="fa-pass">Senha</label>
+            <label for="fa-pass">{t('common.password')}</label>
             <input
               id="fa-pass"
               class="input"
@@ -94,14 +98,14 @@
               autocomplete="new-password"
               aria-invalid={touched && problems.password ? 'true' : undefined}
             />
-            <p class="help">Pelo menos {MIN_PASSWORD} caracteres. Uma frase serve bem.</p>
+            <p class="help">{t('firstAccess.passwordHelp', { min: MIN_PASSWORD })}</p>
             {#if touched && problems.password}
-              <p class="field-error">A senha precisa de pelo menos {MIN_PASSWORD} caracteres.</p>
+              <p class="field-error">{t('firstAccess.passwordError', { min: MIN_PASSWORD })}</p>
             {/if}
           </div>
 
           <div class="field">
-            <label for="fa-confirm">Confirme a senha</label>
+            <label for="fa-confirm">{t('firstAccess.confirm')}</label>
             <input
               id="fa-confirm"
               class="input"
@@ -110,13 +114,13 @@
               autocomplete="new-password"
               aria-invalid={touched && problems.confirm ? 'true' : undefined}
             />
-            {#if touched && problems.confirm}<p class="field-error">As senhas não conferem.</p>{/if}
+            {#if touched && problems.confirm}<p class="field-error">{t('firstAccess.mismatch')}</p>{/if}
           </div>
 
           {#if error}<p class="field-error" role="alert">{error}</p>{/if}
 
           <button type="submit" class="btn btn-solid submit" disabled={busy}>
-            {busy ? 'Criando…' : 'Criar administrador'}
+            {busy ? t('sessionPicker.creating') : t('firstAccess.create')}
             {#if !busy}<Icon name="arrow-right" />{/if}
           </button>
         </form>
@@ -126,31 +130,22 @@
 
   <aside class="colophon">
     <div class="inner">
-      <span class="label">O que vem depois</span>
+      <span class="label">{t('firstAccess.next')}</span>
       <ol class="next">
         <li>
           <span class="mono n">1</span>
-          <div>Esta conta enxerga todos os projetos e configura a plataforma.</div>
+          <div>{t('firstAccess.next1')}</div>
         </li>
         <li>
           <span class="mono n">2</span>
-          <div>
-            Em seguida, o wizard: ambiente, login com Google e Coolify — os dois
-            últimos podem ficar para depois.
-          </div>
+          <div>{t('firstAccess.next2')}</div>
         </li>
         <li>
           <span class="mono n">3</span>
-          <div>
-            Esqueceu a senha? No servidor,
-            <span class="mono">painkiller admin-reset</span> reabre esta tela.
-          </div>
+          <div>{@html t('firstAccess.next3')}</div>
         </li>
       </ol>
-      <p class="note lede">
-        Esta tela só existe enquanto não há administrador: quem criar a conta primeiro fica com ela. Faça
-        isso logo depois de subir a plataforma.
-      </p>
+      <p class="note lede">{t('firstAccess.note')}</p>
     </div>
   </aside>
 </div>

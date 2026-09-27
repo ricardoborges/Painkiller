@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
 
@@ -10,7 +11,7 @@
 </script>
 
 <div class="redirecting mono faint pad">
-  Redirecionando para o Backlog…
+  {t('projects.redirecting')}
 </div>
 
 <style>

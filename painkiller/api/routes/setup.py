@@ -18,6 +18,7 @@ from painkiller.api.platform import AdminAccountError, PlatformConfig, suggest_w
 from painkiller.api.routes.auth import admin_session
 from painkiller.api.security import admin_account, require_admin
 from painkiller.core.domain.models import SETUP_STEPS, SetupStepStatus
+from painkiller.core.i18n import translate
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,11 @@ def _probe_mount(client, image: str, storage: str, token: str) -> tuple[bool, st
 @router.post("/environment/test")
 async def test_environment(request: Request):
     """Mount the storage folder into a throwaway container, as dispatch will, and read a sentinel."""
+    result = await _test_environment(request)
+    return {**result, "detail": translate(result["detail"])}
+
+
+async def _test_environment(request: Request) -> dict:
     platform = _platform(request)
     storage = _storage_dir()
     token = secrets.token_hex(8)
@@ -324,6 +330,8 @@ async def coolify_status(request: Request):
         container["error"] = f"Não foi possível inspecionar o Coolify: {e}"
     check = await _check_coolify(request)
     await _adopt_single_server(platform, check)
+    container["error"] = translate(container["error"])
+    check = {**check, "error": translate(check.get("error"))}
     return {"container": container, "api": check, "coolify": _coolify(platform)}
 
 

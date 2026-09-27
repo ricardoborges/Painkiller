@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, tp } from '$lib/i18n/index.svelte';
   import { api, authedUrl } from '$lib/api';
   import {
     PROJECT_TYPE_META,
@@ -30,7 +31,7 @@
     try {
       templates = await api.listAdminTemplates();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Falha ao carregar templates.';
+      error = e instanceof Error ? e.message : t('templates.loadFailed');
     } finally {
       loading = false;
     }
@@ -50,14 +51,14 @@
     dialogOpen = true;
   }
 
-  async function remove(t: ProjectTemplate) {
-    if (!confirm(`Excluir o template "${t.name}"?`)) return;
-    removing = t.id;
+  async function remove(tpl: ProjectTemplate) {
+    if (!confirm(t('templates.confirmDelete', { name: tpl.name }))) return;
+    removing = tpl.id;
     try {
-      await api.deleteAdminTemplate(t.id);
-      templates = templates.filter((x) => x.id !== t.id);
+      await api.deleteAdminTemplate(tpl.id);
+      templates = templates.filter((x) => x.id !== tpl.id);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Falha ao excluir template.';
+      error = e instanceof Error ? e.message : t('templates.deleteFailed');
     } finally {
       removing = null;
     }
@@ -84,18 +85,16 @@
 </script>
 
 <svelte:head>
-  <title>Templates de Projeto — Administração — Painkiller</title>
+  <title>{t('adminTabs.templates')} — {t('admin.title')} — Painkiller</title>
 </svelte:head>
 
 <header class="head spread">
   <div>
-    <h1 class="display">Administração</h1>
-    <p class="lede sub">
-      Gerenciamento central de configurações, templates arquiteturais e integração com deploy.
-    </p>
+    <h1 class="display">{t('admin.title')}</h1>
+    <p class="lede sub">{t('templates.lede')}</p>
   </div>
   <button type="button" class="btn btn-solid" onclick={openNew}>
-    <Icon name="plus" /> Novo template
+    <Icon name="plus" /> {t('templates.new')}
   </button>
 </header>
 
@@ -106,14 +105,14 @@
 
 <!-- Barra de Filtros e Resumo -->
 <div class="filter-bar">
-  <div class="filter-group" role="group" aria-label="Filtrar por categoria">
+  <div class="filter-group" role="group" aria-label={t('templates.filterAria')}>
     <button
       type="button"
       class="filter-btn"
       class:active={categoryFilter === 'all'}
       onclick={() => (categoryFilter = 'all')}
     >
-      Todos <span class="mono count">{templates.length}</span>
+      {t('templates.all')} <span class="mono count">{templates.length}</span>
     </button>
     <button
       type="button"
@@ -121,7 +120,7 @@
       class:active={categoryFilter === 'web'}
       onclick={() => (categoryFilter = 'web')}
     >
-      Web (Coolify) <span class="mono count">{countWeb}</span>
+      {t('templates.web')} <span class="mono count">{countWeb}</span>
     </button>
     <button
       type="button"
@@ -129,15 +128,15 @@
       class:active={categoryFilter === 'other'}
       onclick={() => (categoryFilter = 'other')}
     >
-      Outros (Desktop / Mobile) <span class="mono count">{countOther}</span>
+      {t('templates.other')} <span class="mono count">{countOther}</span>
     </button>
   </div>
 
   <span class="label tally">
     {#if loading}
-      Carregando templates…
+      {t('templates.loading')}
     {:else}
-      {filteredTemplates.length} {filteredTemplates.length === 1 ? 'template' : 'templates'}
+      {tp('templates.count', filteredTemplates.length)}
     {/if}
   </span>
 </div>
@@ -145,60 +144,60 @@
 {#if loading}
   <Skeleton rows={3} />
 {:else if error}
-  <Placeholder kind="error" title="Não foi possível carregar os templates" detail={error}>
+  <Placeholder kind="error" title={t('templates.loadFailedTitle')} detail={error}>
     {#snippet action()}
-      <button type="button" class="btn btn-solid" onclick={load}>Tentar de novo</button>
+      <button type="button" class="btn btn-solid" onclick={load}>{t('common.retry')}</button>
     {/snippet}
   </Placeholder>
 {:else if templates.length === 0}
   <Placeholder
-    title="Nenhum template cadastrado"
-    detail="Crie templates com especificações de arquitetura, anexo de arcabouço inicial (.zip), skills especializadas (.md/.zip) e compatibilidade com deploy no Coolify."
+    title={t('templates.emptyTitle')}
+    detail={t('templates.emptyDetail')}
   >
     {#snippet action()}
       <button type="button" class="btn btn-solid" onclick={openNew}>
-        <Icon name="plus" /> Cadastrar primeiro template
+        <Icon name="plus" /> {t('templates.createFirst')}
       </button>
     {/snippet}
   </Placeholder>
 {:else if filteredTemplates.length === 0}
   <Placeholder
-    title="Nenhum template nesta categoria"
-    detail="Não há templates correspondentes ao filtro selecionado."
+    title={t('templates.emptyFilterTitle')}
+    detail={t('templates.emptyFilterDetail')}
   >
     {#snippet action()}
       <button type="button" class="btn btn-line" onclick={() => (categoryFilter = 'all')}>
-        Ver todos os templates
+        {t('templates.seeAll')}
       </button>
     {/snippet}
   </Placeholder>
 {:else}
   <div class="template-grid">
-    {#each filteredTemplates as t (t.id)}
-      {@const meta = PROJECT_TYPE_META[t.project_type]}
-      <article class="template-card" class:inactive={!t.is_active}>
+    {#each filteredTemplates as tpl (tpl.id)}
+      {@const meta = PROJECT_TYPE_META[tpl.project_type]}
+      <article class="template-card" class:inactive={!tpl.is_active}>
         <header class="card-head">
           <div class="head-info">
             <div class="title-row">
-              <h2 class="template-title">{t.name}</h2>
-              {#if !t.is_active}
-                <span class="badge badge-inactive mono">Inativo</span>
+              <h2 class="template-title">{tpl.name}</h2>
+              {#if !tpl.is_active}
+                <span class="badge badge-inactive mono">{t('templates.inactive')}</span>
               {/if}
             </div>
-            {#if t.description}
-              <p class="template-desc">{t.description}</p>
+            {#if tpl.description}
+              <p class="template-desc">{tpl.description}</p>
             {/if}
           </div>
 
           <div class="head-badges">
-            <span class="badge mono type-badge">{meta?.label || t.project_type}</span>
-            {#if t.coolify_compatible}
-              <span class="badge mono coolify-badge" title="Compatível com deploy conteinerizado no Coolify">
+            <span class="badge mono type-badge">{meta?.label || tpl.project_type}</span>
+            {#if tpl.coolify_compatible}
+              <span class="badge mono coolify-badge" title={t('templates.coolifyTitle')}>
                 <Icon name="check" size={11} /> Coolify
               </span>
             {:else}
-              <span class="badge mono no-coolify-badge" title="Deploy Coolify indisponível para este tipo">
-                Sem Coolify
+              <span class="badge mono no-coolify-badge" title={t('templates.noCoolifyTitle')}>
+                {t('templates.noCoolify')}
               </span>
             {/if}
           </div>
@@ -207,75 +206,75 @@
         <!-- Anexos de Skill e Arcabouço -->
         <div class="card-files">
           <div class="file-item">
-            <span class="file-label label">Skill:</span>
-            {#if t.skill_filename}
+            <span class="file-label label">{t('templates.skill')}:</span>
+            {#if tpl.skill_filename}
               <a
-                href={authedUrl(`/admin/templates/${t.id}/skill/download`)}
+                href={authedUrl(`/admin/templates/${tpl.id}/skill/download`)}
                 class="file-link mono truncate"
                 download
-                title="Baixar arquivo de skill"
+                title={t('templates.downloadSkill')}
               >
                 <Icon name="download" size={11} />
-                <span>{t.skill_filename}</span>
+                <span>{tpl.skill_filename}</span>
               </a>
             {:else}
-              <span class="mono faint">Nenhum</span>
+              <span class="mono faint">{t('common.none')}</span>
             {/if}
           </div>
 
           <div class="file-item">
-            <span class="file-label label">Arcabouço:</span>
-            {#if t.scaffold_filename}
+            <span class="file-label label">{t('templates.scaffold')}:</span>
+            {#if tpl.scaffold_filename}
               <a
-                href={authedUrl(`/admin/templates/${t.id}/scaffold/download`)}
+                href={authedUrl(`/admin/templates/${tpl.id}/scaffold/download`)}
                 class="file-link mono truncate"
                 download
-                title="Baixar arcabouço zip"
+                title={t('templates.downloadScaffold')}
               >
                 <Icon name="download" size={11} />
-                <span>{t.scaffold_filename}</span>
+                <span>{tpl.scaffold_filename}</span>
               </a>
             {:else}
-              <span class="mono faint">Nenhum</span>
+              <span class="mono faint">{t('common.none')}</span>
             {/if}
           </div>
         </div>
 
         <!-- Prévia do Prompt -->
-        {#if t.prompt}
+        {#if tpl.prompt}
           <div class="prompt-box">
             <div class="prompt-header">
-              <span class="label">Prompt do Harness</span>
+              <span class="label">{t('templates.harnessPrompt')}</span>
               <button
                 type="button"
                 class="btn-quiet btn-sm mono toggle-prompt-btn"
-                onclick={() => togglePrompt(t.id)}
+                onclick={() => togglePrompt(tpl.id)}
               >
-                {expandedPrompts[t.id] ? 'Recolher' : 'Expandir'}
+                {expandedPrompts[tpl.id] ? t('templates.collapse') : t('templates.expand')}
               </button>
             </div>
-            <pre class="prompt-content mono" class:expanded={expandedPrompts[t.id]}>{t.prompt}</pre>
+            <pre class="prompt-content mono" class:expanded={expandedPrompts[tpl.id]}>{tpl.prompt}</pre>
           </div>
         {/if}
 
         <footer class="card-foot">
-          <span class="mono faint file-id">ID: {t.id}</span>
+          <span class="mono faint file-id">ID: {tpl.id}</span>
           <div class="actions">
             <button
               type="button"
               class="btn btn-quiet btn-sm"
-              onclick={() => openEdit(t)}
+              onclick={() => openEdit(tpl)}
             >
-              <Icon name="pencil" size={12} /> Editar
+              <Icon name="pencil" size={12} /> {t('common.edit')}
             </button>
             <button
               type="button"
               class="btn btn-quiet btn-sm danger-btn"
-              disabled={removing === t.id}
-              onclick={() => remove(t)}
+              disabled={removing === tpl.id}
+              onclick={() => remove(tpl)}
             >
               <Icon name="trash" size={12} />
-              {removing === t.id ? 'Excluindo…' : 'Excluir'}
+              {removing === tpl.id ? t('templates.deleting') : t('common.delete')}
             </button>
           </div>
         </footer>

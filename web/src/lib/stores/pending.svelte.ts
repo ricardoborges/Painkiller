@@ -1,3 +1,4 @@
+import { t } from '$lib/i18n/index.svelte';
 import { api } from '$lib/api';
 import type { Project, Task } from '$lib/types';
 
@@ -44,7 +45,7 @@ class PendingStore {
       this.entries = found;
       this.loaded = true;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'Falha ao carregar pendências.';
+      this.error = e instanceof Error ? e.message : t('pendingStore.loadFailed');
     } finally {
       this.loading = false;
     }

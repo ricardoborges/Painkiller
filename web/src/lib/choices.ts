@@ -1,3 +1,5 @@
+import { t } from './i18n/index.svelte';
+
 /* Perguntas de múltipla escolha do agente de análise.
    O prompt (CHOICES_FENCE em painkiller/engine/analysis.py) pede que o agente
    termine a pergunta com um bloco ```painkiller-choices contendo JSON. Aqui ele
@@ -47,10 +49,12 @@ function normalize(raw: unknown): Choices | null {
 }
 
 /** Rótulo da opção de resposta livre que o formulário sempre oferece. */
-export const OTHER_LABEL = 'Outro';
+export function otherLabel(): string {
+  return t('choices.other');
+}
 
 function isOther(label: string): boolean {
-  return /^outr[oa]s?(\s*\(.*\))?\s*[.:…]*$/i.test(label.trim());
+  return /^(outr[oa]s?|others?)(\s*\(.*\))?\s*[.:…]*$/i.test(label.trim());
 }
 
 /** Separa o bloco de opções do texto da mensagem. */
@@ -84,7 +88,7 @@ export function pickedFrom(answer: string | undefined, choices: Choices): Set<st
     .map((l) => l.replace(/^[-*]\s*/, '').trim())
     .filter(Boolean);
   const labels = new Set(choices.options.map((o) => o.label));
-  for (const line of lines) picked.add(labels.has(line) ? line : OTHER_LABEL);
+  for (const line of lines) picked.add(labels.has(line) ? line : otherLabel());
   return picked;
 }
 
@@ -93,5 +97,5 @@ export function composeAnswer(labels: string[], other: string): string {
   const o = other.trim();
   if (!labels.length) return o;
   const base = labels.length === 1 ? labels[0] : labels.map((l) => `- ${l}`).join('\n');
-  return o ? `${base}\n\n${OTHER_LABEL}: ${o}` : base;
+  return o ? `${base}\n\n${otherLabel()}: ${o}` : base;
 }

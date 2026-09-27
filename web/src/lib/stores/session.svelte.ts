@@ -1,3 +1,4 @@
+import { t } from '$lib/i18n/index.svelte';
 import { api } from '$lib/api';
 import type { IterationSession } from '$lib/types';
 
@@ -74,7 +75,7 @@ export class ProjectSessionStore {
 
       return list;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'Falha ao carregar sessões do projeto.';
+      this.error = e instanceof Error ? e.message : t('sessionStore.loadFailed');
       return [];
     } finally {
       this.loading = false;
@@ -95,7 +96,7 @@ export class ProjectSessionStore {
       await this.loadSessions(created.id);
       return created;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'Falha ao criar nova sessão.';
+      this.error = e instanceof Error ? e.message : t('sessionStore.createFailed');
       return null;
     } finally {
       this.creating = false;
@@ -110,7 +111,7 @@ export class ProjectSessionStore {
       this.sessions = this.sessions.map((s) => (s.id === id ? updated : s));
       return true;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : 'Falha ao encerrar a sessão.';
+      this.error = e instanceof Error ? e.message : t('analysisStore.closeFailed');
       return false;
     }
   }

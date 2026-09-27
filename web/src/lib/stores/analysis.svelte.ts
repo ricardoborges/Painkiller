@@ -1,3 +1,4 @@
+import { t } from '$lib/i18n/index.svelte';
 import { ApiError, api, openAnalysisStream } from '$lib/api';
 import { isImage, namePasted, parseAnalystMessage } from '$lib/attachments';
 import type { AgentEvent, AnalysisSession, ProjectDoc, Task } from '$lib/types';
@@ -184,7 +185,7 @@ export class AnalysisStore {
       this.attach(this.session.session_id);
     } catch (e) {
       this.#booted = false;
-      this.startError = e instanceof Error ? e.message : 'Falha ao subir o agente de análise.';
+      this.startError = e instanceof Error ? e.message : t('analysisStore.startFailed');
     } finally {
       this.starting = false;
     }
@@ -334,10 +335,10 @@ export class AnalysisStore {
     } catch (e) {
       this.sendError =
         e instanceof ApiError && e.status === 404
-          ? 'A sessão não existe mais no servidor. Recomece a análise.'
+          ? t('analysisStore.sessionGone')
           : e instanceof Error
             ? e.message
-            : 'Falha ao enviar a resposta.';
+            : t('analysisStore.sendFailed');
     }
   }
 
@@ -360,7 +361,7 @@ export class AnalysisStore {
         .then((res) => this.#patchAttachment(item.id, { path: res.path }))
         .catch((e) =>
           this.#patchAttachment(item.id, {
-            error: e instanceof Error ? e.message : 'Falha ao enviar o arquivo.'
+            error: e instanceof Error ? e.message : t('analysisStore.uploadFailed')
           })
         );
     }
@@ -388,7 +389,7 @@ export class AnalysisStore {
     try {
       await api.finishAnalysis(this.session.session_id);
     } catch (e) {
-      this.sendError = e instanceof Error ? e.message : 'Falha ao encerrar a sessão.';
+      this.sendError = e instanceof Error ? e.message : t('analysisStore.closeFailed');
     } finally {
       this.closing = false;
     }
@@ -404,7 +405,7 @@ export class AnalysisStore {
       this.remember(null);
       return tasks;
     } catch (e) {
-      this.sendError = e instanceof Error ? e.message : 'Falha ao importar o backlog.';
+      this.sendError = e instanceof Error ? e.message : t('analysisStore.importFailed');
       return null;
     } finally {
       this.committing = false;

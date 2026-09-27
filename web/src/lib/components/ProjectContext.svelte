@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { goto } from '$app/navigation';
   import { api, baseName } from '$lib/api';
   import type { AnalysisSession, Project, Task } from '$lib/types';
@@ -17,7 +18,7 @@
   let restarting = $state(false);
 
   async function handleRestart() {
-    if (!confirm('Descartar a sessão atual e iniciar uma nova análise do zero?')) {
+    if (!confirm(t('context.confirmRestart'))) {
       return;
     }
     restarting = true;
@@ -26,7 +27,7 @@
       await a.restart();
       await goto(`${base}/initial-analysis`);
     } catch (e) {
-      alert(e instanceof Error ? e.message : 'Falha ao reiniciar análise.');
+      alert(e instanceof Error ? e.message : t('context.restartFailed'));
     } finally {
       restarting = false;
     }
@@ -93,26 +94,26 @@
 
   const tally = $derived.by(() => {
     if (stage?.kind !== 'backlog') return null;
-    const t = stage.tasks;
+    const list = stage.tasks;
     return {
-      total: t.length,
-      done: t.filter((x) => x.status === 'COMPLETED').length,
-      awaiting: t.filter((x) => x.status === 'AWAITING_ANALYST').length,
-      running: t.filter((x) => x.status === 'RUNNING').length,
-      failed: t.filter((x) => x.status === 'FAILED').length
+      total: list.length,
+      done: list.filter((x) => x.status === 'COMPLETED').length,
+      awaiting: list.filter((x) => x.status === 'AWAITING_ANALYST').length,
+      running: list.filter((x) => x.status === 'RUNNING').length,
+      failed: list.filter((x) => x.status === 'FAILED').length
     };
   });
 
-  const ANALYSIS_DETAIL: Record<string, string> = {
-    STARTING: 'Subindo o contêiner do agente.',
-    WAITING_AGENT: 'O agente está trabalhando.',
-    WAITING_ANALYST: 'O agente aguarda a sua resposta.'
-  };
+  const ANALYSIS_DETAIL = $derived<Record<string, string>>({
+    STARTING: t('context.detail.STARTING'),
+    WAITING_AGENT: t('context.detail.WAITING_AGENT'),
+    WAITING_ANALYST: t('context.detail.WAITING_ANALYST')
+  });
 
   const sections = $derived([
-    { label: 'Descrição geral', text: project.description },
-    { label: 'Propósito de negócio', text: project.purpose },
-    { label: 'Solução desejada', text: project.solution_description }
+    { label: t('form.description'), text: project.description },
+    { label: t('context.businessPurpose'), text: project.purpose },
+    { label: t('form.solution'), text: project.solution_description }
   ]);
 </script>
 
@@ -126,7 +127,7 @@
         {#if s.text}
           <p>{s.text}</p>
         {:else}
-          <p class="faint">Não informado.</p>
+          <p class="faint">{t('projects.notProvided')}.</p>
         {/if}
       </section>
     {/each}
@@ -136,10 +137,10 @@
     <!-- Com o painel do projeto no ar, o andamento mora lá: aqui só o contexto. -->
     {#if !sessionStore.hasCompleted}
       <div class="panel">
-        <h2 class="label">Andamento</h2>
+        <h2 class="label">{t('context.progress')}</h2>
 
         <ol class="trail">
-          {#each ['Contexto', 'Análise inicial', 'Backlog'] as label, i (label)}
+          {#each [t('projectNav.context'), t('context.initialAnalysis'), t('projectNav.backlog')] as label, i (label)}
             {@const done = stage !== null && i < current}
             <li class:done class:here={stage !== null && i === current}>
               <span class="mark mono" aria-hidden="true">
@@ -153,91 +154,89 @@
         {#if !stage}
           <Skeleton rows={2} />
         {:else if stage.kind === 'new'}
-          <p class="state">Primeira vez neste projeto.</p>
-          <p class="help">
-            O agente vai entrevistar você a partir do contexto ao lado e propor o backlog.
-          </p>
+          <p class="state">{t('context.firstTime')}</p>
+          <p class="help">{t('context.firstTimeHelp')}</p>
           <a class="btn btn-solid go" href="{base}/initial-analysis">
-            <Icon name="play" size={11} /> Iniciar análise
+            <Icon name="play" size={11} /> {t('context.startAnalysis')}
           </a>
         {:else if stage.kind === 'analysis'}
-          <p class="state">Análise inicial em andamento.</p>
+          <p class="state">{t('context.inProgress')}</p>
           <p class="help">{ANALYSIS_DETAIL[stage.session.status] ?? ''}</p>
           <div class="andamento-actions">
             <a class="btn btn-solid go" href="{base}/initial-analysis">
-              Continuar análise <Icon name="arrow-right" size={11} />
+              {t('context.continue')} <Icon name="arrow-right" size={11} />
             </a>
             <button
               type="button"
               class="btn btn-quiet btn-sm restart-btn"
               onclick={handleRestart}
               disabled={restarting}
-              title="Descartar a análise atual e recomeçar do zero"
+              title={t('context.restartTitle')}
             >
               <Icon name="play" size={10} />
-              <span>{restarting ? 'Reiniciando…' : 'Reiniciar do zero'}</span>
+              <span>{restarting ? t('context.restarting') : t('context.restart')}</span>
             </button>
           </div>
         {:else if stage.kind === 'analysis-done'}
-          <p class="state">Análise concluída.</p>
-          <p class="help">O backlog proposto pelo agente ainda não foi importado.</p>
+          <p class="state">{t('context.done')}</p>
+          <p class="help">{t('context.notImported')}</p>
           <div class="andamento-actions">
             <a class="btn btn-solid go" href="{base}/initial-analysis">
-              Importar backlog <Icon name="arrow-right" size={11} />
+              {t('context.importBacklog')} <Icon name="arrow-right" size={11} />
             </a>
             <button
               type="button"
               class="btn btn-quiet btn-sm restart-btn"
               onclick={handleRestart}
               disabled={restarting}
-              title="Descartar e recomeçar análise do zero"
+              title={t('context.restartTitle')}
             >
               <Icon name="play" size={10} />
-              <span>{restarting ? 'Reiniciando…' : 'Reiniciar do zero'}</span>
+              <span>{restarting ? t('context.restarting') : t('context.restart')}</span>
             </button>
           </div>
         {:else if stage.kind === 'analysis-failed'}
-          <p class="state">A última análise falhou.</p>
+          <p class="state">{t('context.failed')}</p>
           {#if stage.session.error}
             <p class="help clamp-2" title={stage.session.error}>{stage.session.error}</p>
           {/if}
           <div class="andamento-actions">
             <a class="btn btn-solid go" href="{base}/initial-analysis">
-              Retomar análise <Icon name="arrow-right" size={11} />
+              {t('context.resume')} <Icon name="arrow-right" size={11} />
             </a>
             <button
               type="button"
               class="btn btn-quiet btn-sm restart-btn"
               onclick={handleRestart}
               disabled={restarting}
-              title="Descartar e recomeçar análise do zero"
+              title={t('context.restartTitle')}
             >
               <Icon name="play" size={10} />
-              <span>{restarting ? 'Reiniciando…' : 'Reiniciar do zero'}</span>
+              <span>{restarting ? t('context.restarting') : t('context.restart')}</span>
             </button>
           </div>
         {:else if tally}
           <p class="state">
-            {tally.done === tally.total ? 'Backlog concluído.' : 'Backlog em execução.'}
+            {tally.done === tally.total ? t('context.backlogDone') : t('context.backlogRunning')}
           </p>
           <p class="help mono counts">
-            {tally.done}/{tally.total} concluídas{#if tally.running}&nbsp;· {tally.running} executando{/if}{#if tally.failed}&nbsp;· {tally.failed} com falha{/if}
+            {t('context.tallyDone', { done: tally.done, total: tally.total })}{#if tally.running}&nbsp;· {t('context.tallyRunning', { count: tally.running })}{/if}{#if tally.failed}&nbsp;· {t('context.tallyFailed', { count: tally.failed })}{/if}
           </p>
           {#if tally.awaiting}
             <a class="blocked label" href="{base}/backlog">
               <span class="dot" aria-hidden="true"></span>
-              {tally.awaiting} aguardando analista
+              {t('projects.awaitingAnalyst', { count: tally.awaiting })}
             </a>
           {/if}
           <a class="btn btn-solid go" href="{base}/backlog">
-            Abrir backlog <Icon name="arrow-right" size={11} />
+            {t('context.openBacklog')} <Icon name="arrow-right" size={11} />
           </a>
         {/if}
       </div>
     {/if}
 
     <div class="panel">
-      <h2 class="label">Anexos de contexto</h2>
+      <h2 class="label">{t('context.attachments')}</h2>
       {#if project.attachments.length}
         <ul class="files divide">
           {#each project.attachments as path (path)}
@@ -247,25 +246,21 @@
             </li>
           {/each}
         </ul>
-        <p class="help">
-          Extraídos como texto e concatenados ao prompt inicial da análise.
-        </p>
+        <p class="help">{t('context.attachmentsHelp')}</p>
       {:else}
-        <p class="faint none">
-          Nenhum documento anexado. O agente vai trabalhar só com os três campos ao lado.
-        </p>
+        <p class="faint none">{t('context.noAttachments')}</p>
       {/if}
     </div>
 
     <div class="panel">
-      <h2 class="label">Repositório</h2>
+      <h2 class="label">{t('projectNav.repository')}</h2>
       <p class="mono path">{project.repo_path}</p>
-      <p class="help">Montado em <span class="mono">/workspace</span> dentro do contêiner.</p>
+      <p class="help">{@html t('context.mounted')}</p>
     </div>
 
     <div class="acts">
       <a class="btn btn-line" href="{base}/edit">
-        <Icon name="pencil" size={11} /> Editar
+        <Icon name="pencil" size={11} /> {t('common.edit')}
       </a>
     </div>
   </aside>

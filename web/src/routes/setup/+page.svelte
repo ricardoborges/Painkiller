@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
   import { setup } from '$lib/stores/setup.svelte';
@@ -11,18 +12,18 @@
 
   type Stage = SetupStep | 'review';
 
-  const STAGES: { id: Stage; title: string; optional: boolean }[] = [
-    { id: 'environment', title: 'Ambiente', optional: false },
-    { id: 'google', title: 'Login com Google', optional: true },
+  const STAGES = $derived<{ id: Stage; title: string; optional: boolean }[]>([
+    { id: 'environment', title: t('setup.environment'), optional: false },
+    { id: 'google', title: t('setup.google'), optional: true },
     { id: 'coolify', title: 'Coolify', optional: true },
-    { id: 'review', title: 'Revisão', optional: false }
-  ];
+    { id: 'review', title: t('setup.review'), optional: false }
+  ]);
 
-  const STATUS_WORD: Record<SetupStepStatus, string> = {
-    pending: 'pendente',
-    done: 'feito',
-    skipped: 'pulado'
-  };
+  const STATUS_WORD = $derived<Record<SetupStepStatus, string>>({
+    pending: t('setup.pending'),
+    done: t('setup.done'),
+    skipped: t('setup.skipped')
+  });
 
   let current = $state<Stage>('environment');
   let finishing = $state(false);
@@ -50,7 +51,7 @@
       setup.set(await api.completeSetup());
       await goto('/projects', { replaceState: true });
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Não foi possível concluir.';
+      error = e instanceof Error ? e.message : t('setup.finishFailed');
     } finally {
       finishing = false;
     }
@@ -59,15 +60,12 @@
   const index = $derived(STAGES.findIndex((s) => s.id === current));
 </script>
 
-<svelte:head><title>Configuração inicial — Painkiller</title></svelte:head>
+<svelte:head><title>{t('setup.title')} — Painkiller</title></svelte:head>
 
 <header class="head">
-  <span class="label">Primeiro acesso do administrador</span>
-  <h1 class="display">Configuração inicial</h1>
-  <p class="lede">
-    O que dava para descobrir sozinho já está preenchido. Google e Coolify podem ficar para depois — tudo
-    aqui continua editável em Admin → Configurações.
-  </p>
+  <span class="label">{t('setup.kicker')}</span>
+  <h1 class="display">{t('setup.title')}</h1>
+  <p class="lede">{t('setup.lede')}</p>
 </header>
 
 <hr class="rule rule-ink" />
@@ -75,14 +73,14 @@
 {#if !setup.state && !setup.error}
   <Skeleton rows={6} />
 {:else if setup.error}
-  <Placeholder kind="error" title="Não foi possível carregar a configuração" detail={setup.error}>
+  <Placeholder kind="error" title={t('setup.loadFailed')} detail={setup.error}>
     {#snippet action()}
-      <button type="button" class="btn btn-solid" onclick={() => setup.reload()}>Tentar de novo</button>
+      <button type="button" class="btn btn-solid" onclick={() => setup.reload()}>{t('common.retry')}</button>
     {/snippet}
   </Placeholder>
 {:else if setup.state}
   <div class="layout">
-    <nav class="rail" aria-label="Etapas">
+    <nav class="rail" aria-label={t('setup.steps')}>
       <ol>
         {#each STAGES as stage, i (stage.id)}
           {@const status = statusOf(stage.id)}
@@ -98,7 +96,7 @@
               <span class="num mono">{i + 1}</span>
               <span class="name">
                 {stage.title}
-                {#if stage.optional}<span class="opt">opcional</span>{/if}
+                {#if stage.optional}<span class="opt">{t('setup.optional')}</span>{/if}
               </span>
               {#if status}<span class="label st">{STATUS_WORD[status]}</span>{/if}
             </button>
@@ -130,19 +128,16 @@
                     <span class="name">{stage.title}</span>
                     <span class="label">{status ? STATUS_WORD[status] : ''}</span>
                     <button type="button" class="btn btn-quiet btn-sm" onclick={() => (current = stage.id)}>
-                      {status === 'done' ? 'Revisar' : 'Configurar'}
+                      {status === 'done' ? t('setup.reviewAction') : t('setup.configure')}
                     </button>
                   </li>
                 {/each}
               </ul>
-              <p class="lede small">
-                Falta uma última coisa, por projeto: a chave de API do provedor do harness (Gemini ou
-                DeepSeek) passa a ser pedida na criação de cada projeto. Não há mais chave global no servidor.
-              </p>
+              <p class="lede small">{t('setup.lastThing')}</p>
               {#if error}<p class="field-error" role="alert">{error}</p>{/if}
               <div class="actions">
                 <button type="button" class="btn btn-solid" onclick={finish} disabled={finishing}>
-                  {finishing ? 'Concluindo…' : 'Concluir e ir para os projetos'}
+                  {finishing ? t('setup.finishing') : t('setup.finish')}
                 </button>
               </div>
             </div>

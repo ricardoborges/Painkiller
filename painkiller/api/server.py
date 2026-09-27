@@ -8,9 +8,11 @@ from dotenv import load_dotenv
 # Ensure .env is loaded with priority
 load_dotenv(override=True)
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import asyncio
 import logging
@@ -45,9 +47,39 @@ from painkiller.api.routes.deployments import router as deployments_router
 from painkiller.api.routes.gitea_proxy import router as gitea_proxy_router
 from painkiller.api.routes.admin_templates import router as admin_templates_router, public_router as templates_router
 from painkiller.api.routes.setup import router as setup_router
+from painkiller.core.i18n import normalize_locale, parse_accept_language, reset_locale, set_locale, translate
 
 
 logger = logging.getLogger(__name__)
+
+
+class LocaleMiddleware:
+    """Idioma da requisição: `?lang=` (EventSource e links não mandam cabeçalho), senão Accept-Language."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        locale = None
+        query = scope.get("query_string", b"").decode("latin-1")
+        for pair in query.split("&"):
+            name, _, value = pair.partition("=")
+            if name == "lang":
+                locale = normalize_locale(value)
+                break
+        if locale is None:
+            for name, value in scope.get("headers", []):
+                if name == b"accept-language":
+                    locale = parse_accept_language(value.decode("latin-1"))
+                    break
+        token = set_locale(locale)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_locale(token)
 
 
 async def _align_project_repo_urls(tracker: SQLiteIssueTracker, vcs: GiteaAdapter) -> None:
@@ -149,6 +181,14 @@ def create_app(
         await tracker.close()
 
     app = FastAPI(title="Painkiller Engine", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(LocaleMiddleware)
+
+    # As rotas levantam a mensagem em pt-BR (inclusive o str(e) do engine);
+    # aqui ela sai no idioma da requisição.
+    @app.exception_handler(StarletteHTTPException)
+    async def localized_http_exception(request: Request, exc: StarletteHTTPException):
+        exc.detail = translate(exc.detail)
+        return await http_exception_handler(request, exc)
 
     # Instantiate adapters
     vcs = GiteaAdapter()

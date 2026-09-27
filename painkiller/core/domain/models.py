@@ -208,6 +208,9 @@ class Project(BaseModel):
     model: Optional[str] = None
     # Esforço de raciocínio; só vale para os harnesses de EFFORT_HARNESSES.
     effort: Optional[str] = None
+    # Idioma do agente: entrevista, specs, backlog, código, commits e o que o
+    # orquestrador grava na tarefa. Um de core.i18n.SUPPORTED_LOCALES.
+    language: str = "pt-BR"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property

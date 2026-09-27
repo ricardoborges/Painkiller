@@ -1,6 +1,7 @@
 """Docker Sandbox Runner implementing SandboxPort."""
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -60,8 +61,12 @@ class DockerSandboxRunner(SandboxPort):
     ) -> ExecutionResult:
         """Run the task in a detached Docker container, waiting for completion or clarification."""
         loop = asyncio.get_running_loop()
+        # O executor não herda o contexto: sem a cópia, as mensagens que a
+        # thread escreve para o analista sairiam no idioma padrão, não no do projeto.
+        context = contextvars.copy_context()
         return await loop.run_in_executor(
             None,
+            context.run,
             self._run_task_sync,
             task,
             repo_path,

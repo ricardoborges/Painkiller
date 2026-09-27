@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { goto } from '$app/navigation';
   import { marked } from 'marked';
   import { api } from '$lib/api';
@@ -211,9 +212,7 @@
     // Sem o arquivo gravado, a escolha vai para o agente, que então o grava.
     if (
       backlogReady &&
-      (text.toLowerCase().includes('seguir para backlog') ||
-        text.toLowerCase().includes('importar backlog') ||
-        text.toLowerCase().includes('abrir backlog'))
+      /(seguir para (o )?backlog|importar (o )?backlog|abrir (o )?backlog|(proceed|go|continue) to (the )?backlog|import (the )?backlog|open (the )?backlog)/i.test(text)
     ) {
       importBacklog();
     } else {
@@ -235,17 +234,17 @@
 
   function confirmRestart() {
     menuOpen = false;
-    if (a.finished || confirm('Descartar a conversa atual e recomeçar do zero?')) {
+    if (a.finished || confirm(t('analysis.confirmRestart'))) {
       a.restart();
     }
   }
 
-  const categoryLabels: Record<string, string> = {
-    spec: 'Especificação',
-    plan: 'Plano',
-    backlog: 'Backlog',
-    doc: 'Documento'
-  };
+  const categoryLabels = $derived<Record<string, string>>({
+    spec: t('analysis.cat.spec'),
+    plan: t('analysis.cat.plan'),
+    backlog: t('projectNav.backlog'),
+    doc: t('docViewer.category.doc')
+  });
 
   const modalFilteredDocs = $derived.by(() => {
     let list = a.docs;
@@ -300,7 +299,7 @@
     try {
       modalDocContent = await api.getProjectDocContent(data.project.id, d.path);
     } catch (e) {
-      modalDocError = e instanceof Error ? e.message : 'Falha ao carregar conteúdo do artefato.';
+      modalDocError = e instanceof Error ? e.message : t('analysis.docLoadFailed');
     } finally {
       modalDocLoading = false;
     }
@@ -328,12 +327,12 @@
 
   /** Um rótulo só para o estado da sessão — é o que a toolbar precisa dizer. */
   const phase = $derived.by(() => {
-    if (a.startError) return { key: 'error', text: 'O agente não subiu' };
-    if (a.starting) return { key: 'boot', text: 'Subindo o contêiner' };
-    if (a.session?.status === 'FAILED' || failure) return { key: 'error', text: 'Sessão falhou' };
-    if (a.finished) return { key: 'done', text: 'Sessão encerrada' };
-    if (a.myTurn) return { key: 'you', text: 'Sua vez' };
-    return { key: 'agent', text: 'Agente trabalhando' };
+    if (a.startError) return { key: 'error', text: t('analysis.phase.startError') };
+    if (a.starting) return { key: 'boot', text: t('analysis.phase.boot') };
+    if (a.session?.status === 'FAILED' || failure) return { key: 'error', text: t('analysis.phase.failed') };
+    if (a.finished) return { key: 'done', text: t('analysis.phase.done') };
+    if (a.myTurn) return { key: 'you', text: t('analysis.phase.you') };
+    return { key: 'agent', text: t('activity.working') };
   });
 </script>
 
@@ -360,10 +359,10 @@
         class="btn btn-line btn-sm artifacts-btn"
         class:active={artifactsModalOpen}
         onclick={() => openArtifactsModal()}
-        title="Exibir artefatos do projeto em uma janela modal"
+        title={t('analysis.artifactsTitle')}
       >
         <Icon name="file-text" size={13} />
-        <span>Artefatos</span>
+        <span>{t('projectNav.artifacts')}</span>
         {#if a.docs.length > 0}
           <span class="badge mono">{a.docs.length}</span>
         {/if}
@@ -375,9 +374,9 @@
           target="_blank"
           rel="noopener noreferrer"
           class="btn btn-line btn-sm repo-link"
-          title="Abrir repositório externo"
+          title={t('analysis.openRepo')}
         >
-          <span>Repositório</span>
+          <span>{t('projectNav.repository')}</span>
           <Icon name="external" size={11} />
         </a>
       {/if}
@@ -390,10 +389,10 @@
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onclick={() => (menuOpen = !menuOpen)}
-          title="Mais opções e detalhes"
+          title={t('analysis.moreTitle')}
         >
           <span aria-hidden="true">···</span>
-          <span class="sr">Mais ações</span>
+          <span class="sr">{t('analysis.moreActions')}</span>
         </button>
         {#if menuOpen}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -407,11 +406,11 @@
               }}
             >
               <Icon name="info" size={12} />
-              <span>Detalhes da sessão</span>
+              <span>{t('analysis.sessionDetails')}</span>
             </button>
             <button type="button" role="menuitem" onclick={confirmRestart} disabled={a.starting}>
               <Icon name="play" size={12} />
-              <span>{a.finished ? 'Nova sessão' : 'Recomeçar do zero'}</span>
+              <span>{a.finished ? t('sessionPicker.new') : t('context.restart')}</span>
             </button>
             <button
               type="button"
@@ -424,7 +423,7 @@
               disabled={a.closing || a.finished || !a.session}
             >
               <Icon name="close" size={12} />
-              <span>{a.closing ? 'Encerrando…' : 'Encerrar sessão'}</span>
+              <span>{a.closing ? t('analysis.closing') : t('analysis.close')}</span>
             </button>
           </div>
         {/if}
@@ -444,17 +443,17 @@
       {#if dragDepth > 0}
         <div class="dropzone" aria-hidden="true">
           <Icon name="upload" size={16} />
-          <span class="label">Solte para anexar</span>
+          <span class="label">{t('analysis.dropToAttach')}</span>
         </div>
       {/if}
       {#if a.startError}
         <div class="scroller">
-          <Placeholder kind="error" title="O agente não subiu" detail={a.startError}>
+          <Placeholder kind="error" title={t('analysis.phase.startError')} detail={a.startError}>
             {#snippet action()}
               <button type="button" class="btn btn-solid" onclick={() => a.boot(true)}>
-                Tentar de novo
+                {t('common.retry')}
               </button>
-              <a class="btn btn-line" href="/projects">Voltar</a>
+              <a class="btn btn-line" href="/projects">{t('common.back')}</a>
             {/snippet}
           </Placeholder>
         </div>
@@ -463,11 +462,11 @@
           <ol class="transcript">
             {#if a.starting}
               <li class="turn">
-                <span class="label who">Agente</span>
+                <span class="label who">{t('login.agent')}</span>
                 <div class="content">
                   <p class="working">
                     <span class="pulse" aria-hidden="true"></span>
-                    Subindo o contêiner e carregando as skills.
+                    {t('analysis.booting')}
                   </p>
                   <Skeleton variant="lines" rows={4} />
                 </div>
@@ -478,7 +477,7 @@
               {@const parsed = turn.who === 'agent' ? parseMessage(turn.text) : null}
               {@const showBacklogAction = backlogReady && i === lastAgentTurn && a.myTurn}
               <li class="turn" class:is-analyst={turn.who === 'analyst'}>
-                <span class="label who">{turn.who === 'agent' ? 'Agente' : 'Você'}</span>
+                <span class="label who">{turn.who === 'agent' ? t('login.agent') : t('analysis.you')}</span>
                 <div class="content">
                   {#if turn.text}
                     <div class="markdown-body">
@@ -499,9 +498,9 @@
                         class="btn btn-solid btn-sm follow-backlog-btn"
                         onclick={importBacklog}
                         disabled={a.committing}
-                        title="Importar tarefas geradas e seguir para o backlog"
+                        title={t('analysis.importTitle')}
                       >
-                        <span>{a.committing ? 'Importando tarefas…' : 'Seguir para backlog'}</span>
+                        <span>{a.committing ? t('analysis.importing') : t('analysis.toBacklog')}</span>
                         <Icon name="arrow-right" size={12} />
                       </button>
                     </div>
@@ -519,7 +518,7 @@
 
             {#if !a.myTurn && !a.finished && !a.starting && !failure}
               <li class="turn">
-                <span class="label who">Agente</span>
+                <span class="label who">{t('login.agent')}</span>
                 <div class="content">
                   {#if a.streaming}
                     <div class="markdown-body live-streaming">
@@ -527,14 +526,14 @@
                     </div>
                   {:else if a.reasoning}
                     <p class="working">
-                      <span class="pulse" aria-hidden="true"></span> Raciocinando.
+                      <span class="pulse" aria-hidden="true"></span> {t('analysis.reasoning')}
                     </p>
                     <!-- O raciocínio é registro de máquina, não fala: fica
                          rebaixado, e some assim que o texto de verdade começa. -->
                     <p class="reasoning">{a.reasoning}</p>
                   {:else}
                     <p class="working">
-                      <span class="pulse" aria-hidden="true"></span> Trabalhando.
+                      <span class="pulse" aria-hidden="true"></span> {t('analysis.working')}
                     </p>
                     <Skeleton variant="lines" rows={2} />
                   {/if}
@@ -545,14 +544,14 @@
 
           {#if failure}
             <div class="failure hatch" role="alert">
-              <p class="label">O agente parou</p>
+              <p class="label">{t('analysis.agentStopped')}</p>
               <p>{failure}</p>
             </div>
           {/if}
 
           {#if a.diagnostics.length}
             <details class="diag">
-              <summary class="label">Saída bruta do contêiner ({a.diagnostics.length})</summary>
+              <summary class="label">{t('analysis.rawOutput', { count: a.diagnostics.length })}</summary>
               <pre class="mono">{a.diagnostics.join('\n')}</pre>
             </details>
           {/if}
@@ -560,7 +559,7 @@
 
         {#if !pinned}
           <button type="button" class="jump label" class:low={!needsComposer} onclick={toBottom}>
-            Ir para o fim ↓
+            {t('analysis.jumpToEnd')}
           </button>
         {/if}
 
@@ -574,7 +573,7 @@
         {#if a.attachments.length}
           <!-- Fora do composer: quando o agente pergunta com opções, os anexos
                seguem junto com a escolha. -->
-          <ul class="tray" aria-label="Anexos do próximo envio">
+          <ul class="tray" aria-label={t('analysis.trayAria')}>
             {#each a.attachments as item (item.id)}
               <li class="pending" class:hatch={!!item.error} title={item.error ?? item.name}>
                 {#if item.preview}
@@ -584,14 +583,14 @@
                 {/if}
                 <span class="mono name">{item.name}</span>
                 {#if item.error}
-                  <span class="state">falhou</span>
+                  <span class="state">{t('check.fail')}</span>
                 {:else if !item.path}
-                  <span class="state">enviando…</span>
+                  <span class="state">{t('analysis.uploading')}</span>
                 {/if}
                 <button
                   type="button"
                   class="remove"
-                  aria-label={`Remover ${item.name}`}
+                  aria-label={t('form.removeFile', { name: item.name })}
                   onclick={() => a.removeAttachment(item.id)}
                 >
                   <Icon name="close" size={11} />
@@ -610,27 +609,24 @@
               class="textarea"
               rows="2"
               placeholder={a.finished
-                ? 'Sessão encerrada.'
+                ? t('analysis.placeholderClosed')
                 : a.myTurn
-                  ? 'Responda ao agente…'
-                  : 'Aguarde — o agente está com o turno.'}
+                  ? t('analysis.placeholderYou')
+                  : t('analysis.placeholderWait')}
               onkeydown={onKeydown}
               disabled={!a.myTurn}
             ></textarea>
             <div class="composer-foot">
-              <span class="help">
-                <span class="mono">Enter</span> envia, <span class="mono">Shift+Enter</span> quebra linha.
-                Arraste ou cole arquivos e imagens.
-              </span>
+              <span class="help">{@html t('analysis.composerHelp')}</span>
               <input bind:this={picker} type="file" multiple hidden onchange={onPick} />
               <button
                 type="button"
                 class="btn btn-line btn-sm"
                 onclick={() => picker?.click()}
                 disabled={!a.myTurn}
-                title="Anexar arquivos ou imagens"
+                title={t('analysis.attachTitle')}
               >
-                <Icon name="clip" size={12} /> Anexar
+                <Icon name="clip" size={12} /> {t('analysis.attach')}
               </button>
               <button
                 type="button"
@@ -638,7 +634,7 @@
                 onclick={() => a.send()}
                 disabled={!a.myTurn || !a.canSend}
               >
-                Enviar <Icon name="send" size={12} />
+                {t('analysis.send')} <Icon name="send" size={12} />
               </button>
             </div>
           </div>
@@ -648,7 +644,7 @@
   </div>
 </div>
 
-<Modal bind:open={artifactsModalOpen} title="Artefatos do Projeto" width="64rem">
+<Modal bind:open={artifactsModalOpen} title={t('analysis.artifactsModal')} width="64rem">
   {#snippet body()}
     {#if a.loadingDocs && !a.docs.length}
       <div class="artifacts-modal-loading">
@@ -658,8 +654,8 @@
       <div class="artifacts-modal-empty">
         <Placeholder
           kind="empty"
-          title="Nenhum artefato gravado ainda"
-          detail="O agente grava arquivos de especificação em docs/superpowers/specs/, planos em docs/superpowers/plans/ e tarefas em .painkiller/backlogs/, um arquivo por sessão, durante a conversa."
+          title={t('analysis.noArtifacts')}
+          detail={t('analysis.noArtifactsDetail')}
         />
       </div>
     {:else}
@@ -669,7 +665,7 @@
           <div class="sidebar-search">
             <input
               type="search"
-              placeholder="Filtrar artefatos..."
+              placeholder={t('analysis.filterArtifacts')}
               bind:value={modalSearch}
               class="search-input mono"
             />
@@ -682,9 +678,9 @@
               class:active={modalCategory === 'all'}
               onclick={() => (modalCategory = 'all')}
             >
-              Todos <span class="mono count">({a.docs.length})</span>
+              {t('templates.all')} <span class="mono count">({a.docs.length})</span>
             </button>
-            {#each ['spec', 'plan', 'backlog', 'doc'] as cat}
+            {#each ['spec', 'plan', 'backlog', 'doc'] as cat (cat)}
               {@const count = a.docs.filter((d) => d.category === cat).length}
               {#if count > 0}
                 <button
@@ -716,7 +712,7 @@
                 </button>
               </li>
             {:else}
-              <li class="faint mono empty-filter">Nenhum artefato encontrado.</li>
+              <li class="faint mono empty-filter">{t('analysis.noneFound')}</li>
             {/each}
           </ul>
         </aside>
@@ -741,20 +737,20 @@
                     target="_blank"
                     rel="noopener noreferrer"
                     class="btn btn-quiet btn-sm"
-                    title="Ver no Gitea"
+                    title={t('artifacts.openInGitea')}
                   >
                     <Icon name="external" size={11} /> Gitea
                   </a>
                 {/if}
 
-                <div class="seg-control" role="group" aria-label="Modo de visualização">
+                <div class="seg-control" role="group" aria-label={t('docViewer.viewMode')}>
                   <button
                     type="button"
                     class="seg-btn"
                     class:active={modalViewMode === 'rendered'}
                     onclick={() => (modalViewMode = 'rendered')}
                   >
-                    Renderizado
+                    {t('docViewer.rendered')}
                   </button>
                   <button
                     type="button"
@@ -762,7 +758,7 @@
                     class:active={modalViewMode === 'raw'}
                     onclick={() => (modalViewMode = 'raw')}
                   >
-                    Código
+                    {t('analysis.code')}
                   </button>
                 </div>
 
@@ -771,10 +767,10 @@
                   class="btn btn-quiet btn-sm copy-btn"
                   onclick={copyModalDocText}
                   disabled={!modalDocContent?.content}
-                  title="Copiar conteúdo do artefato"
+                  title={t('analysis.copyContent')}
                 >
                   <Icon name={modalDocCopied ? 'check' : 'copy'} size={12} />
-                  <span>{modalDocCopied ? 'Copiado!' : 'Copiar'}</span>
+                  <span>{modalDocCopied ? t('docViewer.copied') : t('common.copy')}</span>
                 </button>
               </div>
             </div>
@@ -799,7 +795,7 @@
             </div>
           {:else}
             <div class="preview-empty faint">
-              Selecione um artefato à esquerda para visualizar seu conteúdo.
+              {t('analysis.selectArtifact')}
             </div>
           {/if}
         </main>
@@ -813,10 +809,10 @@
         class="btn btn-quiet btn-sm"
         onclick={() => (artifactsModalOpen = false)}
       >
-        <Icon name="external" size={11} /> Ver página completa de artefatos
+        <Icon name="external" size={11} /> {t('analysis.fullArtifactsPage')}
       </a>
       <button type="button" class="btn btn-solid btn-sm" onclick={() => (artifactsModalOpen = false)}>
-        Fechar
+        {t('common.close')}
       </button>
     </div>
   {/snippet}
@@ -832,13 +828,13 @@
 
 <Modal
   bind:open={sessionModalOpen}
-  title="Detalhes da Sessão"
+  title={t('analysis.sessionDetails')}
   width="38rem"
 >
   {#snippet body()}
     <div class="session-details">
       <div class="detail-row">
-        <span class="detail-label label">Contêiner Docker</span>
+        <span class="detail-label label">{t('analysis.dockerContainer')}</span>
         <div class="detail-box">
           <code class="mono detail-val">{a.session?.container_name ?? '—'}</code>
           {#if a.session?.container_name}
@@ -846,17 +842,17 @@
               type="button"
               class="btn btn-quiet btn-sm copy-btn"
               onclick={() => a.session?.container_name && copyToClipboard(a.session.container_name, 'container')}
-              title="Copiar nome do contêiner"
+              title={t('analysis.copyContainer')}
             >
               <Icon name={copiedField === 'container' ? 'check' : 'copy'} size={12} />
-              <span>{copiedField === 'container' ? 'Copiado!' : 'Copiar'}</span>
+              <span>{copiedField === 'container' ? t('docViewer.copied') : t('common.copy')}</span>
             </button>
           {/if}
         </div>
       </div>
 
       <div class="detail-row">
-        <span class="detail-label label">Workspace Local</span>
+        <span class="detail-label label">{t('analysis.localWorkspace')}</span>
         <div class="detail-box">
           <code class="mono detail-val truncate" title={data.project.repo_path}>{data.project.repo_path}</code>
           {#if data.project.repo_path}
@@ -864,26 +860,26 @@
               type="button"
               class="btn btn-quiet btn-sm copy-btn"
               onclick={() => copyToClipboard(data.project.repo_path, 'workspace')}
-              title="Copiar caminho do workspace"
+              title={t('analysis.copyWorkspace')}
             >
               <Icon name={copiedField === 'workspace' ? 'check' : 'copy'} size={12} />
-              <span>{copiedField === 'workspace' ? 'Copiado!' : 'Copiar'}</span>
+              <span>{copiedField === 'workspace' ? t('docViewer.copied') : t('common.copy')}</span>
             </button>
           {/if}
         </div>
       </div>
 
       <div class="detail-row">
-        <span class="detail-label label">Status Operacional</span>
+        <span class="detail-label label">{t('analysis.operationalStatus')}</span>
         <div class="detail-box plain">
-          <span class="mono detail-val">{a.session?.status ?? (a.starting ? 'SUBINDO' : 'DISPONÍVEL')}</span>
+          <span class="mono detail-val">{a.session?.status ?? (a.starting ? t('analysis.statusStarting') : t('analysis.statusAvailable'))}</span>
         </div>
       </div>
     </div>
   {/snippet}
   {#snippet footer()}
     <button type="button" class="btn btn-solid btn-sm" onclick={() => (sessionModalOpen = false)}>
-      Fechar
+      {t('common.close')}
     </button>
   {/snippet}
 </Modal>

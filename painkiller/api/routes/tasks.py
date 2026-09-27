@@ -23,7 +23,7 @@ async def get_task(task_id: str, request: Request):
     tracker = request.app.state.tracker
     task = await tracker.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
     return task
 
 
@@ -151,7 +151,7 @@ async def reply_clarification(task_id: str, req: ClarificationReplyRequest, requ
     orchestrator = request.app.state.orchestrator
     clar = await tracker.get_pending_clarification(task_id)
     if not clar:
-        raise HTTPException(status_code=404, detail="No pending clarification for this task")
+        raise HTTPException(status_code=404, detail="Nenhuma pendência de esclarecimento para esta tarefa")
 
     updated_task = await orchestrator.reply_clarification(clar.id, req.answer)
     return updated_task
@@ -175,11 +175,11 @@ async def get_task_diff(task_id: str, request: Request):
 
     task = await tracker.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
 
     project = await tracker.get_project(task.project_id)
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
 
     diff_content = await git.get_diff(project.repo_path, base_branch=project.default_branch)
 

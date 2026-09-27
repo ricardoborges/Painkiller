@@ -14,6 +14,7 @@ from painkiller.api.routes.auth import ensure_gitea_account
 from painkiller.api.security import current_user, require_project, visible_project
 from painkiller.core.attachment_reader import extract_attachment_text
 from painkiller.core.domain.models import EFFORT_HARNESSES, EFFORT_LEVELS, User, harness_effort, key_provider
+from painkiller.core.i18n import SUPPORTED_LOCALES, get_locale, translate
 from painkiller.core.naming import compose_project_identity
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -30,6 +31,8 @@ class CreateProjectRequest(BaseModel):
     api_key: Optional[str] = None
     model: Optional[str] = None
     effort: Optional[str] = None
+    # Sem valor, vale o idioma em que o analista está usando a interface.
+    language: Optional[str] = None
 
 
 class UpdateProjectRequest(BaseModel):
@@ -41,6 +44,7 @@ class UpdateProjectRequest(BaseModel):
     api_key: Optional[str] = None
     model: Optional[str] = None
     effort: Optional[str] = None
+    language: Optional[str] = None
 
 
 class ValidateKeyRequest(BaseModel):
@@ -70,6 +74,13 @@ def _checked_effort(harness: Optional[str], effort: Optional[str]) -> Optional[s
     return harness_effort(harness, effort)
 
 
+def _checked_language(language: Optional[str]) -> str:
+    """The agent language to store; 400 for anything but a supported locale."""
+    if language not in SUPPORTED_LOCALES:
+        raise HTTPException(status_code=400, detail=f"Idioma inválido. Use um de: {', '.join(SUPPORTED_LOCALES)}.")
+    return language
+
+
 def _get_storage_dir() -> str:
     return os.environ.get("PAINKILLER_STORAGE_DIR") or os.path.join(os.getcwd(), "storage")
 
@@ -93,7 +104,8 @@ async def list_projects(request: Request, user: User = Depends(current_user)):
 @router.post("/validate-key")
 async def validate_project_key(req: ValidateKeyRequest, request: Request):
     """Ask the harness' provider whether the key works, before saving the project."""
-    return await request.app.state.key_validator(key_provider(req.harness), req.api_key)
+    result = await request.app.state.key_validator(key_provider(req.harness), req.api_key)
+    return {**result, "detail": translate(result.get("detail"))}
 
 
 @router.post("")
@@ -113,6 +125,7 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         raise HTTPException(status_code=400, detail=f"Informe a chave de API {provider} do projeto.")
     req.api_key = req.api_key.strip()
     effort = _checked_effort(req.harness, req.effort)
+    language = _checked_language(req.language or get_locale())
 
     identity = compose_project_identity(user, req.name)
 
@@ -158,6 +171,7 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         model=req.model,
         effort=effort,
         project_id=identity.project_id,
+        language=language,
     )
     return _format_project(project)
 
@@ -202,6 +216,7 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
             api_key=req.api_key,
             model=req.model,
             effort=effort,
+            language=_checked_language(req.language) if req.language is not None else None,
         )
         return _format_project(updated)
     except ValueError as e:

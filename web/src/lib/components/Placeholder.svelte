@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import type { Snippet } from 'svelte';
   import Icon from './Icon.svelte';
 
@@ -21,7 +22,7 @@
 
 <div class="placeholder" class:error={kind === 'error'}>
   {#if kind === 'error'}
-    <span class="badge label"><Icon name="alert" size={12} /> Falha</span>
+    <span class="badge label"><Icon name="alert" size={12} /> {t('common.failure')}</span>
   {/if}
   <h3 class="title">{title}</h3>
   {#if detail}

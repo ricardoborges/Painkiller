@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { api } from '$lib/api';
   import type { Clarification, Task } from '$lib/types';
   import Icon from './Icon.svelte';
@@ -37,7 +38,7 @@
         clarification = 'status' in res && res.status === 'none' ? null : (res as Clarification);
       })
       .catch((e) => {
-        error = e instanceof Error ? e.message : 'Falha ao ler a pendência.';
+        error = e instanceof Error ? e.message : t('clarification.loadFailed');
       })
       .finally(() => {
         loading = false;
@@ -55,7 +56,7 @@
       answer = '';
       onresolved(updated);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Falha ao responder.';
+      error = e instanceof Error ? e.message : t('clarification.answerFailed');
     } finally {
       sending = false;
     }
@@ -66,12 +67,10 @@
   {#if loading}
     <Skeleton variant="lines" rows={2} />
   {:else if !clarification}
-    <p class="faint small">
-      A tarefa está marcada como aguardando, mas não há pendência registrada.
-    </p>
+    <p class="faint small">{t('clarification.none')}</p>
   {:else}
     <div class="q">
-      <span class="label">Pergunta do agente</span>
+      <span class="label">{t('clarification.question')}</span>
       <p class="question">{clarification.question}</p>
       {#if clarification.context_summary}
         <p class="ctx mono">{clarification.context_summary}</p>
@@ -82,9 +81,8 @@
       <div class="running">
         <span class="pulse" aria-hidden="true"></span>
         <span>
-          Resposta entregue. O contêiner foi retomado na branch
-          <span class="mono">{task.assigned_branch ?? `feature/${task.id}`}</span> — a requisição
-          fica aberta até o agente terminar.
+          {t('clarification.delivered')}
+          <span class="mono">{task.assigned_branch ?? `feature/${task.id}`}</span> {t('clarification.deliveredTail')}
         </span>
         <Elapsed from={startedAt} />
       </div>
@@ -94,12 +92,12 @@
           bind:value={answer}
           class="textarea"
           rows="3"
-          placeholder="Responda de forma que o agente consiga decidir sozinho…"
+          placeholder={t('clarification.placeholder')}
         ></textarea>
         <div class="foot">
-          <span class="help">Responder reexecuta a tarefa e pode levar minutos.</span>
+          <span class="help">{t('clarification.help')}</span>
           <button type="button" class="btn btn-accent" onclick={submit} disabled={!answer.trim()}>
-            Responder e retomar <Icon name="arrow-right" size={12} />
+            {t('clarification.submit')} <Icon name="arrow-right" size={12} />
           </button>
         </div>
       </div>

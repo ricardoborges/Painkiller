@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { api } from '$lib/api';
   import { setup } from '$lib/stores/setup.svelte';
   import type { CoolifyStatus } from '$lib/types';
@@ -52,7 +53,7 @@
       status = await api.coolifyStatus();
       if (status.coolify.server_uuid && !serverUuid) serverUuid = status.coolify.server_uuid;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Não foi possível consultar o Coolify.';
+      error = e instanceof Error ? e.message : t('coolify.statusFailed');
     } finally {
       loadingStatus = false;
     }
@@ -74,7 +75,7 @@
       if (result.password) created = { email: result.email, password: result.password };
       await refresh();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'A automação falhou. Use o passo a passo manual.';
+      error = e instanceof Error ? e.message : t('coolify.automationFailed');
       manual = true;
     } finally {
       automating = false;
@@ -85,7 +86,7 @@
     try {
       revealed = await api.coolifyCredentials();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Credenciais indisponíveis.';
+      error = e instanceof Error ? e.message : t('coolify.credentialsUnavailable');
     }
   }
 
@@ -108,7 +109,7 @@
       await refresh();
       onsaved?.();
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Não foi possível salvar.';
+      error = err instanceof Error ? err.message : t('common.saveFailed');
     } finally {
       busy = false;
     }
@@ -120,7 +121,7 @@
       setup.set(await api.skipSetupStep('coolify'));
       onsaved?.();
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Não foi possível pular a etapa.';
+      error = err instanceof Error ? err.message : t('setupStep.skipFailed');
     } finally {
       busy = false;
     }
@@ -128,27 +129,21 @@
 </script>
 
 <form class="step" onsubmit={save}>
-  <p class="lede small">
-    Opcional. O Coolify publica cada tarefa concluída num ambiente de teste ("Testar") e o projeto em
-    produção. Sem ele, o botão "Testar" só simula o endereço.
-  </p>
+  <p class="lede small">{t('coolify.intro')}</p>
 
   <section class="auto" aria-labelledby="c-auto-title">
     <div class="auto-head">
-      <h3 id="c-auto-title" class="title">Configuração automática</h3>
-      <span class="label">recomendado</span>
+      <h3 id="c-auto-title" class="title">{t('coolify.autoTitle')}</h3>
+      <span class="label">{t('coolify.recommended')}</span>
     </div>
     <p class="small muted">
-      Um clique: cria a conta de administrador do Coolify (se ainda não existir), liga a API e gera um
-      token com permissão total, tudo dentro do contêiner <span class="mono">painkiller-coolify</span>. O
-      servidor de deploy já vem pronto: ao subir, o próprio Coolify registra este host como
-      <span class="mono">localhost</span> e liga o proxy que publica os ambientes.
-      {#if ready}Gerar de novo substitui o token atual.{/if}
+      {@html t('coolify.autoBody')}
+      {#if ready}{t('coolify.regenerateNote')}{/if}
     </p>
     <div class="auto-row">
       {#if status && !container?.root_user}
         <div class="field grow">
-          <label for="c-email">E-mail da conta de administrador</label>
+          <label for="c-email">{t('coolify.adminEmail')}</label>
           <input id="c-email" class="input mono" type="email" bind:value={email} />
         </div>
       {/if}
@@ -158,33 +153,31 @@
         onclick={automate}
         disabled={automating || !container?.reachable}
       >
-        {automating ? 'Configurando…' : ready ? 'Gerar novo token' : 'Configurar automaticamente'}
+        {automating ? t('coolify.configuring') : ready ? t('coolify.newToken') : t('coolify.configureAuto')}
       </button>
     </div>
     {#if status && !container?.reachable}
-      <p class="help">O contêiner do Coolify precisa estar rodando: <span class="mono">docker compose up -d</span>.</p>
+      <p class="help">{@html t('coolify.containerNeeded')}</p>
     {/if}
   </section>
 
   {#if created}
     <section class="once" role="status">
-      <h3 class="label">Conta criada no Coolify — guarde a senha</h3>
-      <p class="help">
-        O Painkiller também a guarda cifrada; ela pode ser vista de novo em Admin → Configurações.
-      </p>
-      <CopyValue label="E-mail" value={created.email} />
-      <CopyValue label="Senha" value={created.password} />
+      <h3 class="label">{t('coolify.createdTitle')}</h3>
+      <p class="help">{t('coolify.createdHelp')}</p>
+      <CopyValue label={t('common.email')} value={created.email} />
+      <CopyValue label={t('common.password')} value={created.password} />
       <a href={`${dash}/login`} target="_blank" rel="noopener noreferrer" class="btn btn-line btn-sm open">
-        Abrir o Coolify <Icon name="external" size={11} />
+        {t('coolify.open')} <Icon name="external" size={11} />
       </a>
     </section>
   {/if}
 
   <section class="block">
     <div class="block-head">
-      <h3 class="label">Situação</h3>
+      <h3 class="label">{t('coolify.status')}</h3>
       <button type="button" class="btn btn-quiet btn-sm" onclick={refresh} disabled={loadingStatus}>
-        {loadingStatus ? 'Consultando…' : 'Verificar de novo'}
+        {loadingStatus ? t('coolify.checking') : t('coolify.recheck')}
       </button>
     </div>
     {#if loadingStatus && !status}
@@ -193,31 +186,31 @@
       <ul class="checks">
         <Check
           state={container?.reachable ? 'ok' : 'fail'}
-          label="Contêiner do Coolify rodando"
+          label={t('coolify.checkContainer')}
           detail={container?.reachable ? '' : (container?.error ?? '')}
         />
         <Check
           state={!container?.reachable ? 'unknown' : container.root_user ? 'ok' : 'pending'}
-          label="Conta de administrador (root)"
+          label={t('coolify.checkRoot')}
           detail={container?.root_email ?? ''}
         />
         <Check
           state={!container?.reachable ? 'unknown' : container.api_enabled ? 'ok' : 'pending'}
-          label="API ligada"
+          label={t('coolify.checkApi')}
         />
         <Check
           state={ready ? 'ok' : coolify.has_token ? 'fail' : 'pending'}
-          label="Token de API aceito"
+          label={t('coolify.checkToken')}
           detail={ready ? `Coolify ${apiCheck?.version}` : (apiCheck?.error ?? '')}
         />
         <Check
           state={!ready ? 'unknown' : deployServer?.usable ? 'ok' : 'fail'}
-          label="Servidor de deploy (este host)"
+          label={t('coolify.checkServer')}
           detail={!ready
-            ? 'Verificado depois que o token for aceito.'
+            ? t('coolify.serverAfterToken')
             : deployServer
-              ? `${deployServer.name} (${deployServer.ip})${deployServer.usable ? '' : ' — o Coolify ainda não validou o SSH até ele; confira o contêiner painkiller-coolify-host.'}`
-              : 'Nenhum servidor cadastrado no Coolify.'}
+              ? `${deployServer.name} (${deployServer.ip})${deployServer.usable ? '' : t('coolify.serverNotValidated')}`
+              : t('coolify.noServer')}
         />
       </ul>
     {/if}
@@ -225,48 +218,47 @@
 
   <section class="block">
     <button type="button" class="disclose" aria-expanded={manual} onclick={() => (manual = !manual)}>
-      <span class="mono">{manual ? '−' : '+'}</span> Prefiro fazer manualmente
+      <span class="mono">{manual ? '−' : '+'}</span> {t('coolify.manual')}
     </button>
     {#if manual}
       <ol class="steps">
         <li>
           <span class="n mono">1</span>
           <div>
-            Crie a conta de administrador. A primeira conta cadastrada vira root e fecha o cadastro.
+            {t('coolify.manual1')}
             <a href={`${dash}/register`} target="_blank" rel="noopener noreferrer" class="ext">
-              Abrir cadastro <Icon name="external" size={11} />
+              {t('coolify.openRegister')} <Icon name="external" size={11} />
             </a>
           </div>
         </li>
         <li>
           <span class="n mono">2</span>
           <div>
-            Em <strong>Settings → Advanced</strong>, ligue <strong>API Access</strong> e salve.
+            {@html t('coolify.manual2')}
             <a href={`${dash}/settings/advanced`} target="_blank" rel="noopener noreferrer" class="ext">
-              Abrir Settings <Icon name="external" size={11} />
+              {t('coolify.openSettings')} <Icon name="external" size={11} />
             </a>
           </div>
         </li>
         <li>
           <span class="n mono">3</span>
           <div>
-            Em <strong>Keys &amp; Tokens → API Tokens</strong>, crie um token com a permissão
-            <strong>root</strong> e copie-o (ele só aparece uma vez).
+            {@html t('coolify.manual3')}
             <a href={`${dash}/security/api-tokens`} target="_blank" rel="noopener noreferrer" class="ext">
-              Abrir API Tokens <Icon name="external" size={11} />
+              {t('coolify.openTokens')} <Icon name="external" size={11} />
             </a>
           </div>
         </li>
         <li>
           <span class="n mono">4</span>
           <div class="field grow">
-            <label for="c-token">Token de API</label>
+            <label for="c-token">{t('coolify.apiToken')}</label>
             <input
               id="c-token"
               type="password"
               class="input mono"
               bind:value={token}
-              placeholder={coolify.has_token ? `Salvo (${coolify.masked_token}) — deixe em branco para manter` : '1|…'}
+              placeholder={coolify.has_token ? t('coolify.tokenSaved', { masked: coolify.masked_token ?? '' }) : '1|…'}
               autocomplete="off"
             />
           </div>
@@ -277,15 +269,15 @@
 
   <div class="grid">
     <div class="field">
-      <label for="c-wildcard">Domínio dos ambientes</label>
+      <label for="c-wildcard">{t('coolify.wildcard')}</label>
       <input id="c-wildcard" class="input mono" bind:value={wildcard} placeholder={coolify.suggested_wildcard_domain} />
       <p class="help">
-        Cada ambiente vira <span class="mono">projeto-test.{wildcard || coolify.suggested_wildcard_domain}</span>.
-        Um <span class="mono">IP.nip.io</span> funciona sem DNS.
+        {t('coolify.wildcardHelpA')} <span class="mono">{t('coolify.wildcardExample')}.{wildcard || coolify.suggested_wildcard_domain}</span>.
+        {@html t('coolify.wildcardHelpB')}
       </p>
     </div>
     <div class="field">
-      <label for="c-server">Servidor de deploy</label>
+      <label for="c-server">{t('coolify.server')}</label>
       {#if servers.length > 1}
         <select id="c-server" class="input mono" bind:value={serverUuid}>
           {#each servers as s (s.uuid)}
@@ -293,25 +285,25 @@
           {/each}
         </select>
       {:else}
-        <input id="c-server" class="input mono" value={servers[0]?.name ?? (serverUuid || 'automático')} disabled />
-        <p class="help">Com um servidor só, ele é escolhido sozinho.</p>
+        <input id="c-server" class="input mono" value={servers[0]?.name ?? (serverUuid || t('coolify.automatic'))} disabled />
+        <p class="help">{t('coolify.singleServer')}</p>
       {/if}
     </div>
   </div>
 
   {#if mode === 'settings'}
     <div class="field">
-      <label for="c-dash">Endereço do painel do Coolify</label>
+      <label for="c-dash">{t('coolify.dashboard')}</label>
       <input id="c-dash" class="input mono" bind:value={dashboardUrl} />
-      <p class="help">Usado só nos links desta tela. Padrão: o host do Painkiller na porta COOLIFY_PORT.</p>
+      <p class="help">{t('coolify.dashboardHelp')}</p>
     </div>
     {#if coolify.root_email}
       <div class="creds">
         {#if revealed}
-          <CopyValue label="E-mail root do Coolify" value={revealed.email} />
-          {#if revealed.password}<CopyValue label="Senha" value={revealed.password} />{/if}
+          <CopyValue label={t('coolify.rootEmail')} value={revealed.email} />
+          {#if revealed.password}<CopyValue label={t('common.password')} value={revealed.password} />{/if}
         {:else}
-          <button type="button" class="btn btn-line btn-sm" onclick={reveal}>Ver credenciais do Coolify</button>
+          <button type="button" class="btn btn-line btn-sm" onclick={reveal}>{t('coolify.reveal')}</button>
         {/if}
       </div>
     {/if}
@@ -320,15 +312,15 @@
   {#if error}<p class="field-error" role="alert">{error}</p>{/if}
 
   <div class="actions">
-    {#if saved && mode === 'settings'}<span class="help">Salvo.</span>{/if}
+    {#if saved && mode === 'settings'}<span class="help">{t('common.saved')}</span>{/if}
     <a href={dash} target="_blank" rel="noopener noreferrer" class="btn btn-quiet">
-      Abrir o Coolify <Icon name="external" size={11} />
+      {t('coolify.open')} <Icon name="external" size={11} />
     </a>
     {#if mode === 'wizard' && !ready}
-      <button type="button" class="btn btn-quiet" onclick={skip} disabled={busy}>Pular — configuro depois</button>
+      <button type="button" class="btn btn-quiet" onclick={skip} disabled={busy}>{t('setupStep.skip')}</button>
     {/if}
     <button type="submit" class="btn btn-solid" disabled={busy || (!ready && !token.trim())}>
-      {busy ? 'Salvando…' : mode === 'wizard' ? 'Salvar e continuar' : 'Salvar'}
+      {busy ? t('common.saving') : mode === 'wizard' ? t('setupStep.saveContinue') : t('common.save')}
     </button>
   </div>
 </form>
@@ -435,7 +427,7 @@
     color: var(--ink-2);
   }
 
-  .steps strong {
+  .steps :global(strong) {
     color: var(--ink);
     font-weight: 500;
   }

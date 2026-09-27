@@ -1,16 +1,17 @@
 <script lang="ts">
+  import { t } from '$lib/i18n/index.svelte';
   import { page } from '$app/state';
 
   /** Subnavegação da área de administração. */
   let { templateCount }: { templateCount?: number } = $props();
 
-  const tabs = [
-    { href: '/admin/templates', label: 'Templates de Projeto' },
-    { href: '/admin/settings', label: 'Configurações' }
-  ];
+  const tabs = $derived([
+    { href: '/admin/templates', label: t('adminTabs.templates') },
+    { href: '/admin/settings', label: t('adminTabs.settings') }
+  ]);
 </script>
 
-<nav class="admin-tabs" aria-label="Abas da administração">
+<nav class="admin-tabs" aria-label={t('adminTabs.aria')}>
   {#each tabs as tab (tab.href)}
     {@const active = page.url.pathname.startsWith(tab.href)}
     <a href={tab.href} class="tab" class:active aria-current={active ? 'page' : undefined}>

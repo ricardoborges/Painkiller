@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, formatDate } from '$lib/i18n/index.svelte';
   import { api, authedUrl } from '$lib/api';
   import type { ProjectDoc } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
@@ -21,12 +22,12 @@
   let viewerOpen = $state(false);
 
   /* Tudo o que o agente produziu num lugar só. */
-  const GROUPS = [
-    { key: 'spec', title: 'Especificações', hint: 'O que o brainstorming decidiu construir.' },
-    { key: 'plan', title: 'Planos de implementação', hint: 'Como o trabalho foi dividido.' },
-    { key: 'backlog', title: 'Backlog decomposto', hint: 'O JSON que vira tarefas ao importar.' },
-    { key: 'doc', title: 'Outros documentos', hint: 'Markdown avulso em docs/.' }
-  ] as const;
+  const GROUPS = $derived([
+    { key: 'spec', title: t('artifacts.spec'), hint: t('artifacts.specHint') },
+    { key: 'plan', title: t('artifacts.plan'), hint: t('artifacts.planHint') },
+    { key: 'backlog', title: t('artifacts.backlog'), hint: t('artifacts.backlogHint') },
+    { key: 'doc', title: t('artifacts.doc'), hint: t('artifacts.docHint') }
+  ] as const);
 
   const grouped = $derived(
     GROUPS.map((g) => ({ ...g, items: docs.filter((d) => d.category === g.key) })).filter(
@@ -44,7 +45,7 @@
         docs = await api.listProjectDocs(data.project.id);
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Falha ao listar os artefatos.';
+      error = e instanceof Error ? e.message : t('artifacts.loadFailed');
     } finally {
       loading = false;
     }
@@ -64,8 +65,7 @@
   }
 
   function when(iso: string) {
-    const d = new Date(iso);
-    return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    return formatDate(iso, { dateStyle: 'short', timeStyle: 'short' });
   }
 
   const repoUrl = $derived(data.project.repo_url?.replace(/\/$/, '') ?? null);
@@ -76,21 +76,18 @@
     <div class="head">
       <div class="spread">
         <div>
-          <p class="help">
-            Documentos e especificações gerados pelo ciclo iterativo de engenharia.
-            Arquivos reais gravados diretamente no repositório.
-          </p>
+          <p class="help">{t('artifacts.lede')}</p>
         </div>
         <div class="head-actions">
           {#if activeSession}
-            <div class="seg-control" role="group" aria-label="Filtrar artefatos">
+            <div class="seg-control" role="group" aria-label={t('artifacts.filterAria')}>
               <button
                 type="button"
                 class="seg-btn"
                 class:active={scope === 'session'}
                 onclick={() => (scope = 'session')}
               >
-                Sessão {activeSession.number}
+                {t('artifacts.session', { number: activeSession.number })}
               </button>
               <button
                 type="button"
@@ -98,12 +95,12 @@
                 class:active={scope === 'all'}
                 onclick={() => (scope = 'all')}
               >
-                Todos
+                {t('templates.all')}
               </button>
             </div>
           {/if}
           <button type="button" class="btn btn-line btn-sm" onclick={load} disabled={loading}>
-            <Icon name="upload" size={12} /> Recarregar
+            <Icon name="upload" size={12} /> {t('artifacts.reload')}
           </button>
         </div>
       </div>
@@ -112,26 +109,26 @@
     {#if loading && !docs.length}
       <Skeleton variant="lines" rows={6} />
     {:else if error}
-      <Placeholder kind="error" title="Não deu para listar" detail={error}>
+      <Placeholder kind="error" title={t('artifacts.listFailed')} detail={error}>
         {#snippet action()}
-          <button type="button" class="btn btn-solid" onclick={load}>Tentar de novo</button>
+          <button type="button" class="btn btn-solid" onclick={load}>{t('common.retry')}</button>
         {/snippet}
       </Placeholder>
     {:else if !docs.length}
       <Placeholder
         kind="empty"
-        title={scope === 'session' && activeSession ? `Nenhum artefato vinculado à Sessão ${activeSession.number}` : 'Nenhum artefato ainda'}
-        detail="Ao executar a análise da sessão, o agente grava a especificação em docs/superpowers/specs/ e o backlog em .painkiller/backlogs/, um arquivo por sessão."
+        title={scope === 'session' && activeSession ? t('artifacts.emptySession', { number: activeSession.number }) : t('artifacts.empty')}
+        detail={t('artifacts.emptyDetail')}
       >
         {#snippet action()}
           <div class="empty-actions">
             {#if scope === 'session'}
               <button type="button" class="btn btn-line" onclick={() => (scope = 'all')}>
-                Ver todos do projeto
+                {t('artifacts.seeAll')}
               </button>
             {/if}
             <a class="btn btn-solid" href="/projects/{data.project.id}/initial-analysis">
-              <Icon name="play" size={11} /> Ir para a Análise
+              <Icon name="play" size={11} /> {t('artifacts.goToAnalysis')}
             </a>
           </div>
         {/snippet}
@@ -152,7 +149,7 @@
                   <div class="name-row">
                     <span class="name mono truncate" title={d.path}>{d.filename}</span>
                     {#if d.is_session_spec}
-                      <span class="session-tag mono" title="Especificação desta sessão">Sessão {activeSession?.number}</span>
+                      <span class="session-tag mono" title={t('artifacts.sessionSpec')}>{t('artifacts.session', { number: activeSession?.number ?? '' })}</span>
                     {/if}
                   </div>
                   <span class="path mono faint truncate">{d.path}</span>
@@ -165,8 +162,8 @@
                     href="{repoUrl}/src/branch/{data.project.default_branch}/{d.path}"
                     target="_blank"
                     rel="noopener noreferrer"
-                    title="Abrir no Gitea"
-                    aria-label="Abrir {d.filename} no Gitea"
+                    title={t('artifacts.openInGitea')}
+                    aria-label={t('artifacts.openFileInGitea', { name: d.filename })}
                   >
                     <Icon name="external" size={12} />
                   </a>
@@ -181,20 +178,20 @@
 
   <aside>
     <div class="panel">
-      <h2 class="label">Repositório</h2>
+      <h2 class="label">{t('projectNav.repository')}</h2>
       <a
         class="btn btn-line btn-sm download"
         href={authedUrl(`/projects/${data.project.id}/archive`)}
         download
-        title="Arquivos versionados da branch {data.project.default_branch}, sem .git"
+        title={t('dashboard.zipTitle', { branch: data.project.default_branch })}
       >
-        <Icon name="download" size={12} /> Baixar .zip
+        <Icon name="download" size={12} /> {t('dashboard.downloadZip')}
       </a>
       {#if repoUrl}
         <ul class="links">
           <li>
             <a href={repoUrl} target="_blank" rel="noopener noreferrer">
-              <Icon name="external" size={11} /> Código no Gitea
+              <Icon name="external" size={11} /> {t('dashboard.codeInGitea')}
             </a>
           </li>
           <li>
@@ -203,7 +200,7 @@
               target="_blank"
               rel="noopener noreferrer"
             >
-              <Icon name="external" size={11} /> Pasta docs/
+              <Icon name="external" size={11} /> {t('artifacts.docsFolder')}
             </a>
           </li>
           <li>
@@ -213,28 +210,25 @@
           </li>
         </ul>
       {:else}
-        <p class="help">
-          Este projeto não tem repositório remoto registrado; os arquivos existem
-          apenas no workspace local.
-        </p>
+        <p class="help">{t('artifacts.noRemote')}</p>
       {/if}
       <p class="path mono">{data.project.repo_path}</p>
     </div>
 
     <div class="panel">
-      <h2 class="label">Onde cada coisa nasce</h2>
+      <h2 class="label">{t('artifacts.legend')}</h2>
       <dl class="legend">
         <div>
           <dt class="mono">docs/superpowers/specs/</dt>
-          <dd class="help">Escrito pelo agente de análise ao fechar o brainstorming.</dd>
+          <dd class="help">{t('artifacts.legendSpecs')}</dd>
         </div>
         <div>
           <dt class="mono">.painkiller/backlogs/</dt>
-          <dd class="help">Um arquivo por análise, lido por “Importar backlog” daquela sessão e convertido em tarefas.</dd>
+          <dd class="help">{t('artifacts.legendBacklogs')}</dd>
         </div>
         <div>
           <dt class="mono">.painkiller/clarification.json</dt>
-          <dd class="help">Escrito por um agente de código que parou para perguntar.</dd>
+          <dd class="help">{t('artifacts.legendClarification')}</dd>
         </div>
       </dl>
     </div>
