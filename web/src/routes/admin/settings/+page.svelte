@@ -8,6 +8,7 @@
   import GoogleStep from '$lib/components/setup/GoogleStep.svelte';
   import CoolifyStep from '$lib/components/setup/CoolifyStep.svelte';
   import AdminAccountForm from '$lib/components/setup/AdminAccountForm.svelte';
+  import SmtpStep from '$lib/components/setup/SmtpStep.svelte';
 
   $effect(() => {
     // Recarrega ao entrar: o estado do Docker e do Coolify pode ter mudado.
@@ -16,6 +17,7 @@
 
   const SECTIONS = $derived([
     { id: 'admin', title: t('adminSettings.admin') },
+    { id: 'smtp', title: t('adminSettings.smtp') },
     { id: 'environment', title: t('setup.environment') },
     { id: 'google', title: t('setup.google') },
     { id: 'coolify', title: 'Coolify' }
@@ -55,6 +57,10 @@
       <section id="admin">
         <h2 class="title">{t('adminSettings.admin')}</h2>
         <AdminAccountForm />
+      </section>
+      <section id="smtp">
+        <h2 class="title">{t('adminSettings.smtp')}</h2>
+        <SmtpStep mode="settings" />
       </section>
       <section id="environment">
         <h2 class="title">{t('setup.environment')}</h2>
