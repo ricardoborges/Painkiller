@@ -315,4 +315,9 @@ EN_US: dict[str, str] = {
     "Esta conta já está ativada.": "This account is already active.",
     "Sua conta ainda não foi ativada. Verifique o código enviado ao seu e-mail.":
         "Your account has not been activated yet. Please check the code sent to your email.",
+    # ---- SMTP ----
+    "A porta SMTP deve estar entre 1 e 65535.": "The SMTP port must be between 1 and 65535.",
+    "E-mail de destino inválido.": "Invalid destination email.",
+    "Serviço de e-mail não disponível.": "Email service not available.",
+    "Falha no envio de teste: {error}": "Test send failed: {error}",
 }

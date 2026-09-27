@@ -123,6 +123,18 @@ def _coolify(platform: PlatformConfig) -> dict:
     }
 
 
+def _smtp(platform: PlatformConfig) -> dict:
+    s = platform.settings
+    return {
+        "smtp_host": s.smtp_host or "",
+        "smtp_port": s.smtp_port or 587,
+        "smtp_user": s.smtp_user or "",
+        "smtp_password_set": bool(s.smtp_password),
+        "smtp_from": s.smtp_from or "",
+        "smtp_tls": s.smtp_tls if s.smtp_tls is not None else True,
+    }
+
+
 async def _state(request: Request) -> dict:
     platform = _platform(request)
     platform.observe(str(request.base_url))
@@ -134,6 +146,7 @@ async def _state(request: Request) -> dict:
         "environment": await _environment(request, platform),
         "google": _google(platform),
         "coolify": _coolify(platform),
+        "smtp": _smtp(platform),
     }
 
 
@@ -400,6 +413,60 @@ async def coolify_credentials(request: Request):
     if not s.coolify_root_email:
         raise HTTPException(status_code=404, detail="Nenhuma conta do Coolify foi criada pelo Painkiller.")
     return {"email": s.coolify_root_email, "password": s.coolify_root_password}
+
+
+# ---- SMTP / E-mail ---------------------------------------------------------
+
+
+class SmtpRequest(BaseModel):
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = 587
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from: Optional[str] = None
+    smtp_tls: bool = True
+
+
+class SmtpTestRequest(BaseModel):
+    to_email: str
+
+
+@router.put("/smtp")
+async def save_smtp(body: SmtpRequest, request: Request):
+    platform = _platform(request)
+    settings = platform.settings.model_copy(deep=True)
+    if body.smtp_port is not None and not (1 <= body.smtp_port <= 65535):
+        raise HTTPException(status_code=400, detail="A porta SMTP deve estar entre 1 e 65535.")
+
+    settings.smtp_host = (body.smtp_host or "").strip() or None
+    settings.smtp_port = body.smtp_port or 587
+    settings.smtp_user = (body.smtp_user or "").strip() or None
+    if body.smtp_password is not None and body.smtp_password != "":
+        settings.smtp_password = body.smtp_password
+    settings.smtp_from = (body.smtp_from or "").strip() or None
+    settings.smtp_tls = body.smtp_tls
+
+    await platform.save(settings)
+    return await _state(request)
+
+
+@router.post("/smtp/test")
+async def test_smtp(body: SmtpTestRequest, request: Request):
+    to_email = body.to_email.strip().lower()
+    if not to_email or "@" not in to_email:
+        raise HTTPException(status_code=400, detail="E-mail de destino inválido.")
+
+    email_sender = getattr(request.app.state, "email_sender", None)
+    if not email_sender:
+        raise HTTPException(status_code=500, detail="Serviço de e-mail não disponível.")
+
+    try:
+        await email_sender.test_connection(to_email)
+    except Exception as e:
+        logger.warning(f"SMTP connection test failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Falha no envio de teste: {e}")
+
+    return {"status": "ok", "message": "E-mail de teste enviado com sucesso."}
 
 
 # ---- etapas ------------------------------------------------------------------
