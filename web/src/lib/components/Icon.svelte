@@ -24,6 +24,8 @@
     | 'square'
     | 'sun'
     | 'moon'
+    | 'globe'
+    | 'flask'
     | 'chevron-down';
 
   let { name, size = 14 }: { name: Name; size?: number } = $props();
@@ -86,5 +88,10 @@
     <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4" />
   {:else if name === 'moon'}
     <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z" />
+  {:else if name === 'globe'}
+    <circle cx="8" cy="8" r="6" />
+    <path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12" />
+  {:else if name === 'flask'}
+    <path d="M6 1.5h4M6.5 1.5v4.5L2.5 14h11l-4-8V1.5M4.25 10.5h7.5" />
   {/if}
 </svg>

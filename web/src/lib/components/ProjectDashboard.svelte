@@ -229,21 +229,40 @@
         {#if !ready}
           <Skeleton rows={2} />
         {:else if published}
-          <ul class="envs divide">
+          <ul class="envs">
             {#each environments as e (e.key)}
-              <li class="env" class:hatch={e.status === 'FAILED'}>
-                <span class="env-name label">{e.label}</span>
-                {#if e.url}
-                  <a class="env-url mono truncate" href={e.url} target="_blank" rel="noopener noreferrer">
-                    {host(e.url)} <Icon name="external" size={10} />
-                  </a>
-                  <span class="env-meta mono faint">
-                    {#if e.status}<span class:live={e.status === 'HEALTHY'}>{DEPLOY_LABEL[e.status]}</span>{/if}
-                    {#if e.branch}<span>· {e.branch}</span>{/if}
-                    {#if e.updated}<span>· {when(e.updated)}</span>{/if}
+              <li class="env env-{e.key}" class:hatch={e.status === 'FAILED'} class:empty={!e.url}>
+                <div class="env-head">
+                  <span class="env-ico">
+                    <Icon name={e.key === 'production' ? 'globe' : 'flask'} size={16} />
                   </span>
+                  <span class="env-name label">{e.label}</span>
+                  {#if e.status}
+                    <span class="env-status mono" class:live={e.status === 'HEALTHY'}>
+                      <span class="env-dot" aria-hidden="true"></span>
+                      {DEPLOY_LABEL[e.status]}
+                    </span>
+                  {/if}
+                </div>
+                {#if e.url}
+                  <a
+                    class="env-url mono truncate"
+                    href={e.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={e.url}
+                  >
+                    {host(e.url)}
+                  </a>
+                  <p class="env-meta mono">
+                    {#if e.branch}<span class="truncate" title={e.branch}>{e.branch}</span>{/if}
+                    {#if e.updated}<span>{when(e.updated)}</span>{/if}
+                  </p>
+                  <a class="env-open btn btn-line btn-sm" href={e.url} target="_blank" rel="noopener noreferrer">
+                    Abrir <Icon name="external" size={10} />
+                  </a>
                 {:else}
-                  <span class="faint env-none">Ainda não publicado.</span>
+                  <p class="env-none">Ainda não publicado.</p>
                 {/if}
               </li>
             {/each}
@@ -491,30 +510,105 @@
 
   /* ---- ambientes ---- */
 
+  /* Exceção pedida à regra de cor única, como os toasts de deploy: cada ambiente
+     ganha um tom próprio — verde para produção, azul para teste. Tons pálidos,
+     longe do vermelhão de --accent, que segue reservado para o exit 42. */
   .envs {
-    margin-top: var(--s2);
+    --prod-bg: #eef8f0;
+    --prod-rule: #7fb98c;
+    --prod-ink: #2f7a43;
+    --test-bg: #eef3fb;
+    --test-rule: #8aa6d6;
+    --test-ink: #2f5596;
+
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s4);
+    margin-top: var(--s3);
+  }
+
+  :global(:root[data-theme='dark']) .envs {
+    --prod-bg: #17261b;
+    --prod-rule: #3f7a50;
+    --prod-ink: #8fd0a0;
+    --test-bg: #161f2c;
+    --test-rule: #3f5f8f;
+    --test-ink: #9dbbeb;
   }
 
   .env {
-    display: grid;
-    grid-template-columns: 5.5rem minmax(0, 1fr) auto;
-    align-items: baseline;
-    gap: var(--s4);
-    padding: var(--s3) 0;
+    --env-bg: var(--prod-bg);
+    --env-rule: var(--prod-rule);
+    --env-ink: var(--prod-ink);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    min-width: 0;
+    padding: var(--s4);
+    background-color: var(--env-bg);
+    border: 1px solid var(--env-rule);
+    border-top-width: 3px;
+  }
+
+  .env-test {
+    --env-bg: var(--test-bg);
+    --env-rule: var(--test-rule);
+    --env-ink: var(--test-ink);
+  }
+
+  .env.empty {
+    background-color: transparent;
+    border-style: dashed;
+    border-top-style: solid;
+  }
+
+  .env-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .env-ico {
+    display: inline-flex;
+    color: var(--env-ink);
   }
 
   .env-name {
-    color: var(--ink-3);
+    color: var(--env-ink);
+    font-weight: 600;
+  }
+
+  .env-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-left: auto;
+    font-size: var(--t-micro);
+    color: var(--ink-2);
+  }
+
+  .env-dot {
+    width: 6px;
+    height: 6px;
+    border: 1px solid currentColor;
+  }
+
+  .env-status.live {
+    color: var(--env-ink);
+    font-weight: 600;
+  }
+
+  .env-status.live .env-dot {
+    background: currentColor;
   }
 
   .env-url {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s2);
+    margin-top: var(--s1);
     font-size: var(--t-body);
     color: var(--ink);
     text-decoration: underline;
-    text-decoration-color: var(--rule-2);
+    text-decoration-color: var(--env-rule);
     text-underline-offset: 3px;
   }
 
@@ -522,15 +616,29 @@
     text-decoration-color: var(--ink);
   }
 
-  .env-meta,
-  .env-none {
-    font-size: var(--t-micro);
-  }
-
   .env-meta {
     display: flex;
-    gap: 0.375rem;
+    gap: var(--s3);
+    font-size: var(--t-micro);
+    color: var(--ink-3);
+    min-width: 0;
+  }
+
+  .env-meta span:last-child {
     white-space: nowrap;
+  }
+
+  .env-open {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    align-self: flex-start;
+    margin-top: var(--s2);
+  }
+
+  .env-none {
+    font-size: var(--t-small);
+    color: var(--ink-3);
   }
 
   /* No ar = peso, não cor. */
@@ -703,9 +811,8 @@
   }
 
   @media (max-width: 640px) {
-    .env {
+    .envs {
       grid-template-columns: 1fr;
-      gap: var(--s1);
     }
 
     .session {
