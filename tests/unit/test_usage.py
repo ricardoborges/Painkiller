@@ -179,6 +179,27 @@ async def test_dispatch_records_task_usage_even_when_the_run_fails():
     assert (record.input_tokens, record.output_tokens, record.model) == (3000, 200, "gemini-3.8-flash")
     assert record.reported_cost_usd == pytest.approx(0.02)
 
+    # A própria tarefa guarda os tokens e o tempo da execução, mesmo falha.
+    tracker.add_task_metrics.assert_any_await("t1", input_tokens=3000, output_tokens=200)
+    elapsed = [
+        c.kwargs["elapsed_seconds"] for c in tracker.add_task_metrics.await_args_list if "elapsed_seconds" in c.kwargs
+    ]
+    assert len(elapsed) == 1 and elapsed[0] >= 0
+
+
+async def test_dispatch_keeps_task_tokens_without_a_usage_ledger():
+    tracker, sandbox, git = AsyncMock(), AsyncMock(), AsyncMock()
+    tracker.get_task.return_value = Task(id="t1", project_id="p1", title="T", description="D")
+    tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    sandbox.run_task.return_value = ExecutionResult(
+        exit_code=1,
+        logs='{"event": "result", "result": {"usage_metadata": {"promptTokenCount": 70, "candidatesTokenCount": 7}}}',
+    )
+
+    await PainkillerOrchestrator(tracker=tracker, sandbox=sandbox, git=git).dispatch_task("t1")
+
+    tracker.add_task_metrics.assert_any_await("t1", input_tokens=70, output_tokens=7)
+
 
 async def test_analysis_result_is_booked_once_even_after_rewind():
     usage = AsyncMock()

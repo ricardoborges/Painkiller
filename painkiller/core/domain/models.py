@@ -60,6 +60,11 @@ class Task(BaseModel):
     #: "Abreviar testes": o analista assume o teste manual; o agente não escreve
     #: nem roda testes e o orquestrador não executa a suíte ao final.
     skip_tests: bool = False
+    #: Acumulado de todas as execuções da tarefa (pausas e novas tentativas
+    #: somam): tempo de relógio do despacho e tokens que o agente reportou.
+    elapsed_seconds: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

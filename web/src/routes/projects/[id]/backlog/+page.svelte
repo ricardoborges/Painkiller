@@ -18,6 +18,7 @@
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
+  import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
   import { onDestroy } from 'svelte';
 
   let { data } = $props();
@@ -102,6 +103,7 @@
   const allDone = $derived(tasks.length > 0 && completedCount === tasks.length);
   const sessionClosed = $derived(activeSession?.status === 'COMPLETED');
   const progressPercent = $derived(tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0);
+  const sessionTotals = $derived(taskTotals(tasks));
 
   const counts = $derived.by(() => {
     const map = new Map<string, number>();
@@ -606,6 +608,13 @@
         <span class="label mono">
           Progresso: {completedCount} de {tasks.length} concluídas
         </span>
+        <span class="sep" aria-hidden="true">·</span>
+        <span
+          class="label mono"
+          title="Soma das execuções das tarefas desta sessão: {sessionTotals.input.toLocaleString('pt-BR')} tokens de entrada, {sessionTotals.output.toLocaleString('pt-BR')} de saída"
+        >
+          {formatDuration(sessionTotals.seconds)} · {formatTokens(sessionTotals.input)} entrada / {formatTokens(sessionTotals.output)} saída
+        </span>
       </div>
       <span class="mono bold">{progressPercent}%</span>
     </div>
@@ -884,6 +893,12 @@
                 {#if task.target_files.length}
                   <span class="sep" aria-hidden="true">·</span>
                   <span>{task.target_files.length} arquivo{task.target_files.length > 1 ? 's' : ''}</span>
+                {/if}
+                {#if task.elapsed_seconds || task.input_tokens || task.output_tokens}
+                  <span class="sep" aria-hidden="true">·</span>
+                  <span title="Tempo e tokens somados de todas as execuções desta tarefa">
+                    {formatDuration(task.elapsed_seconds ?? 0)} · {formatTokens(task.input_tokens ?? 0)} entrada / {formatTokens(task.output_tokens ?? 0)} saída
+                  </span>
                 {/if}
                 {#if task.skip_tests}
                   <span class="sep" aria-hidden="true">·</span>

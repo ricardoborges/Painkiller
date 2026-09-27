@@ -165,6 +165,32 @@ async def test_ensure_user_skips_taken_login_and_reuses_own_account():
 
 
 @pytest.mark.asyncio
+async def test_api_realigns_service_account_on_401_and_retries():
+    """A Gitea whose password drifted from the database heals on the next call."""
+    adapter = GiteaAdapter(internal_base_url="http://gitea:3000", username="painkiller", password="pw")
+    responses = [_response(401, {"message": "user's password is invalid"}), _response(201, {})]
+
+    async def fake_request(self, method, url, **kwargs):
+        return responses.pop(0)
+
+    with patch("httpx.AsyncClient.request", new=fake_request), patch.object(
+        adapter, "ensure_admin_user", AsyncMock(return_value=True)
+    ) as realign:
+        res = await adapter._api("POST", "/repos/alice/damas/keys", json={})
+
+    assert res.status_code == 201
+    realign.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_admin_user_refuses_to_align_an_empty_password():
+    adapter = GiteaAdapter(internal_base_url="http://gitea:3000", username="painkiller", password="")
+    with patch("httpx.AsyncClient.get") as get:
+        assert await adapter.ensure_admin_user() is False
+    get.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_add_deploy_key_replaces_orphan_with_same_title():
     """A key left behind by a failed deploy would make Gitea answer 422 forever."""
     adapter = GiteaAdapter(internal_base_url="http://gitea:3000", username="painkiller", password="pw")

@@ -174,6 +174,10 @@ export interface Task {
   issue_url?: string | null;
   /** "Abreviar testes": o analista assume o teste manual e os riscos. */
   skip_tests?: boolean;
+  /** Acumulado de todas as execuções: tempo de relógio e tokens do agente. */
+  elapsed_seconds?: number;
+  input_tokens?: number;
+  output_tokens?: number;
   created_at: string;
   updated_at: string;
 }

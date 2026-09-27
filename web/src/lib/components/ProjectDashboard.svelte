@@ -14,6 +14,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
+  import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
 
   /* Entrada de um projeto que já tem histórico: o que está no ar, quanto custou,
      o que foi entregue e por onde seguir. O contexto fica em /context. */
@@ -126,8 +127,15 @@
 
   function sessionTally(id: string) {
     const own = tasks.filter((t) => t.session_id === id);
-    return { total: own.length, done: own.filter((t) => t.status === 'COMPLETED').length };
+    return {
+      total: own.length,
+      done: own.filter((t) => t.status === 'COMPLETED').length,
+      spent: taskTotals(own)
+    };
   }
+
+  /* Somatório de todas as sessões: toda tarefa pertence a uma, então é a soma das tarefas. */
+  const spent = $derived(taskTotals(tasks));
 
   /* ---- formatação ---- */
 
@@ -275,6 +283,14 @@
                 <span class="mono faint s-count">
                   {#if t.total}{t.done}/{t.total} tarefas{/if}
                 </span>
+                <span
+                  class="mono faint s-spent"
+                  title="Tempo das tarefas · tokens de entrada / saída"
+                >
+                  {#if t.spent.seconds || t.spent.input || t.spent.output}
+                    {formatDuration(t.spent.seconds)} · {formatTokens(t.spent.input)} / {formatTokens(t.spent.output)}
+                  {/if}
+                </span>
                 <span class="badge mono label" class:closed={s.status === 'COMPLETED'}>
                   {SESSION_LABEL[s.status]}
                 </span>
@@ -337,8 +353,25 @@
         <p class="faint small">Por sessão, na lista ao lado.</p>
       </section>
 
-      <!-- Repositório -->
+      <!-- Tempo e tokens das tarefas, somados de todas as sessões -->
       <section class="panel rise" style="--i: 3">
+        <h2 class="label">Tempo das tarefas</h2>
+        {#if !ready}
+          <Skeleton rows={1} variant="lines" />
+        {:else}
+          <p class="figure">{formatDuration(spent.seconds)}</p>
+          <dl class="spent mono small">
+            <dt class="faint">Tokens de entrada</dt>
+            <dd title={spent.input.toLocaleString('pt-BR')}>{formatTokens(spent.input)}</dd>
+            <dt class="faint">Tokens de saída</dt>
+            <dd title={spent.output.toLocaleString('pt-BR')}>{formatTokens(spent.output)}</dd>
+          </dl>
+          <p class="faint small">Somatório de todas as sessões, só execução de tarefas.</p>
+        {/if}
+      </section>
+
+      <!-- Repositório -->
+      <section class="panel rise" style="--i: 4">
         <h2 class="label">Repositório</h2>
         <a
           class="btn btn-line btn-sm download"
@@ -532,7 +565,7 @@
 
   .session {
     display: grid;
-    grid-template-columns: 2.25rem minmax(0, 1fr) auto auto 6.5rem;
+    grid-template-columns: 2.25rem minmax(0, 1fr) auto auto auto 6.5rem;
     align-items: baseline;
     gap: var(--s4);
     width: 100%;
@@ -554,8 +587,13 @@
   }
 
   .s-count,
+  .s-spent,
   .s-date {
     font-size: var(--t-micro);
+  }
+
+  .s-spent {
+    white-space: nowrap;
   }
 
   .s-date {
@@ -586,6 +624,19 @@
   .small {
     margin-top: var(--s2);
     font-size: var(--t-micro);
+  }
+
+  .spent {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--s1) var(--s4);
+    margin-top: var(--s3);
+  }
+
+  .spent dd {
+    color: var(--ink);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
 
   .over {
@@ -662,6 +713,7 @@
     }
 
     .s-count,
+    .s-spent,
     .s-date {
       display: none;
     }

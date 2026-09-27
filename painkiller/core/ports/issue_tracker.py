@@ -128,6 +128,17 @@ class IssueTrackerPort(ABC):
         pass
 
     @abstractmethod
+    async def add_task_metrics(
+        self,
+        task_id: str,
+        elapsed_seconds: float = 0.0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        """Add one run's wall-clock time and tokens to the task's running totals."""
+        pass
+
+    @abstractmethod
     async def add_comment(self, task_id: str, author: str, comment: str) -> None:
         """Add an audit comment to a task issue."""
         pass

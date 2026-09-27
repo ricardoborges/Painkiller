@@ -17,6 +17,7 @@ from sqlalchemy import (
     select,
     update,
     delete,
+    func,
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
@@ -108,6 +109,9 @@ class TaskRecord(Base):
     issue_number = Column(Integer, nullable=True)
     issue_url = Column(String, nullable=True)
     skip_tests = Column(Boolean, nullable=True, default=False)
+    elapsed_seconds = Column(Float, nullable=True, default=0.0)
+    input_tokens = Column(Integer, nullable=True, default=0)
+    output_tokens = Column(Integer, nullable=True, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -275,6 +279,16 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
                     col_type = col.type.compile(connection.dialect)
                     sql = f"ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type}"
                     connection.exec_driver_sql(sql)
+            # Tarefas anteriores às colunas de tokens: o livro de uso já tem o gasto
+            # de cada uma. O tempo não tem de onde sair e fica zerado.
+            if table_name == "tasks" and "input_tokens" not in existing_cols:
+                connection.exec_driver_sql(
+                    "UPDATE tasks SET "
+                    "input_tokens = (SELECT COALESCE(SUM(input_tokens), 0) FROM usage_records "
+                    "WHERE usage_records.task_id = tasks.id AND usage_records.source = 'TASK'), "
+                    "output_tokens = (SELECT COALESCE(SUM(output_tokens), 0) FROM usage_records "
+                    "WHERE usage_records.task_id = tasks.id AND usage_records.source = 'TASK')"
+                )
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -599,6 +613,26 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             res = await session.execute(select(TaskRecord).where(TaskRecord.id == task_id))
             return self._to_task_domain(res.scalar_one())
 
+    async def add_task_metrics(
+        self,
+        task_id: str,
+        elapsed_seconds: float = 0.0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        # Soma no próprio UPDATE: duas execuções não se atropelam num ler-e-gravar.
+        async with self.session_factory() as session:
+            await session.execute(
+                update(TaskRecord)
+                .where(TaskRecord.id == task_id)
+                .values(
+                    elapsed_seconds=func.coalesce(TaskRecord.elapsed_seconds, 0.0) + max(0.0, elapsed_seconds),
+                    input_tokens=func.coalesce(TaskRecord.input_tokens, 0) + max(0, input_tokens),
+                    output_tokens=func.coalesce(TaskRecord.output_tokens, 0) + max(0, output_tokens),
+                )
+            )
+            await session.commit()
+
     async def add_comment(self, task_id: str, author: str, comment: str) -> None:
         now = datetime.now(timezone.utc)
         record = TaskCommentRecord(
@@ -726,6 +760,9 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             issue_number=getattr(record, "issue_number", None),
             issue_url=getattr(record, "issue_url", None),
             skip_tests=bool(getattr(record, "skip_tests", False)),
+            elapsed_seconds=float(getattr(record, "elapsed_seconds", None) or 0.0),
+            input_tokens=int(getattr(record, "input_tokens", None) or 0),
+            output_tokens=int(getattr(record, "output_tokens", None) or 0),
             created_at=record.created_at,
             updated_at=record.updated_at,
         )

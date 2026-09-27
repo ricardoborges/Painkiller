@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional, Any
 from painkiller.core.domain.models import (
@@ -105,19 +106,35 @@ class PainkillerOrchestrator:
         self._restart_requested.discard(task.id)
         self.activity.start(task.id)
         try:
-            updated = await self._dispatch(task, project)
+            updated = await self._timed_dispatch(task, project)
             # "Abreviar testes" mata o contêiner e pede um reinício: roda de novo
             # aqui mesmo, para que a requisição aberta pela UI receba o desfecho final.
             while updated is None:
                 self._restart_requested.discard(task.id)
                 task = await self.tracker.get_task(task.id) or task
                 self._note(task.id, "Reiniciando o agente sem testes, a pedido do analista")
-                updated = await self._dispatch(task, project, resuming=True)
-            return updated
+                updated = await self._timed_dispatch(task, project, resuming=True)
+            # Relido para levar o tempo que acabou de ser somado.
+            return await self.tracker.get_task(task.id) or updated
         finally:
             self.activity.finish(task.id)
             self._stop_requested.discard(task.id)
             self._restart_requested.discard(task.id)
+
+    async def _timed_dispatch(self, task: Task, project: Project, resuming: bool = False) -> Optional[Task]:
+        """Run `_dispatch` and add its wall-clock time to the task, even if it raised."""
+        started = time.monotonic()
+        try:
+            return await self._dispatch(task, project, resuming=resuming)
+        finally:
+            await self._add_task_metrics(task.id, elapsed_seconds=time.monotonic() - started)
+
+    async def _add_task_metrics(self, task_id: str, **metrics: Any) -> None:
+        # Métrica é informativa: nunca derruba o despacho.
+        try:
+            await self.tracker.add_task_metrics(task_id, **metrics)
+        except Exception as e:
+            logger.debug(f"Task metrics not recorded for {task_id}: {e}")
 
     async def _dispatch(self, task: Task, project: Project, resuming: bool = False) -> Optional[Task]:
         """Run the task once; None means the run was killed to be restarted."""
@@ -269,12 +286,13 @@ class PainkillerOrchestrator:
 
     async def _record_usage(self, task: Task, result: ExecutionResult, project: Optional[Project] = None) -> None:
         """Book what the agent says it spent, whatever the exit code — a failed run still costs."""
-        if self.usage is None:
-            return
         parsed = parse_task_usage(result.logs)
         if parsed is None:
             return
         input_tokens, output_tokens, cost, model = parsed
+        await self._add_task_metrics(task.id, input_tokens=input_tokens, output_tokens=output_tokens)
+        if self.usage is None:
+            return
         try:
             await self.usage.record_usage(
                 UsageRecord(

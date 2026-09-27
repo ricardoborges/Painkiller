@@ -66,16 +66,26 @@ async def _align_project_repo_urls(tracker: SQLiteIssueTracker, vcs: GiteaAdapte
         logger.debug(f"Could not align project repo URLs: {e}")
 
 
-async def _sync_gitea_root_url(platform: PlatformConfig) -> None:
-    """Wait for Gitea to answer, then align its ROOT_URL with the public URL."""
+async def _bootstrap_gitea(platform: PlatformConfig) -> None:
+    """Wait for Gitea to answer, align the service account, then its ROOT_URL.
+
+    A conta só pode ser realinhada com o Gitea de pé: disparada junto com a
+    subida, a tentativa perdia a corrida e a senha do banco nunca chegava lá
+    (todo acesso à API dava 401 até a próxima reinicialização).
+    """
     vcs = getattr(platform.state, "vcs", None)
     if vcs is None or not hasattr(vcs, "is_available"):
         return
-    for _ in range(30):
+    for _ in range(60):
         if await vcs.is_available():
-            await platform.sync_gitea_root_url()
-            return
+            break
         await asyncio.sleep(2)
+    else:
+        logger.warning("Gitea não respondeu; a conta de serviço será realinhada no primeiro 401.")
+        return
+    if not await vcs.ensure_admin_user():
+        logger.warning("Gitea: a conta de serviço não autentica com a senha do banco.")
+    await platform.sync_gitea_root_url()
 
 
 async def _scrub_remote_credentials(tracker: SQLiteIssueTracker, git: GitCliAdapter) -> None:
@@ -112,10 +122,9 @@ def create_app(
             await app.state.platform.load()
         except Exception as e:
             logger.warning(f"Could not load platform settings: {e}")
-        # Initialize Gitea admin user in background if service is reachable
+        # Conta de serviço e ROOT_URL do Gitea, em segundo plano, quando ele responder.
         vcs: GiteaAdapter = app.state.vcs
-        asyncio.create_task(vcs.ensure_admin_user())
-        asyncio.create_task(_sync_gitea_root_url(app.state.platform))
+        asyncio.create_task(_bootstrap_gitea(app.state.platform))
         asyncio.create_task(_align_project_repo_urls(tracker, vcs))
         asyncio.create_task(_scrub_remote_credentials(tracker, app.state.git))
 

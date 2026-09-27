@@ -33,6 +33,52 @@ async def test_skip_tests_flag_persists(tracker: SQLiteIssueTracker):
 
 
 @pytest.mark.asyncio
+async def test_task_metrics_accumulate(tracker: SQLiteIssueTracker):
+    proj = await tracker.create_project(name="App", repo_path="/tmp/app")
+    task = await tracker.create_task(project_id=proj.id, title="T", description="D")
+    assert (task.elapsed_seconds, task.input_tokens, task.output_tokens) == (0.0, 0, 0)
+
+    await tracker.add_task_metrics(task.id, elapsed_seconds=12.5, input_tokens=1000, output_tokens=40)
+    await tracker.add_task_metrics(task.id, elapsed_seconds=7.5)
+    await tracker.add_task_metrics(task.id, input_tokens=500, output_tokens=10)
+
+    fresh = await tracker.get_task(task.id)
+    assert (fresh.elapsed_seconds, fresh.input_tokens, fresh.output_tokens) == (20.0, 1500, 50)
+
+
+async def test_migration_backfills_task_tokens_from_the_usage_ledger(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE tasks (id VARCHAR PRIMARY KEY, project_id VARCHAR NOT NULL, title VARCHAR NOT NULL,
+            description TEXT NOT NULL, status VARCHAR, created_at DATETIME, updated_at DATETIME);
+        CREATE TABLE usage_records (id VARCHAR PRIMARY KEY, source VARCHAR NOT NULL, model VARCHAR,
+            project_id VARCHAR, task_id VARCHAR, session_id VARCHAR, input_tokens INTEGER,
+            output_tokens INTEGER, reported_cost_usd FLOAT, created_at DATETIME);
+        INSERT INTO tasks VALUES ('t1', 'p1', 'T', 'D', 'COMPLETED', '2026-01-01', '2026-01-01');
+        INSERT INTO tasks VALUES ('t2', 'p1', 'U', 'D', 'BACKLOG', '2026-01-01', '2026-01-01');
+        INSERT INTO usage_records VALUES ('u1', 'TASK', 'm', 'p1', 't1', NULL, 100, 10, NULL, '2026-01-01');
+        INSERT INTO usage_records VALUES ('u2', 'TASK', 'm', 'p1', 't1', NULL, 50, 5, NULL, '2026-01-01');
+        INSERT INTO usage_records VALUES ('u3', 'ANALYSIS', 'm', 'p1', 't1', NULL, 999, 999, NULL, '2026-01-01');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    migrated = SQLiteIssueTracker(db_url=f"sqlite+aiosqlite:///{db.as_posix()}")
+    try:
+        await migrated.init_db()
+        t1, t2 = await migrated.get_task("t1"), await migrated.get_task("t2")
+        assert (t1.input_tokens, t1.output_tokens, t1.elapsed_seconds) == (150, 15, 0.0)
+        assert (t2.input_tokens, t2.output_tokens) == (0, 0)
+    finally:
+        await migrated.close()
+
+
+@pytest.mark.asyncio
 async def test_project_and_task_crud(tracker: SQLiteIssueTracker):
     # 1. Create project
     proj = await tracker.create_project(

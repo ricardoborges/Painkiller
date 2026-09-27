@@ -56,6 +56,8 @@ class GiteaAdapter:
         self._google_source_id: Optional[int] = None
         # Credenciais com que a fonte foi alinhada; trocá-las no wizard realinha.
         self._google_source_credentials: Optional[tuple[str, str]] = None
+        # Criado sob demanda, dentro do loop que o usa.
+        self._realign_lock: Optional[asyncio.Lock] = None
 
     @property
     def docker_client(self):
@@ -133,6 +135,11 @@ class GiteaAdapter:
 
     async def ensure_admin_user(self) -> bool:
         """Verify the service account exists; if not, create it via container CLI."""
+        if not self.password:
+            # PlatformConfig ainda não instalou a senha do banco: alinhar agora
+            # gravaria uma senha vazia (o CLI recusa) ou a errada.
+            logger.warning("Gitea: senha da conta de serviço ainda não carregada; realinhamento adiado.")
+            return False
         # 1. Test basic auth against /api/v1/user
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -165,8 +172,10 @@ class GiteaAdapter:
                             ],
                             user="git",
                         )
-                        if exit_code != 0 and b"already exists" in (output or b""):
+                        if exit_code != 0:
                             # Usuário existe com outra senha: alinha com a do banco.
+                            # Não depende do texto do erro, que muda entre versões.
+                            logger.info(f"Gitea user create refused ({exit_code}): {output!r}; changing password")
                             exit_code, output = container.exec_run(
                                 [
                                     "gitea", "admin", "user", "change-password",
@@ -176,7 +185,11 @@ class GiteaAdapter:
                                 ],
                                 user="git",
                             )
-                        logger.info(f"Gitea user creation output: code={exit_code}, out={output}")
+                        if exit_code != 0:
+                            logger.warning(
+                                f"Gitea: não foi possível criar/realinhar a conta {self.username}: "
+                                f"code={exit_code}, out={output!r}"
+                            )
                         return exit_code == 0
                     except Exception as ex:
                         logger.warning(f"Could not exec into {self.container_name}: {ex}")
@@ -308,7 +321,7 @@ class GiteaAdapter:
 
                 res = await client.post(users_url, json=payload, auth=self._auth())
                 if res.status_code == 401:
-                    await self.ensure_admin_user()
+                    await self._realign_service_account()
                     res = await client.post(users_url, json=payload, auth=self._auth())
                 if res.status_code == 201:
                     return candidate
@@ -371,7 +384,7 @@ class GiteaAdapter:
                 }
                 res = await client.post(endpoint, json=payload, auth=self._auth())
                 if res.status_code == 401:
-                    await self.ensure_admin_user()
+                    await self._realign_service_account()
                     res = await client.post(endpoint, json=payload, auth=self._auth())
                 if res.status_code == 201:
                     repo_name = candidate
@@ -409,9 +422,24 @@ class GiteaAdapter:
 
     async def _api(self, method: str, path: str, **kwargs) -> httpx.Response:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            return await client.request(
+            res = await client.request(
                 method, f"{self.internal_base_url}/api/v1{path}", auth=self._auth(), **kwargs
             )
+            if res.status_code == 401:
+                # A senha do Gitea divergiu da do banco (subida que perdeu a
+                # corrida com o Gitea, volume recriado): realinha e tenta de novo.
+                await self._realign_service_account()
+                res = await client.request(
+                    method, f"{self.internal_base_url}/api/v1{path}", auth=self._auth(), **kwargs
+                )
+            return res
+
+    async def _realign_service_account(self) -> bool:
+        # O espelho de issues dispara várias chamadas juntas: um realinhamento por vez.
+        if self._realign_lock is None:
+            self._realign_lock = asyncio.Lock()
+        async with self._realign_lock:
+            return await self.ensure_admin_user()
 
     async def ensure_labels(self, owner: str, repo: str, specs: list[dict]) -> dict[str, int]:
         """Create the missing labels of `specs` ({name, color, description, exclusive}); name → id."""
