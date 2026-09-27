@@ -16,6 +16,12 @@ class UserDirectoryPort(ABC):
         name: str = "",
         google_sub: Optional[str] = None,
         gitea_username: Optional[str] = None,
+        password_hash: Optional[str] = None,
+        is_active: bool = True,
+        email_verified: bool = True,
+        verification_code: Optional[str] = None,
+        verification_token: Optional[str] = None,
+        verification_expires_at: Optional[object] = None,
     ) -> User:
         """Register a new (non-admin) user."""
         pass
@@ -31,12 +37,31 @@ class UserDirectoryPort(ABC):
         pass
 
     @abstractmethod
+    async def get_user_by_email_or_username(self, identifier: str) -> Optional[User]:
+        """Fetch a user by their email or gitea_username."""
+        pass
+
+    @abstractmethod
+    async def get_user_by_verification_token(self, token: str) -> Optional[User]:
+        """Fetch an unverified user by their verification token."""
+        pass
+
+    @abstractmethod
+    async def activate_user(self, user_id: str) -> User:
+        """Mark a user as active and email_verified, clearing verification tokens."""
+        pass
+
+    @abstractmethod
     async def update_user(
         self,
         user_id: str,
         email: Optional[str] = None,
         name: Optional[str] = None,
         gitea_username: Optional[str] = None,
+        password_hash: Optional[str] = None,
+        verification_code: Optional[str] = None,
+        verification_token: Optional[str] = None,
+        verification_expires_at: Optional[object] = None,
     ) -> User:
         """Update profile fields and the Gitea binding."""
         pass

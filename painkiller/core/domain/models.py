@@ -271,6 +271,12 @@ class User(BaseModel):
     google_sub: Optional[str] = None
     # Dono dos repositórios do usuário no Gitea. Vazio até o provisionamento dar certo.
     gitea_username: Optional[str] = None
+    password_hash: Optional[str] = None
+    is_active: bool = True
+    email_verified: bool = True
+    verification_code: Optional[str] = None
+    verification_token: Optional[str] = None
+    verification_expires_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
@@ -446,6 +452,14 @@ class PlatformSettings(BaseModel):
     gitea_password: Optional[str] = None
     # Validade das sessões, em horas (vazio = 12).
     session_ttl_hours: Optional[int] = None
+
+    # Configurações de envio de e-mail (SMTP)
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = 587
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from: Optional[str] = None
+    smtp_tls: bool = True
 
     steps: dict[str, SetupStepStatus] = Field(default_factory=dict)
     completed: bool = False

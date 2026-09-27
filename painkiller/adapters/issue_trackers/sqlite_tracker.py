@@ -18,6 +18,7 @@ from sqlalchemy import (
     update,
     delete,
     func,
+    or_,
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
@@ -89,6 +90,12 @@ class UserRecord(Base):
     role = Column(SQLEnum(UserRole), default=UserRole.USER)
     google_sub = Column(String, nullable=True, unique=True, index=True)
     gitea_username = Column(String, nullable=True, unique=True)
+    password_hash = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    email_verified = Column(Boolean, default=True)
+    verification_code = Column(String, nullable=True)
+    verification_token = Column(String, nullable=True, index=True)
+    verification_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -247,7 +254,7 @@ USAGE_SETTINGS_KEY = "usage"
 PLATFORM_SETTINGS_KEY = "platform"
 #: Chave aleatória da instalação: assina as sessões e cifra os segredos.
 PLATFORM_SECRET_KEY = "platform:secret-key"
-PLATFORM_SECRET_FIELDS = ("google_client_secret", "coolify_api_token", "coolify_root_password", "gitea_password")
+PLATFORM_SECRET_FIELDS = ("google_client_secret", "coolify_api_token", "coolify_root_password", "gitea_password", "smtp_password")
 
 
 def _budget_key(project_id: str) -> str:
@@ -455,14 +462,26 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         name: str = "",
         google_sub: Optional[str] = None,
         gitea_username: Optional[str] = None,
+        password_hash: Optional[str] = None,
+        is_active: bool = True,
+        email_verified: bool = True,
+        verification_code: Optional[str] = None,
+        verification_token: Optional[str] = None,
+        verification_expires_at: Optional[datetime] = None,
     ) -> User:
         record = UserRecord(
             id=f"user-{uuid.uuid4().hex[:10]}",
-            email=email,
-            name=name,
+            email=email.strip().lower(),
+            name=name.strip(),
             role=UserRole.USER,
             google_sub=google_sub,
             gitea_username=gitea_username,
+            password_hash=password_hash,
+            is_active=is_active,
+            email_verified=email_verified,
+            verification_code=verification_code,
+            verification_token=verification_token,
+            verification_expires_at=verification_expires_at,
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
@@ -482,20 +501,73 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             record = res.scalar_one_or_none()
             return self._to_user_domain(record) if record else None
 
+    async def get_user_by_email_or_username(self, identifier: str) -> Optional[User]:
+        clean = identifier.strip().lower()
+        async with self.session_factory() as session:
+            stmt = select(UserRecord).where(
+                or_(
+                    func.lower(UserRecord.email) == clean,
+                    func.lower(UserRecord.gitea_username) == clean,
+                )
+            )
+            res = await session.execute(stmt)
+            record = res.scalar_one_or_none()
+            return self._to_user_domain(record) if record else None
+
+    async def get_user_by_verification_token(self, token: str) -> Optional[User]:
+        async with self.session_factory() as session:
+            stmt = select(UserRecord).where(UserRecord.verification_token == token.strip())
+            res = await session.execute(stmt)
+            record = res.scalar_one_or_none()
+            return self._to_user_domain(record) if record else None
+
+    async def activate_user(self, user_id: str) -> User:
+        async with self.session_factory() as session:
+            stmt = (
+                update(UserRecord)
+                .where(UserRecord.id == user_id)
+                .values(
+                    is_active=True,
+                    email_verified=True,
+                    verification_code=None,
+                    verification_token=None,
+                    verification_expires_at=None,
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+            res = await session.execute(select(UserRecord).where(UserRecord.id == user_id))
+            record = res.scalar_one_or_none()
+            if not record:
+                raise ValueError(f"User {user_id} not found")
+            return self._to_user_domain(record)
+
     async def update_user(
         self,
         user_id: str,
         email: Optional[str] = None,
         name: Optional[str] = None,
         gitea_username: Optional[str] = None,
+        password_hash: Optional[str] = None,
+        verification_code: Optional[str] = None,
+        verification_token: Optional[str] = None,
+        verification_expires_at: Optional[datetime] = None,
     ) -> User:
         values: dict[str, Any] = {}
         if email is not None:
-            values["email"] = email
+            values["email"] = email.strip().lower()
         if name is not None:
-            values["name"] = name
+            values["name"] = name.strip()
         if gitea_username is not None:
             values["gitea_username"] = gitea_username
+        if password_hash is not None:
+            values["password_hash"] = password_hash
+        if verification_code is not None:
+            values["verification_code"] = verification_code
+        if verification_token is not None:
+            values["verification_token"] = verification_token
+        if verification_expires_at is not None:
+            values["verification_expires_at"] = verification_expires_at
         async with self.session_factory() as session:
             if values:
                 await session.execute(update(UserRecord).where(UserRecord.id == user_id).values(**values))
@@ -514,6 +586,12 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             role=record.role or UserRole.USER,
             google_sub=record.google_sub,
             gitea_username=record.gitea_username,
+            password_hash=record.password_hash,
+            is_active=bool(record.is_active) if record.is_active is not None else True,
+            email_verified=bool(record.email_verified) if record.email_verified is not None else True,
+            verification_code=record.verification_code,
+            verification_token=record.verification_token,
+            verification_expires_at=record.verification_expires_at,
             created_at=record.created_at,
         )
 
