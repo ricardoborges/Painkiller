@@ -29,6 +29,7 @@ from painkiller.adapters.llm.pricing import litellm_price
 from painkiller.adapters.llm.balance import fetch_balances, validate_key
 from painkiller.adapters.deployment.coolify_adapter import CoolifyAdapter
 from painkiller.adapters.deployment.coolify_bootstrap import CoolifyBootstrap
+from painkiller.adapters.email.smtp_sender import EmailSender
 from painkiller.engine.orchestrator import PainkillerOrchestrator
 from painkiller.engine.analysis import AnalysisOrchestrator
 from painkiller.engine.deployment_service import DeploymentService
@@ -233,6 +234,7 @@ def create_app(
     app.state.google_oauth = GoogleOAuthClient()
     app.state.coolify_bootstrap = CoolifyBootstrap()
     app.state.platform = PlatformConfig(store=tracker, state=app.state)
+    app.state.email_sender = EmailSender(settings_provider=lambda: app.state.platform.settings)
 
     # Register routers. Só /api/auth é público; o resto exige sessão, e cada
     # router ainda confere se o projeto/tarefa/sessão é do usuário.
