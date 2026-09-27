@@ -55,6 +55,7 @@ services:
       # Backend do agente de analise inicial: Antigravity CLI + superpowers + Gemini 3.8 Flash.
       # Autentica via GEMINI_API_KEY. Variaveis legadas sao mantidas para compatibilidade.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       PAINKILLER_AGENT_MODEL: ${PAINKILLER_AGENT_MODEL:-gemini-3.8-flash}
       PAINKILLER_AGENT_EFFORT: ${PAINKILLER_AGENT_EFFORT:-medium}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
@@ -68,6 +69,16 @@ services:
       # O primeiro e fixo (segue o WORKDIR da imagem); o segundo vem do .env.
       PAINKILLER_CONTAINER_ROOT: /app/storage
       PAINKILLER_HOST_ROOT: ${PAINKILLER_HOST_ROOT:-}
+
+      # Publicacao em producao via Coolify. Sem as quatro primeiras o botao
+      # "Publicar" e o passo final do piloto automatico ficam desativados.
+      COOLIFY_URL: ${COOLIFY_URL:-}
+      COOLIFY_TOKEN: ${COOLIFY_TOKEN:-}
+      COOLIFY_PROJECT_UUID: ${COOLIFY_PROJECT_UUID:-}
+      COOLIFY_SERVER_UUID: ${COOLIFY_SERVER_UUID:-}
+      COOLIFY_ENVIRONMENT_NAME: ${COOLIFY_ENVIRONMENT_NAME:-production}
+      COOLIFY_DOMAIN_TEMPLATE: ${COOLIFY_DOMAIN_TEMPLATE:-}
+      COOLIFY_GIT_BASE_URL: ${COOLIFY_GIT_BASE_URL:-}
 
       # Gitea embutido para versionamento e visualizador de codigo
       PAINKILLER_GITEA_INTERNAL_URL: http://gitea:3000
@@ -98,8 +109,8 @@ services:
     command: ["true"]
     restart: "no"
 
-  # Agente da analise inicial: Claude Code + superpowers, mantido vivo durante a
-  # entrevista. Diferente do worker, que e one-shot.
+  # Agente da analise inicial: Antigravity CLI (agy) + superpowers + Gemini,
+  # mantido vivo durante a entrevista. Diferente do worker, que e one-shot.
   agent-image:
     build:
       context: .

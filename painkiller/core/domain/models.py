@@ -79,6 +79,34 @@ class Task(BaseModel):
         self.updated_at = datetime.now(timezone.utc)
 
 
+class DeploymentStatus(str, Enum):
+    """Lifecycle of the project's production deployment."""
+    NOT_CONFIGURED = "NOT_CONFIGURED"
+    CREATED = "CREATED"
+    DEPLOYING = "DEPLOYING"
+    LIVE = "LIVE"
+    FAILED = "FAILED"
+
+
+class DeploymentInfo(BaseModel):
+    """What the platform knows about where (and how) the project is published.
+
+    Preenchido em duas fases: `port`/`build_pack` vêm do backlog.json que o
+    agente de análise grava; `app_uuid`/`url` nascem quando o adaptador de
+    deploy cria a aplicação no provedor (Coolify).
+    """
+    provider: str = "coolify"
+    build_pack: str = "nixpacks"
+    port: int = 3000
+    dockerfile_location: Optional[str] = None
+    app_uuid: Optional[str] = None
+    url: Optional[str] = None
+    last_deployment_uuid: Optional[str] = None
+    status: DeploymentStatus = DeploymentStatus.NOT_CONFIGURED
+    error: Optional[str] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class Project(BaseModel):
     """Target software project managed by Painkiller."""
     id: str
@@ -90,6 +118,10 @@ class Project(BaseModel):
     attachments: list[str] = Field(default_factory=list)
     default_branch: str = "main"
     repo_url: Optional[str] = None
+    # Comando de verificação rodado após cada tarefa. Vazio = detectar pelo
+    # conteúdo do repositório (ver engine/verification.py).
+    test_command: Optional[str] = None
+    deployment: Optional[DeploymentInfo] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

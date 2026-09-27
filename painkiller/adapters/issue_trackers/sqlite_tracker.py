@@ -27,6 +27,7 @@ from painkiller.core.domain.models import (
     AnalysisStatus,
     AgentEvent,
     AgentEventType,
+    DeploymentInfo,
 )
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 
@@ -45,6 +46,9 @@ class ProjectRecord(Base):
     attachments = Column(Text, default="[]")
     default_branch = Column(String, default="main")
     repo_url = Column(String, default="", nullable=True)
+    test_command = Column(String, nullable=True)
+    # DeploymentInfo serializado como JSON; NULL enquanto nada foi publicado.
+    deployment = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -143,8 +147,9 @@ class SQLiteIssueTracker(IssueTrackerPort):
         attachments: Optional[Sequence[str]] = None,
         default_branch: str = "main",
         repo_url: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Project:
-        proj_id = f"proj-{uuid.uuid4().hex[:8]}"
+        proj_id = project_id or f"proj-{uuid.uuid4().hex[:8]}"
         record = ProjectRecord(
             id=proj_id,
             name=name,
@@ -185,10 +190,17 @@ class SQLiteIssueTracker(IssueTrackerPort):
         solution_description: Optional[str] = None,
         attachments: Optional[Sequence[str]] = None,
         repo_url: Optional[str] = None,
+        test_command: Optional[str] = None,
+        deployment: Optional[DeploymentInfo] = None,
     ) -> Project:
         values: dict[str, Any] = {}
         if name is not None:
             values["name"] = name
+        if test_command is not None:
+            # String vazia limpa o comando e volta para a detecção automática.
+            values["test_command"] = test_command or None
+        if deployment is not None:
+            values["deployment"] = deployment.model_dump_json()
         if description is not None:
             values["description"] = description
         if purpose is not None:
@@ -237,8 +249,20 @@ class SQLiteIssueTracker(IssueTrackerPort):
             attachments=json.loads(record.attachments or "[]"),
             default_branch=record.default_branch,
             repo_url=record.repo_url or None,
+            test_command=record.test_command or None,
+            deployment=self._parse_deployment(record.deployment),
             created_at=record.created_at,
         )
+
+    @staticmethod
+    def _parse_deployment(raw: Optional[str]) -> Optional[DeploymentInfo]:
+        if not raw:
+            return None
+        try:
+            return DeploymentInfo.model_validate_json(raw)
+        except Exception:
+            # Um JSON antigo ou corrompido não pode derrubar a listagem inteira.
+            return None
 
     async def create_task(
         self,
@@ -374,16 +398,29 @@ class SQLiteIssueTracker(IssueTrackerPort):
             record = res.scalars().first()
             if not record:
                 return None
-            return ClarificationRequest(
-                id=record.id,
-                task_id=record.task_id,
-                question=record.question,
-                context_summary=record.context_summary,
-                status=record.status,
-                answer=record.answer,
-                created_at=record.created_at,
-                answered_at=record.answered_at,
+            return self._to_clarification_domain(record)
+
+    async def list_clarifications(self, task_id: str) -> list[ClarificationRequest]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(ClarificationRecord)
+                .where(ClarificationRecord.task_id == task_id)
+                .order_by(ClarificationRecord.created_at.asc())
             )
+            return [self._to_clarification_domain(r) for r in res.scalars().all()]
+
+    @staticmethod
+    def _to_clarification_domain(record: ClarificationRecord) -> ClarificationRequest:
+        return ClarificationRequest(
+            id=record.id,
+            task_id=record.task_id,
+            question=record.question,
+            context_summary=record.context_summary,
+            status=record.status,
+            answer=record.answer,
+            created_at=record.created_at,
+            answered_at=record.answered_at,
+        )
 
     def _to_task_domain(self, record: TaskRecord) -> Task:
         return Task(

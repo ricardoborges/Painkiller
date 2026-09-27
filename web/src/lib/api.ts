@@ -1,7 +1,9 @@
 import type {
   AgentEvent,
   AnalysisSession,
+  AutopilotRun,
   Clarification,
+  DeploymentView,
   InterrogationStart,
   Project,
   ProjectDoc,
@@ -122,6 +124,24 @@ export const api = {
   listProjectDocs: (projectId: string) =>
     request<ProjectDoc[]>(`/projects/${projectId}/docs`),
 
+  /* ---- publicação (Coolify) ---- */
+
+  /** Estado atual; o servidor consulta o provedor quando há deploy em andamento. */
+  getDeployment: (projectId: string) =>
+    request<DeploymentView>(`/projects/${projectId}/deployment`),
+
+  /** Cria a aplicação no Coolify (primeira vez) e dispara o deploy da branch principal. */
+  deployProject: (projectId: string) =>
+    request<DeploymentView>(`/projects/${projectId}/deploy`, { method: 'POST' }),
+
+  /* ---- piloto automático ---- */
+
+  getRun: (projectId: string) => request<AutopilotRun>(`/projects/${projectId}/run`),
+
+  /** Constrói o backlog inteiro em ordem, incorporando cada etapa aprovada, e publica ao fim. */
+  startRun: (projectId: string, publish: boolean = true) =>
+    request<AutopilotRun>(`/projects/${projectId}/run`, { method: 'POST', ...json({ publish }) }),
+
   getProjectDocContent: (projectId: string, path: string) =>
     request<ProjectDocContent>(`/projects/${projectId}/docs/content?path=${encodeURIComponent(path)}`),
 
@@ -230,6 +250,7 @@ export function openAnalysisStream(
 
   const types: AgentEvent['type'][] = [
     'SYSTEM',
+    'USER',
     'ASSISTANT',
     'ASSISTANT_DELTA',
     'THINKING',

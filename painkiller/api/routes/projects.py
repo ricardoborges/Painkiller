@@ -28,6 +28,13 @@ class UpdateProjectRequest(BaseModel):
     description: Optional[str] = None
     purpose: Optional[str] = None
     solution_description: Optional[str] = None
+    # Comando de verificação; string vazia volta para a detecção automática.
+    test_command: Optional[str] = None
+
+
+class RunRequest(BaseModel):
+    # Publicar ao fim do backlog (exige Coolify configurado no servidor).
+    publish: bool = True
 
 
 class CreateTaskRequest(BaseModel):
@@ -50,9 +57,10 @@ async def create_project(req: CreateProjectRequest, request: Request):
     git = request.app.state.git
     vcs = getattr(request.app.state, "vcs", None)
 
-    # Default repo path inside storage if not provided
-    proj_id_temp = f"proj-{uuid.uuid4().hex[:8]}"
-    base_repo_path = req.repo_path or os.path.join(os.getcwd(), "storage", "projects", proj_id_temp, "repo")
+    # O id nasce aqui para que a pasta em storage/ tenha o mesmo nome que o
+    # projeto na interface; antes eram dois ids diferentes.
+    project_id = f"proj-{uuid.uuid4().hex[:8]}"
+    base_repo_path = req.repo_path or os.path.join(os.getcwd(), "storage", "projects", project_id, "repo")
     os.makedirs(base_repo_path, exist_ok=True)
 
     default_branch = req.default_branch or "main"
@@ -77,6 +85,7 @@ async def create_project(req: CreateProjectRequest, request: Request):
         solution_description=req.solution_description or "",
         default_branch=default_branch,
         repo_url=repo_url,
+        project_id=project_id,
     )
     return project
 
@@ -100,10 +109,69 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
             description=req.description,
             purpose=req.purpose,
             solution_description=req.solution_description,
+            test_command=req.test_command,
         )
         return updated
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ---- publicação (Coolify) ----------------------------------------------------
+
+
+@router.get("/{project_id}/deployment")
+async def get_deployment(project_id: str, request: Request):
+    """Current publication state, refreshed against the provider when something is in flight."""
+    tracker = request.app.state.tracker
+    orchestrator = request.app.state.orchestrator
+    project = await tracker.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    if project.deployment and project.deployment.app_uuid:
+        project = await orchestrator.refresh_deployment(project_id)
+    return {
+        "configured": orchestrator.can_publish(),
+        "deployment": project.deployment,
+    }
+
+
+@router.post("/{project_id}/deploy")
+async def deploy_project(project_id: str, request: Request):
+    """Create the application at the provider (first time) and trigger a deploy of the default branch."""
+    orchestrator = request.app.state.orchestrator
+    if not orchestrator.can_publish():
+        raise HTTPException(
+            status_code=503,
+            detail="Publicação não configurada: defina COOLIFY_URL, COOLIFY_TOKEN, "
+            "COOLIFY_PROJECT_UUID e COOLIFY_SERVER_UUID no .env do servidor.",
+        )
+    try:
+        project = await orchestrator.publish_project(project_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"configured": True, "deployment": project.deployment}
+
+
+# ---- piloto automático -------------------------------------------------------
+
+
+@router.get("/{project_id}/run")
+async def get_run(project_id: str, request: Request):
+    return request.app.state.autopilot.status(project_id)
+
+
+@router.post("/{project_id}/run")
+async def start_run(project_id: str, request: Request, req: Optional[RunRequest] = None):
+    """Build the whole backlog in dependency order, merging as it goes, then publish."""
+    autopilot = request.app.state.autopilot
+    try:
+        return await autopilot.start(project_id, publish=(req.publish if req else True))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.delete("/{project_id}")

@@ -16,7 +16,10 @@
     | 'close'
     | 'send'
     | 'upload'
-    | 'external';
+    | 'external'
+    | 'globe'
+    | 'bolt'
+    | 'refresh';
 
   let { name, size = 14 }: { name: Name; size?: number } = $props();
 </script>
@@ -58,5 +61,11 @@
     <path d="M8 11V2.5M4.5 6 8 2.5 11.5 6M2.5 13.5h11" />
   {:else if name === 'external'}
     <path d="M7 3.5H3.5v9h9V9M9.5 3.5h3v3M7.5 8.5l5-5" />
+  {:else if name === 'globe'}
+    <path d="M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM2.5 8h11M8 2.5c-1.8 1.6-2.7 3.4-2.7 5.5s.9 3.9 2.7 5.5c1.8-1.6 2.7-3.4 2.7-5.5S9.8 4.1 8 2.5z" />
+  {:else if name === 'bolt'}
+    <path d="M9 2 3.5 9H8l-1 5 5.5-7H8z" />
+  {:else if name === 'refresh'}
+    <path d="M13 8a5 5 0 0 1-8.7 3.4M3 8a5 5 0 0 1 8.7-3.4M11.5 2v2.8H8.7M4.5 14v-2.8h2.8" />
   {/if}
 </svg>

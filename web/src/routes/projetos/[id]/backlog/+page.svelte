@@ -9,8 +9,13 @@
   import Placeholder from '$lib/components/Placeholder.svelte';
   import Elapsed from '$lib/components/Elapsed.svelte';
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
+  import AutopilotBar from '$lib/components/AutopilotBar.svelte';
 
   let { data } = $props();
+
+  /** Piloto automático em andamento: os botões manuais ficam fora do jogo. */
+  let autopilotActive = $state(false);
+  let canPublish = $state(false);
 
   let tasks = $state<Task[]>([]);
   let loading = $state(true);
@@ -50,7 +55,7 @@
   }
 
   function canDispatch(task: Task) {
-    if (dispatching) return false;
+    if (dispatching || autopilotActive) return false;
     if (task.status === 'RUNNING' || task.status === 'COMPLETED') return false;
     return blockers(task).length === 0;
   }
@@ -67,8 +72,27 @@
     }
   }
 
+  /** Atualização silenciosa (sem esqueleto) enquanto o piloto trabalha. */
+  async function refresh() {
+    try {
+      tasks = await api.listTasks(data.project.id);
+      pending.refresh();
+    } catch {
+      /* a próxima consulta tenta de novo */
+    }
+  }
+
+  function onAutopilot(active: boolean) {
+    autopilotActive = active;
+    refresh();
+  }
+
   $effect(() => {
     load();
+    api
+      .getDeployment(data.project.id)
+      .then((v) => (canPublish = v.configured))
+      .catch(() => (canPublish = false));
   });
 
   function replace(updated: Task) {
@@ -138,6 +162,13 @@
     {/snippet}
   </Placeholder>
 {:else}
+  <AutopilotBar
+    projectId={data.project.id}
+    hasTasks={tasks.length > 0}
+    {canPublish}
+    onchange={onAutopilot}
+  />
+
   <div class="tally">
     {#each counts as c (c.status)}
       <div class="count" class:accent={STATUS_META[c.status].accent}>
@@ -222,7 +253,7 @@
             </p>
           {/if}
 
-          {#if task.status === 'AWAITING_ANALYST' && !running}
+          {#if task.status === 'AWAITING_ANALYST' && !running && !autopilotActive}
             <div class="clar">
               <ClarificationPanel {task} onresolved={replace} />
             </div>
@@ -265,7 +296,7 @@
               type="button"
               class="btn btn-solid btn-sm"
               onclick={() => merge(task)}
-              disabled={merging === task.id}
+              disabled={merging === task.id || autopilotActive}
               title="Aprovar e incorporar branch na principal"
             >
               {#if merging === task.id}

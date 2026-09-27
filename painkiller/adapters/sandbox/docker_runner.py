@@ -11,6 +11,39 @@ from painkiller.core.domain.models import Task, ExecutionResult, ClarificationRe
 from painkiller.core.ports.sandbox import SandboxPort
 from painkiller.adapters.sandbox.paths import daemon_path
 
+NVIDIA_API_BASE = "https://integrate.api.nvidia.com/v1"
+
+
+def resolve_aider_model(env_vars: dict[str, str]) -> Optional[str]:
+    """Map Painkiller/NVIDIA variables onto what Aider reads, in place.
+
+    O Aider só conhece OPENAI_API_KEY / OPENAI_API_BASE para endpoints
+    compatíveis com OpenAI. Uma chave da NVIDIA sem base explícita ia parar
+    em api.openai.com; e um modelo sem prefixo de provedor (`moonshotai/...`)
+    é interpretado pelo LiteLLM como provedor desconhecido. Devolve o nome do
+    modelo já com o prefixo `openai/` quando há endpoint customizado.
+    """
+    if "PAINKILLER_LLM_API_KEY" in env_vars and "OPENAI_API_KEY" not in env_vars:
+        env_vars["OPENAI_API_KEY"] = env_vars["PAINKILLER_LLM_API_KEY"]
+    if "PAINKILLER_LLM_API_BASE" in env_vars and "OPENAI_API_BASE" not in env_vars:
+        env_vars["OPENAI_API_BASE"] = env_vars["PAINKILLER_LLM_API_BASE"]
+
+    nvidia_key = env_vars.get("NVIDIA_API_KEY")
+    if nvidia_key and "OPENAI_API_KEY" not in env_vars:
+        env_vars["OPENAI_API_KEY"] = nvidia_key
+    key = env_vars.get("OPENAI_API_KEY", "")
+    if key.startswith("nvapi-") and "OPENAI_API_BASE" not in env_vars:
+        env_vars["OPENAI_API_BASE"] = NVIDIA_API_BASE
+
+    model = (env_vars.get("PAINKILLER_LLM_MODEL") or "").strip()
+    if not model:
+        return None
+    custom_base = bool(env_vars.get("OPENAI_API_BASE"))
+    known_prefixes = ("openai/", "anthropic/", "gemini/", "deepseek/", "nvidia_nim/", "ollama/")
+    if custom_base and not model.startswith(known_prefixes):
+        model = f"openai/{model}"
+    return model
+
 
 class DockerSandboxRunner(SandboxPort):
     """Executes tasks in ephemeral Docker containers running Aider and the test suite."""
@@ -79,14 +112,6 @@ class DockerSandboxRunner(SandboxPort):
                 env_vars[key] = os.environ[key]
         env_vars["PAINKILLER_WORKSPACE"] = "/workspace"
 
-        # If NVIDIA / custom base provided, map as OPENAI_API_KEY / OPENAI_API_BASE for Aider
-        if "NVIDIA_API_KEY" in env_vars and "OPENAI_API_KEY" not in env_vars:
-            env_vars["OPENAI_API_KEY"] = env_vars["NVIDIA_API_KEY"]
-        if "PAINKILLER_LLM_API_KEY" in env_vars and "OPENAI_API_KEY" not in env_vars:
-            env_vars["OPENAI_API_KEY"] = env_vars["PAINKILLER_LLM_API_KEY"]
-        if "PAINKILLER_LLM_API_BASE" in env_vars and "OPENAI_API_BASE" not in env_vars:
-            env_vars["OPENAI_API_BASE"] = env_vars["PAINKILLER_LLM_API_BASE"]
-
         command = [
             "aider",
             "--message",
@@ -94,8 +119,9 @@ class DockerSandboxRunner(SandboxPort):
             "--yes",
             "--no-check-update",
         ]
-        if "PAINKILLER_LLM_MODEL" in env_vars:
-            command.extend(["--model", env_vars["PAINKILLER_LLM_MODEL"]])
+        model = resolve_aider_model(env_vars)
+        if model:
+            command.extend(["--model", model])
 
         try:
             container = self.client.containers.run(
@@ -118,6 +144,9 @@ class DockerSandboxRunner(SandboxPort):
             clarification = None
             if exit_code == 42:
                 clarification = self._extract_clarification(repo_path, task.id)
+            # O arquivo é consumido aqui: um pedido antigo não pode ser relido
+            # como se fosse novo na próxima execução da mesma tarefa.
+            self._discard_clarification_file(repo_path)
 
             return ExecutionResult(
                 exit_code=exit_code,
@@ -147,6 +176,15 @@ class DockerSandboxRunner(SandboxPort):
             except Exception:
                 return None
         return None
+
+    @staticmethod
+    def _discard_clarification_file(repo_path: str) -> None:
+        clar_file = os.path.join(repo_path, ".painkiller", "clarification.json")
+        try:
+            if os.path.exists(clar_file):
+                os.remove(clar_file)
+        except OSError:
+            pass
 
     def _cleanup_container(self, task_id: str) -> None:
         container = self._running_containers.pop(task_id, None)

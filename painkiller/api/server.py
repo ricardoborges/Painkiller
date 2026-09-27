@@ -19,7 +19,9 @@ from painkiller.adapters.vcs.gitea_adapter import GiteaAdapter
 from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
 from painkiller.adapters.sandbox.docker_agent_session import DockerAgentSession
 from painkiller.adapters.llm.litellm_adapter import LiteLLMAdapter
+from painkiller.adapters.deploy.coolify_adapter import CoolifyAdapter
 from painkiller.engine.orchestrator import PainkillerOrchestrator
+from painkiller.engine.autopilot import ProjectAutopilot
 from painkiller.engine.analysis import AnalysisOrchestrator
 from painkiller.interrogation.wizard import InterrogationWizard
 from painkiller.api.routes.auth import router as auth_router
@@ -57,10 +59,16 @@ def create_app(
     sandbox = DockerSandboxRunner(image_name=docker_image)
     llm = LiteLLMAdapter()
     agent = DockerAgentSession(image_name=agent_image)
+    # Publicação em produção. Sem as variáveis COOLIFY_* o adaptador existe
+    # mas `is_configured()` é falso e as rotas de deploy respondem 503.
+    deployer = CoolifyAdapter()
 
-    orchestrator = PainkillerOrchestrator(tracker=tracker, sandbox=sandbox, git=git, vcs=vcs)
+    orchestrator = PainkillerOrchestrator(
+        tracker=tracker, sandbox=sandbox, git=git, vcs=vcs, deployer=deployer
+    )
     wizard = InterrogationWizard(llm=llm, tracker=tracker)
     analysis = AnalysisOrchestrator(agent=agent, tracker=tracker)
+    autopilot = ProjectAutopilot(orchestrator=orchestrator, tracker=tracker)
 
     # Attach to application state
     app.state.tracker = tracker
@@ -72,6 +80,8 @@ def create_app(
     app.state.wizard = wizard
     app.state.agent = agent
     app.state.analysis = analysis
+    app.state.deployer = deployer
+    app.state.autopilot = autopilot
 
     # Register routers
     app.include_router(auth_router)

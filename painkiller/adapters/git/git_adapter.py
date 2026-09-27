@@ -83,15 +83,35 @@ class GitCliAdapter(GitPort):
                 with open(readme_path, "w", encoding="utf-8") as f:
                     f.write("# Project\n\nGenerated and managed by Painkiller.\n")
 
-            gitignore_path = os.path.join(repo_path, ".gitignore")
-            if not os.path.exists(gitignore_path):
-                with open(gitignore_path, "w", encoding="utf-8") as f:
-                    f.write("__pycache__/\n*.pyc\nnode_modules/\n.env\n.DS_Store\n")
+            self.ensure_ignored(repo_path)
 
             has_c = await self.has_changes(repo_path)
             if has_c:
                 await self._run_git(repo_path, "add", "-A")
                 await self._run_git(repo_path, "commit", "-m", "Initial commit")
+
+    #: Estado da plataforma que mora dentro do repositório do projeto (fila de
+    #: stdin do agente, home do Antigravity, backlog.json, clarification.json).
+    #: Não pode ir para o histórico: `painkiller ask` faz `git add -A` e o
+    #: agente de análise commita à vontade.
+    PLATFORM_IGNORE = ".painkiller/"
+
+    @classmethod
+    def ensure_ignored(cls, repo_path: str) -> None:
+        """Create .gitignore if missing and make sure .painkiller/ is in it."""
+        gitignore_path = os.path.join(repo_path, ".gitignore")
+        if not os.path.exists(gitignore_path):
+            with open(gitignore_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "__pycache__/\n*.pyc\nnode_modules/\n.env\n.DS_Store\n"
+                    f"{cls.PLATFORM_IGNORE}\n"
+                )
+            return
+        with open(gitignore_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = [ln.strip() for ln in f.read().splitlines()]
+        if cls.PLATFORM_IGNORE.rstrip("/") not in {ln.rstrip("/") for ln in lines}:
+            with open(gitignore_path, "a", encoding="utf-8") as f:
+                f.write(f"\n{cls.PLATFORM_IGNORE}\n")
 
     async def set_remote(self, repo_path: str, remote_url: str, remote_name: str = "origin") -> None:
         code, _, _ = await self._run_git(repo_path, "remote", "get-url", remote_name)

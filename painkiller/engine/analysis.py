@@ -11,6 +11,7 @@ from painkiller.core.domain.models import (
     AgentEventType,
     AnalysisSession,
     AnalysisStatus,
+    DeploymentInfo,
     Project,
     Task,
     TaskStatus,
@@ -350,6 +351,18 @@ class AnalysisOrchestrator:
         if created:
             created[0] = await self.tracker.update_task_status(created[0].id, TaskStatus.READY)
 
+        # Como a aplicação sobe em produção também sai da análise: porta e
+        # forma de build vão para o projeto, para o adaptador de deploy usar.
+        deploy = data.get("deploy")
+        if isinstance(deploy, dict):
+            try:
+                project = await self.tracker.get_project(run.session.project_id)
+                base = project.deployment if isinstance(project, Project) and project.deployment else DeploymentInfo()
+                info = base.model_copy(update=_deployment_updates(deploy))
+                await self.tracker.update_project(run.session.project_id, deployment=info)
+            except Exception:
+                pass
+
         run.session.spec_path = data.get("spec_path")
         run.session.status = AnalysisStatus.FINISHED
         try:
@@ -359,26 +372,66 @@ class AnalysisOrchestrator:
         return created
 
 
+def _deployment_updates(deploy: dict) -> dict:
+    """Sanitize the `deploy` block the agent wrote into DeploymentInfo fields."""
+    updates: dict = {}
+    port = deploy.get("port")
+    if isinstance(port, int) and 1 <= port <= 65535:
+        updates["port"] = port
+    elif isinstance(port, str) and port.isdigit() and 1 <= int(port) <= 65535:
+        updates["port"] = int(port)
+    build_pack = str(deploy.get("build_pack") or "").strip().lower()
+    if build_pack in ("nixpacks", "railpack", "static", "dockerfile", "dockercompose"):
+        updates["build_pack"] = build_pack
+    dockerfile = deploy.get("dockerfile_location")
+    if isinstance(dockerfile, str) and dockerfile.strip():
+        updates["dockerfile_location"] = dockerfile.strip()
+    return updates
+
+
 def build_analysis_prompt(project: Project) -> str:
     """Compose the pt-BR kickoff prompt handed to the containerized agent."""
     parts = [
-        "Você é o agente de análise inicial do Painkiller.",
+        "Você é o agente de análise inicial do Painkiller, uma plataforma em que uma pessoa "
+        "SEM formação técnica descreve o software que quer e o recebe pronto e publicado na internet.",
         "",
-        "Conduza a elicitação de requisitos com o analista usando a skill "
+        "Conduza a elicitação de requisitos com essa pessoa usando a skill "
         "superpowers:brainstorming. Regras desta sessão:",
-        "- Escreva sempre em português do Brasil.",
-        "- Faça UMA pergunta por vez e espere a resposta do analista.",
+        "- Escreva sempre em português do Brasil, em linguagem simples, sem jargão técnico. "
+        "Quando um termo técnico for inevitável, explique-o em uma frase.",
+        "- Faça UMA pergunta por vez e espere a resposta. Prefira perguntas com exemplos ou "
+        "alternativas concretas a perguntas abertas.",
+        "- Pergunte sobre o que a pessoa quer que o software FAÇA e para QUEM; as decisões "
+        "técnicas (linguagem, banco, framework) são suas — escolha o caminho mais simples e "
+        "comum, e não peça que ela decida isso.",
         "- Não escreva código de produção nem implemente nada nesta sessão.",
         "- O repositório do projeto está montado em /workspace.",
         "",
-        "Quando o analista aprovar a especificação, faça as duas coisas:",
+        "Quando a pessoa aprovar a especificação, faça as duas coisas:",
         "1. Grave a especificação em docs/superpowers/specs/AAAA-MM-DD-<tema>-design.md.",
         f"2. Grave o backlog decomposto em {BACKLOG_RELATIVE}, exatamente neste formato:",
-        '   {"spec_path": "<caminho do spec>", "tasks": [',
+        '   {"spec_path": "<caminho do spec>",',
+        '    "deploy": {"port": 3000, "build_pack": "dockerfile", "dockerfile_location": "/Dockerfile"},',
+        '    "tasks": [',
         '     {"title": "...", "description": "...", "target_files": ["..."],',
         '      "acceptance_criteria": ["..."], "dependencies": ["<title de outra task>"]}',
         "   ]}",
-        "   Cada tarefa precisa ser atômica e executável por um agente de codificação isolado.",
+        "   Cada tarefa precisa ser atômica e executável por um agente de codificação isolado, "
+        "sem acesso a esta conversa: a descrição tem de ser autossuficiente.",
+        "   As tarefas serão executadas em sequência e cada uma é verificada pelos testes do "
+        "repositório; inclua a criação dos testes nas próprias tarefas.",
+        "",
+        "Requisitos de publicação (a aplicação vai para produção automaticamente via Coolify "
+        "ao fim do backlog, sem intervenção humana):",
+        "- A PRIMEIRA tarefa do backlog deve criar o esqueleto do projeto com um Dockerfile na "
+        "raiz que constrói e sobe a aplicação ouvindo em 0.0.0.0 na porta declarada em "
+        "\"deploy.port\", mais um endpoint de health check (GET /health respondendo 200).",
+        "- Toda configuração sensível deve vir de variáveis de ambiente com valores padrão "
+        "seguros para funcionar sem nenhuma configuração manual.",
+        "- Dados persistentes devem usar SQLite em arquivo (ou equivalente embutido), a menos "
+        "que a pessoa peça algo diferente.",
+        "- Em \"deploy\", \"build_pack\" é \"dockerfile\" quando houver Dockerfile (o padrão), "
+        "\"static\" para sites sem servidor, ou \"nixpacks\" quando preferir detecção automática.",
         "",
         "=== CONTEXTO DO PROJETO ===",
         f"Nome: {project.name}",
@@ -394,5 +447,5 @@ def build_analysis_prompt(project: Project) -> str:
             parts.append(extract_attachment_text(att_path))
 
     parts.append("")
-    parts.append("Comece cumprimentando o analista e fazendo a primeira pergunta.")
+    parts.append("Comece cumprimentando a pessoa pelo nome do projeto e fazendo a primeira pergunta.")
     return "\n".join(parts)

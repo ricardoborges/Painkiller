@@ -24,8 +24,69 @@ export interface Project {
   attachments: string[];
   default_branch: string;
   repo_url?: string | null;
+  /** Comando de verificação; null = detectado pelo conteúdo do repositório. */
+  test_command?: string | null;
+  deployment?: DeploymentInfo | null;
   created_at: string;
 }
+
+/* ---- publicação em produção (Coolify) ---- */
+
+export const DEPLOYMENT_STATUSES = [
+  'NOT_CONFIGURED',
+  'CREATED',
+  'DEPLOYING',
+  'LIVE',
+  'FAILED'
+] as const;
+
+export type DeploymentStatus = (typeof DEPLOYMENT_STATUSES)[number];
+
+export interface DeploymentInfo {
+  provider: string;
+  build_pack: string;
+  port: number;
+  dockerfile_location: string | null;
+  app_uuid: string | null;
+  url: string | null;
+  last_deployment_uuid: string | null;
+  status: DeploymentStatus;
+  error: string | null;
+  updated_at: string;
+}
+
+export interface DeploymentView {
+  /** O servidor tem as variáveis COOLIFY_*; sem elas "Publicar" fica desativado. */
+  configured: boolean;
+  deployment: DeploymentInfo | null;
+}
+
+export const DEPLOYMENT_LABEL: Record<DeploymentStatus, string> = {
+  NOT_CONFIGURED: 'Ainda não publicado',
+  CREATED: 'Aplicação criada, aguardando o primeiro deploy',
+  DEPLOYING: 'Publicando',
+  LIVE: 'No ar',
+  FAILED: 'A publicação falhou'
+};
+
+/* ---- piloto automático ---- */
+
+export type AutopilotState = 'IDLE' | 'RUNNING' | 'PUBLISHING' | 'DONE' | 'PAUSED' | 'FAILED';
+
+export interface AutopilotRun {
+  project_id: string;
+  state: AutopilotState;
+  current_task_id: string | null;
+  current_task_title: string | null;
+  completed: number;
+  total: number;
+  message: string;
+  publish: boolean;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export const AUTOPILOT_ACTIVE: AutopilotState[] = ['RUNNING', 'PUBLISHING'];
 
 export interface ProjectDoc {
   path: string;
@@ -135,6 +196,8 @@ export interface AnalysisSession {
 
 export type AgentEventType =
   | 'SYSTEM'
+  /** Fala do analista, reemitida no replay para reconstruir a conversa. */
+  | 'USER'
   | 'ASSISTANT'
   | 'THINKING'
   /** Pedaços em andamento; o ASSISTANT canônico chega depois com o texto todo. */

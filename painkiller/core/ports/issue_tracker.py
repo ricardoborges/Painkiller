@@ -9,6 +9,7 @@ from painkiller.core.domain.models import (
     ClarificationRequest,
     AnalysisSession,
     AgentEvent,
+    DeploymentInfo,
 )
 
 
@@ -26,8 +27,10 @@ class IssueTrackerPort(ABC):
         attachments: Optional[Sequence[str]] = None,
         default_branch: str = "main",
         repo_url: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Project:
-        """Create or register a project."""
+        """Create or register a project. `project_id` lets the caller pick the id
+        up front (the repository folder is named after it before the row exists)."""
         pass
 
     @abstractmethod
@@ -45,6 +48,8 @@ class IssueTrackerPort(ABC):
         solution_description: Optional[str] = None,
         attachments: Optional[Sequence[str]] = None,
         repo_url: Optional[str] = None,
+        test_command: Optional[str] = None,
+        deployment: Optional[DeploymentInfo] = None,
     ) -> Project:
         """Update an existing project."""
         pass
@@ -118,6 +123,11 @@ class IssueTrackerPort(ABC):
     @abstractmethod
     async def get_pending_clarification(self, task_id: str) -> Optional[ClarificationRequest]:
         """Get the current pending clarification request for a task, if any."""
+        pass
+
+    @abstractmethod
+    async def list_clarifications(self, task_id: str) -> list[ClarificationRequest]:
+        """All clarification requests of a task, oldest first (answered and pending)."""
         pass
 
     @abstractmethod

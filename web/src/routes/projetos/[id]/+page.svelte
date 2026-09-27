@@ -3,6 +3,7 @@
   import { baseName } from '$lib/api';
   import Icon from '$lib/components/Icon.svelte';
   import ProjectDialog from '$lib/components/ProjectDialog.svelte';
+  import PublishPanel from '$lib/components/PublishPanel.svelte';
 
   let { data } = $props();
 
@@ -58,6 +59,8 @@
       <p class="mono path">{data.project.repo_path}</p>
       <p class="help">Montado em <span class="mono">/workspace</span> dentro do contêiner.</p>
     </div>
+
+    <PublishPanel projectId={data.project.id} />
 
     <div class="acts">
       <a class="btn btn-solid" href="/projetos/{data.project.id}/analise-inicial">
