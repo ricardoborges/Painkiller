@@ -157,6 +157,11 @@ class IssueTrackerPort(ABC):
         pass
 
     @abstractmethod
+    async def list_clarifications(self, task_id: str) -> list[ClarificationRequest]:
+        """All clarification requests of a task, oldest first (answered and pending)."""
+        pass
+
+    @abstractmethod
     async def save_analysis_session(self, session: AnalysisSession) -> AnalysisSession:
         """Create or update an interactive analysis session."""
         pass

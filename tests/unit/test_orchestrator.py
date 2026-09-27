@@ -325,3 +325,60 @@ async def test_abbreviate_tests_refuses_completed_task(mock_tracker, mock_sandbo
     with pytest.raises(RuntimeError):
         await orchestrator.abbreviate_tests("t1")
     mock_tracker.set_task_skip_tests.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_answered_clarifications_reach_the_agent_prompt(mock_tracker, mock_sandbox, mock_git):
+    """Sem isto a reexecução após a resposta refaz a mesma pergunta (exit 42 em loop)."""
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc")
+    answered = ClarificationRequest(
+        id="c1", task_id="t1", question="Which JWT library?", context_summary="auth.py",
+        status=ClarificationStatus.ANSWERED, answer="PyJWT",
+    )
+    still_open = ClarificationRequest(id="c2", task_id="t1", question="Open?", context_summary="")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_tracker.list_clarifications.return_value = [answered, still_open]
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    instructions = mock_sandbox.run_task.call_args.args[2]
+    assert "Which JWT library?" in instructions
+    assert "PyJWT" in instructions
+    assert "auth.py" in instructions
+    assert "NÃO pergunte de novo" in instructions
+    assert "Open?" not in instructions
+
+
+@pytest.mark.asyncio
+async def test_prompt_has_no_clarification_block_without_answers(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_tracker.list_clarifications.return_value = []
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    instructions = mock_sandbox.run_task.call_args.args[2]
+    assert "Esclarecimentos já respondidos" not in instructions
+
+
+@pytest.mark.asyncio
+async def test_tracker_without_history_does_not_block_dispatch(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_tracker.list_clarifications.side_effect = RuntimeError("boom")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    mock_sandbox.run_task.assert_called_once()

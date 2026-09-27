@@ -186,3 +186,23 @@ async def test_init_db_migrates_missing_columns(tmp_path):
     await tracker.close()
 
 
+
+
+@pytest.mark.asyncio
+async def test_list_clarifications_keeps_history_in_order(tracker: SQLiteIssueTracker):
+    proj = await tracker.create_project(name="History App", repo_path="/tmp/history")
+    task = await tracker.create_task(project_id=proj.id, title="T", description="D")
+    other = await tracker.create_task(project_id=proj.id, title="Other", description="D")
+
+    first = await tracker.create_clarification(task.id, "First?", "a.py")
+    await tracker.resolve_clarification(first.id, answer="Yes")
+    await tracker.create_clarification(task.id, "Second?", "b.py")
+    await tracker.create_clarification(other.id, "Elsewhere?", "")
+
+    history = await tracker.list_clarifications(task.id)
+
+    assert [c.question for c in history] == ["First?", "Second?"]
+    assert history[0].status == ClarificationStatus.ANSWERED
+    assert history[0].answer == "Yes"
+    assert history[1].status == ClarificationStatus.PENDING
+    assert await tracker.list_clarifications("task-none") == []

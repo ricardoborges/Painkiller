@@ -8,6 +8,8 @@ from typing import Optional, Any
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
+    ClarificationRequest,
+    ClarificationStatus,
     ExecutionResult,
     Project,
     SessionStatus,
@@ -133,8 +135,12 @@ class PainkillerOrchestrator:
             assigned_branch=branch_name,
         )
 
-        # Build prompt instructions
-        instructions = self._build_task_instructions(task, project, retrying=retrying)
+        # Build prompt instructions. As respostas já dadas pelo analista entram
+        # aqui: sem isso a reexecução refaz a mesma pergunta (exit 42 em loop).
+        history = await self._clarification_history(task.id)
+        instructions = self._build_task_instructions(
+            task, project, retrying=retrying, clarifications=history
+        )
 
         # Execute container
         self._note(task.id, f"Iniciando contêiner na branch {branch_name}")
@@ -284,6 +290,16 @@ class PainkillerOrchestrator:
         except Exception as e:
             logger.debug(f"Usage not recorded for {task.id}: {e}")
 
+    async def _clarification_history(self, task_id: str) -> list[ClarificationRequest]:
+        try:
+            items = await self.tracker.list_clarifications(task_id)
+        except Exception as e:  # tracker sem o método, ou falha de I/O: não bloqueia o dispatch
+            logger.debug(f"Could not load clarification history for {task_id}: {e}")
+            return []
+        if not isinstance(items, list):
+            return []
+        return [c for c in items if isinstance(c, ClarificationRequest)]
+
     async def reply_clarification(self, clarification_id: str, answer: str) -> Task:
         """Provide answer to a paused clarification and resume the task."""
         clar = await self.tracker.resolve_clarification(clarification_id, answer)
@@ -378,7 +394,13 @@ class PainkillerOrchestrator:
             return f"{head}\n\nÚltima mensagem do agente:\n{result.summary}"
         return head
 
-    def _build_task_instructions(self, task: Task, project: Project, retrying: bool = False) -> str:
+    def _build_task_instructions(
+        self,
+        task: Task,
+        project: Project,
+        retrying: bool = False,
+        clarifications: Optional[list[ClarificationRequest]] = None,
+    ) -> str:
         instructions = [
             f"# Tarefa: {task.title}",
         ]
@@ -413,6 +435,20 @@ class PainkillerOrchestrator:
             instructions.append("\n## Critérios de Aceitação:")
             for c in task.acceptance_criteria:
                 instructions.append(f"- {c}")
+
+        answered = [
+            c for c in (clarifications or [])
+            if c.status == ClarificationStatus.ANSWERED and c.answer
+        ]
+        if answered:
+            instructions.append(
+                "\n## Esclarecimentos já respondidos pelo analista:\n"
+                "Estas dúvidas já foram resolvidas. NÃO pergunte de novo; siga as respostas. "
+                "O trabalho feito antes da pausa está commitado nesta mesma branch."
+            )
+            for c in answered:
+                where = f" (contexto: {c.context_summary})" if c.context_summary else ""
+                instructions.append(f"- Pergunta: {c.question}{where}\n  Resposta: {c.answer}")
 
         if task.skip_tests:
             guidelines = (
