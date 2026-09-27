@@ -199,10 +199,10 @@ class DockerAgentSession(AgentSessionPort):
             if claude_session_id:
                 # Retomar exige que a sessão exista; se o contêiner caiu antes
                 # do primeiro turno, começa de novo sob o mesmo id.
+                # Sem id não há o que retomar: `--continue` dependeria do
+                # cwd_latest.json, que o maki não grava num bind mount do Windows.
                 flag = "--session" if resume and has_saved else "--session-id"
                 agent_args.extend([flag, claude_session_id])
-            elif resume:
-                agent_args.append("--continue")
             command = [
                 "painkiller", "agent-run",
                 "--agent-bin", "maki",
@@ -505,6 +505,9 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
             # Diagnóstico do unreal-agent-runner repassado pelo `unreal-run`; a
             # falha do turno chega à parte, como `result` com is_error.
             return AgentEvent(type=AgentEventType.SYSTEM, text=line, raw={"line": line})
+        if _GEMINI_FATAL_RE.search(line):
+            # O agy não tem prefixo próprio: reconhece o erro da API do Gemini.
+            return _harness_error(line, raw={"line": line}, provider="gemini")
         # Ruído de stderr não é fatal.
         return AgentEvent(type=AgentEventType.ERROR, text=line, raw={"line": line})
 
@@ -535,7 +538,13 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
         if evt == "result":
             res = data.get("result") or {}
             text = res.get("response") or ""
+            failure = _agy_failure(res)
+            if failure:
+                return _harness_error(failure, raw=data, provider="gemini")
             return AgentEvent(type=AgentEventType.RESULT, text=text, raw=data)
+        if evt == "error":
+            detail = _agy_failure(data) or line
+            return _harness_error(detail, raw=data, provider="gemini")
 
     # Eventos legados do Claude Code e DeepSeek Harness (`dsh`)
     kind = data.get("type")
@@ -572,22 +581,38 @@ def parse_agent_line(line: str) -> Optional[AgentEvent]:
 #: Falhas que o `dsh` anuncia no stderr como `dsh: <CÓDIGO>: <detalhe>`.
 _DSH_ERROR_RE = re.compile(r"^dsh:\s*(?:([A-Z][A-Z_]+):|(fatal)\b:?)\s*(.*)$")
 
-#: Mensagens para o analista; o detalhe original vai junto em `raw`. Os dois
-#: harnesses que as disparam (dsh e maki) usam a mesma chave DeepSeek.
+#: Mensagens para o analista; o detalhe original vai junto em `raw`. dsh,
+#: maki e unreal usam a chave DeepSeek do projeto; o agy, a chave Gemini.
 _HARNESS_ERROR_MESSAGES = {
-    "QUOTA": (
+    ("deepseek", "QUOTA"): (
         "A conta DeepSeek está sem saldo. Recarregue os créditos em "
         "platform.deepseek.com ou troque a chave de API do projeto."
     ),
-    "AUTH": (
+    ("deepseek", "AUTH"): (
         "A DeepSeek recusou a chave de API. Confira a chave do projeto em Editar projeto."
     ),
+    ("gemini", "QUOTA"): (
+        "A chave Gemini excedeu a cota (limite de uso ou de faturamento). Confira o "
+        "faturamento em aistudio.google.com ou troque a chave de API do projeto."
+    ),
+    ("gemini", "AUTH"): (
+        "O Google recusou a chave Gemini. Confira a chave do projeto em Editar projeto."
+    ),
 }
+
+#: Erros do Gemini que não se resolvem sozinhos, como o agy os repassa no stderr.
+_GEMINI_FATAL_RE = re.compile(
+    r"API_KEY_INVALID|API key not valid|UNAUTHENTICATED|PERMISSION_DENIED|RESOURCE_EXHAUSTED"
+)
 
 
 def classify_harness_error(message: str) -> str:
     """Best-effort error code for a free-text harness failure."""
     upper = message.upper()
+    if "RESOURCE_EXHAUSTED" in upper:
+        return "QUOTA"
+    if any(k in upper for k in ("API_KEY_INVALID", "API KEY NOT VALID", "UNAUTHENTICATED", "PERMISSION_DENIED")):
+        return "AUTH"
     if "BALANCE" in upper or "QUOTA" in upper or "402" in upper:
         return "QUOTA"
     if "AUTH" in upper or "API KEY" in upper or "401" in upper:
@@ -595,15 +620,33 @@ def classify_harness_error(message: str) -> str:
     return "ERROR"
 
 
-def _harness_error(detail: str, code: Optional[str] = None, raw: Optional[dict] = None) -> AgentEvent:
+def _harness_error(
+    detail: str,
+    code: Optional[str] = None,
+    raw: Optional[dict] = None,
+    provider: str = "deepseek",
+) -> AgentEvent:
     """An ERROR the analyst must see — not container noise (see `harness_error`)."""
     code = (code or classify_harness_error(detail)).upper()
-    message = _HARNESS_ERROR_MESSAGES.get(code) or f"O agente falhou: {detail}"
+    message = _HARNESS_ERROR_MESSAGES.get((provider, code)) or f"O agente falhou: {detail}"
     return AgentEvent(
         type=AgentEventType.ERROR,
         text=message,
         raw={**(raw or {}), "harness_error": code, "detail": detail},
     )
+
+
+def _agy_failure(payload: dict) -> Optional[str]:
+    """Error text of an agy `result`/`error` payload, or None when it succeeded."""
+    status = str(payload.get("status") or "").upper()
+    error = payload.get("error")
+    if isinstance(error, dict):
+        error = error.get("message") or error.get("status") or json.dumps(error, ensure_ascii=False)
+    if error:
+        return str(error)
+    if status in ("ERROR", "FAILED", "FAILURE"):
+        return str(payload.get("response") or payload.get("message") or status)
+    return None
 
 
 def _parse_dsh_error(line: str) -> Optional[AgentEvent]:

@@ -3,7 +3,8 @@
 FROM node:22-slim
 
 ARG SUPERPOWERS_REPO=https://github.com/obra/superpowers
-ARG SUPERPOWERS_REF=main
+# Commit fixado: as skills mudam o comportamento do agente; atualize de propósito.
+ARG SUPERPOWERS_REF=8ca22dba9a94f28898bbce59f2537ff4d87c747d
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -18,7 +19,9 @@ RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- -d /usr/lo
     && chmod +x /usr/local/bin/agy
 
 # Clona o repositório superpowers
-RUN git clone --depth 1 --branch "${SUPERPOWERS_REF}" "${SUPERPOWERS_REPO}" /opt/superpowers \
+RUN git init -q /opt/superpowers \
+    && git -C /opt/superpowers fetch -q --depth 1 "${SUPERPOWERS_REPO}" "${SUPERPOWERS_REF}" \
+    && git -C /opt/superpowers checkout -q FETCH_HEAD \
     && rm -rf /opt/superpowers/.git
 
 # Assegura que plugin.json existe para conformidade com o agy

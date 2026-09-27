@@ -155,6 +155,12 @@ class DockerSandboxRunner(SandboxPort):
                 task_instructions,
             ]
 
+        # Uma pergunta já respondida deixa o clarification.json no workspace.
+        # A existência do arquivo conta como pausa (o `painkiller ask` sai com
+        # 42 dentro da ferramenta do agente, não do contêiner), então um arquivo
+        # velho faria a reexecução pausar de novo com a mesma pergunta.
+        self._discard_clarification(repo_path)
+
         try:
             container = self.client.containers.run(
                 image,
@@ -312,6 +318,16 @@ class DockerSandboxRunner(SandboxPort):
         if pending.strip():
             emit(pending)
         return b"".join(chunks).decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _discard_clarification(repo_path: str) -> None:
+        clar_file = os.path.join(repo_path, ".painkiller", "clarification.json")
+        try:
+            os.remove(clar_file)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            logger.warning(f"Não foi possível remover {clar_file}: {e}")
 
     def _extract_clarification(self, repo_path: str, task_id: str) -> Optional[ClarificationRequest]:
         clar_file = os.path.join(repo_path, ".painkiller", "clarification.json")

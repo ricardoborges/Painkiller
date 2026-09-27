@@ -2,7 +2,8 @@
 FROM node:22-slim
 
 ARG SUPERPOWERS_REPO=https://github.com/obra/superpowers
-ARG SUPERPOWERS_REF=main
+# Commit fixado: as skills mudam o comportamento do agente; atualize de propósito.
+ARG SUPERPOWERS_REF=8ca22dba9a94f28898bbce59f2537ff4d87c747d
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -13,14 +14,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Instala o DeepSeek Harness nativo (dsh)
-RUN npm install -g @deepseek-ai/dsh
+# Versão fixada: acp-run depende do protocolo ACP e do formato do log de sessão.
+ARG DSH_VERSION=0.1.7-rc.2
+RUN npm install -g "@deepseek-ai/dsh@${DSH_VERSION}"
 
 # Corrige conflito de tipo duplicado no koffi do dsh-win32-process (bug de colisão FFI em ambientes Linux)
 COPY docker/patch_dsh.py /tmp/patch_dsh.py
 RUN python3 /tmp/patch_dsh.py && rm -f /tmp/patch_dsh.py
 
 # Clona o repositório superpowers
-RUN git clone --depth 1 --branch "${SUPERPOWERS_REF}" "${SUPERPOWERS_REPO}" /opt/superpowers \
+RUN git init -q /opt/superpowers \
+    && git -C /opt/superpowers fetch -q --depth 1 "${SUPERPOWERS_REPO}" "${SUPERPOWERS_REF}" \
+    && git -C /opt/superpowers checkout -q FETCH_HEAD \
     && rm -rf /opt/superpowers/.git
 
 # Publica as skills do superpowers no catálogo de sessão do dsh: o

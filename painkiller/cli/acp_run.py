@@ -470,7 +470,7 @@ def acp_run(
     def finish(code: int):
         try:
             client.call("session/close", {"sessionId": session_id})
-        except AcpError:
+        except (AcpError, OSError):
             pass
         client.close()
         return sys.exit(code)
@@ -478,7 +478,8 @@ def acp_run(
     if prompt is not None:
         try:
             _run_turn(client, translator, session_id, model, prompt, meter)
-        except AcpError as e:
+        except (AcpError, OSError) as e:
+            # OSError: o dsh morreu e o pipe quebrou no meio da escrita.
             _emit_failure(e)
             return finish(1)
         return finish(0)
@@ -525,7 +526,7 @@ def acp_run(
                         return finish(0)
                     try:
                         _run_turn(client, translator, session_id, model, _extract_prompt(line), meter)
-                    except AcpError as e:
+                    except (AcpError, OSError) as e:
                         # Sem saldo, chave recusada...: a sessão continua gravada e
                         # pode ser retomada depois que o problema for resolvido.
                         _emit_failure(e)

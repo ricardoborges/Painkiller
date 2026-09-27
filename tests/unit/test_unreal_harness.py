@@ -314,3 +314,21 @@ async def test_runner_runs_unreal_bridge_one_shot(tmp_path, env):
     environment = call_args[1]["environment"]
     assert environment["UNREAL_HARNESS_LLM_API_KEY"] == "sk-project"
     assert environment["UNREAL_HARNESS_LLM_MODEL"] == "deepseek-v4-pro"
+
+
+def test_failed_turn_still_reports_its_usage(runner_output, capsys):
+    """Calls before the failure were billed: the error result carries them."""
+    script, _ = runner_output
+    script["lines"] = [
+        _item(1, "model_response", _response([_tool_call("call-1", "bash")], usage={"InputTokens": 80, "OutputTokens": 10})),
+        _item(2, "model_response", _response([], failure={"Code": "402", "Message": "Insufficient Balance"})),
+    ]
+
+    ok = bridge._run_turn("unreal-agent-runner", "/workspace", "/sessions", None, "deepseek-v4-pro", "Oi")
+
+    assert not ok
+    out = capsys.readouterr().out
+    error = [e for e in _events(out) if e is not None][-1]
+    assert error.type == AgentEventType.ERROR
+    assert parse_agent_usage(error.raw) == (80, 10, None, "deepseek-v4-pro")
+    assert parse_task_usage(out) == (80, 10, None, "deepseek-v4-pro")

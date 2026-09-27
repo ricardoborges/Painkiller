@@ -13,6 +13,7 @@ from painkiller.core.domain.models import (
     AgentEventType,
     AnalysisSession,
     AnalysisStatus,
+    HarnessType,
     Project,
     Task,
     TaskStatus,
@@ -138,10 +139,14 @@ TURN_ENDERS = frozenset(
 )
 
 
+def _harness_name(harness: Optional[object]) -> str:
+    return str(getattr(harness, "value", harness) or "")
+
+
 class AnalysisRun:
     """In-process bookkeeping for one live session."""
 
-    def __init__(self, session: AnalysisSession, repo_path: str, model: str = ""):
+    def __init__(self, session: AnalysisSession, repo_path: str, model: str = "", harness: Optional[object] = None):
         self.session = session
         self.repo_path = repo_path
         self.events: list[AgentEvent] = []
@@ -162,6 +167,9 @@ class AnalysisRun:
         # Modelo do projeto, trocado pelo que o agente anunciar no init; o
         # RESULT nem sempre o repete.
         self.model = model
+        # O agy escolhe o id da conversa e o anuncia no `init`; os outros
+        # harnesses usam o id que o Painkiller gerou.
+        self.adopts_conversation_id = _harness_name(harness) == HarnessType.AGY_SUPERPOWERS.value
 
 
 class AnalysisOrchestrator:
@@ -216,14 +224,20 @@ class AnalysisOrchestrator:
                     logger.warning(f"Erro ao parar sessão anterior {active.id}: {e}")
 
         session_id = f"analysis-{uuid.uuid4().hex[:8]}"
-        claude_session_id = str(uuid.uuid4())
+        # O agy não aceita um id escolhido por nós: `--conversation` só retoma
+        # uma conversa que ele criou. O id real chega no `init` (_apply_status).
+        claude_session_id = (
+            None
+            if _harness_name(project.harness) == HarnessType.AGY_SUPERPOWERS.value
+            else str(uuid.uuid4())
+        )
         session = AnalysisSession(
             id=session_id,
             project_id=project.id,
             claude_session_id=claude_session_id,
             status=AnalysisStatus.STARTING,
         )
-        run = AnalysisRun(session=session, repo_path=project.repo_path, model=harness_model(project.harness, project.model))
+        run = AnalysisRun(session=session, repo_path=project.repo_path, model=harness_model(project.harness, project.model), harness=project.harness)
         self.runs[session_id] = run
         try:
             await self.tracker.save_analysis_session(session)
@@ -316,7 +330,7 @@ class AnalysisOrchestrator:
 
         run = self.runs.get(session_id)
         if not run:
-            run = AnalysisRun(session=session, repo_path=project.repo_path, model=harness_model(project.harness, project.model))
+            run = AnalysisRun(session=session, repo_path=project.repo_path, model=harness_model(project.harness, project.model), harness=project.harness)
             events = await self.tracker.list_analysis_events(session_id)
             run.events = list(events) if isinstance(events, (list, tuple)) else []
             self.runs[session_id] = run
@@ -386,6 +400,10 @@ class AnalysisOrchestrator:
                     if event.type == AgentEventType.RESULT:
                         await self._record_usage(run, event)
                         await self.sync_docs(run)
+                    elif event.type == AgentEventType.ERROR and event.raw.get("harness_error"):
+                        # Um turno que falhou no meio também gastou tokens; o
+                        # `result` de erro do maki e do unreal-run traz a conta.
+                        await self._record_usage(run, event)
             for queue in list(run.subscribers):
                 queue.put_nowait(event)
             try:
@@ -526,6 +544,11 @@ class AnalysisOrchestrator:
             model = init.get("model") or event.raw.get("model")
             if model:
                 run.model = str(model)
+            if run.adopts_conversation_id and event.raw.get("event") == "init":
+                conversation = event.raw.get("conversation_id") or init.get("conversation_id")
+                if conversation:
+                    # Sem isto o `resume` passaria ao agy um id que ele nunca viu.
+                    run.session.claude_session_id = str(conversation)
         elif event.type == AgentEventType.RESULT:
             # O agente terminou o turno: a bola volta para o analista.
             run.session.status = AnalysisStatus.WAITING_ANALYST
@@ -621,7 +644,8 @@ class AnalysisOrchestrator:
         project = await self.tracker.get_project(session.project_id)
         repo_path = project.repo_path if isinstance(project, Project) else ""
         model = harness_model(project.harness, project.model) if isinstance(project, Project) else ""
-        run = AnalysisRun(session=session, repo_path=repo_path, model=model)
+        harness = project.harness if isinstance(project, Project) else None
+        run = AnalysisRun(session=session, repo_path=repo_path, model=model, harness=harness)
         events = await self.tracker.list_analysis_events(session_id)
         run.events = list(events) if isinstance(events, (list, tuple)) else []
         self.runs[session_id] = run

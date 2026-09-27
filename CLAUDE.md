@@ -85,7 +85,7 @@ Hexagonal / ports & adapters. The dependency rule is strict: `core/` and `engine
 
 The distinguishing mechanism of this codebase. When the agent in the container hits ambiguity, its prompt tells it to run `painkiller ask "<question>" --context "<where>"` instead of guessing. That CLI ([cli/ask.py](painkiller/cli/ask.py)) writes `.painkiller/clarification.json` into the workspace, `git add -A && git commit` the WIP, and exits **42**.
 
-`DockerSandboxRunner` sees exit 42, reads that JSON back off the bind-mounted repo path, and returns it as `ExecutionResult.clarification`. The orchestrator then records the clarification, sets the task to `AWAITING_ANALYST`, and stops. `POST /api/tasks/{id}/clarification` resolves it and re-enters `dispatch_task` from the top — the task re-runs on the same branch with the WIP commit already in place.
+`DockerSandboxRunner` sees exit 42, reads that JSON back off the bind-mounted repo path, and returns it as `ExecutionResult.clarification`. The file's mere presence also counts as a pause, because `painkiller ask` exits 42 inside the agent's tool, not the container — so the runner **deletes any leftover `clarification.json` before starting** the container. Without that, the answered question paused every re-run again. The orchestrator then records the clarification, sets the task to `AWAITING_ANALYST`, and stops. `POST /api/tasks/{id}/clarification` resolves it and re-enters `dispatch_task` from the top — the task re-runs on the same branch with the WIP commit already in place.
 
 So exit codes carry meaning end to end: `42` = paused for the analyst, `0` = agent finished (orchestrator then runs `git.run_tests`, which defaults to bare `pytest` in the *target* repo; failure → `FAILED`, success → commit + auto-merge → `COMPLETED`), anything else = `FAILED`. Do not repurpose 42.
 
@@ -108,6 +108,10 @@ The stream-json envelope from `agy` is parsed in `parse_agent_line` into an `Age
   - `step_type: "tool"` with active/running state -> `TOOL_USE`
   - `step_type: "tool"` with done/error state -> `TOOL_RESULT`
 - `result`: Turn completed -> `RESULT`, enabling the analyst composer in the UI.
+
+**agy picks its own conversation id.** For `agy` the analysis starts with no `claude_session_id`; `_apply_status` adopts the `conversation_id` of agy's `init` event, and `resume` passes it as `--conversation` (or `--continue` when none was seen yet). The other harnesses use the UUID Painkiller generates.
+
+The bridges' `--idle-timeout` counts analyst input **and**, in `agent-run`, every line the agent prints, so a long turn is not killed mid-way; `agent-run` always relays stdout through its own thread for that reason.
 
 An API restart kills the analysis containers while the restored session still says it is the analyst's turn, so `AnalysisOrchestrator.send` restores the run (`get_or_restore`) and, when the container is not alive, calls `resume` **before** appending the message — `resume` measures the queue offset first, so the new answer is the first thing the restarted agent reads.
 

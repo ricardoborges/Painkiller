@@ -14,6 +14,7 @@ from painkiller.core.domain.models import (
     AgentEventType,
     AnalysisSession,
     AnalysisStatus,
+    HarnessType,
     Project,
     Task,
 )
@@ -454,10 +455,55 @@ async def test_start_with_force_new_creates_new_session(tmp_path):
     engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
 
     project = _project(tmp_path)
+    project.harness = HarnessType.MAKI_SUPERPOWERS
     session = await engine.start(project, force_new=True)
 
     assert session.id != "analysis-existing"
     assert session.claude_session_id is not None
+    assert agent.claude_session_id == session.claude_session_id
+
+
+async def test_agy_session_adopts_the_conversation_id_announced_in_init(tmp_path):
+    """agy only resumes (`--conversation`) a conversation it created itself."""
+    tracker = AsyncMock()
+    tracker.get_active_analysis_session.return_value = None
+    init = AgentEvent(
+        type=AgentEventType.SYSTEM,
+        text="Iniciando agente",
+        raw={"event": "init", "conversation_id": "cid-agy", "init": {"model": "gemini-3.8-flash"}},
+    )
+    agent = FakeAgentSession([init, AgentEvent(type=AgentEventType.RESULT, text="ok")])
+    engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
+
+    session = await engine.start(_project(tmp_path))
+    assert agent.claude_session_id is None
+
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    await asyncio.sleep(0)
+    assert session.claude_session_id == "cid-agy"
+
+
+async def test_failed_turn_usage_is_recorded(tmp_path):
+    tracker = AsyncMock()
+    tracker.get_active_analysis_session.return_value = None
+    usage = AsyncMock()
+    error = AgentEvent(
+        type=AgentEventType.ERROR,
+        text="A DeepSeek recusou a chave de API.",
+        raw={
+            "type": "result", "is_error": True, "harness_error": "AUTH",
+            "usage": {"input_tokens": 120, "output_tokens": 30}, "model": "deepseek-v4-pro",
+        },
+    )
+    agent = FakeAgentSession([error])
+    engine = AnalysisOrchestrator(agent=agent, tracker=tracker, usage=usage)
+
+    await engine.start(_project(tmp_path))
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    await asyncio.sleep(0)
+
+    record = usage.record_usage.call_args.args[0]
+    assert (record.input_tokens, record.output_tokens, record.model) == (120, 30, "deepseek-v4-pro")
 
 
 

@@ -45,13 +45,19 @@ def _emit_step(step: dict) -> None:
     _emit({"event": "step_update", "step_update": step})
 
 
-def _emit_failure(detail: str) -> None:
+def _emit_failure(detail: str, usage: Optional[dict] = None, model: str = "") -> None:
     """Report a failed turn as a stream-json `result` with is_error.
 
     `parse_agent_line` já transforma esse formato num ERROR com
     `raw.harness_error` (chave recusada, sem saldo...), o mesmo caminho do maki.
+    O uso do turno vai junto: as chamadas anteriores à falha foram cobradas.
     """
-    _emit({"type": "result", "is_error": True, "result": detail})
+    event: dict = {"type": "result", "is_error": True, "result": detail}
+    if usage and any(usage.values()):
+        event["usage"] = usage
+        if model:
+            event["model"] = model
+    _emit(event)
 
 
 class TurnTranslator:
@@ -217,7 +223,11 @@ def _run_turn(
     stderr_thread.join(timeout=5)
 
     if proc.returncode != 0 or translator.failure:
-        _emit_failure(translator.failure or f"unreal-agent-runner saiu com código {proc.returncode}")
+        _emit_failure(
+            translator.failure or f"unreal-agent-runner saiu com código {proc.returncode}",
+            usage=translator.usage,
+            model=model,
+        )
         return False
 
     payload: dict = {"response": translator.text}

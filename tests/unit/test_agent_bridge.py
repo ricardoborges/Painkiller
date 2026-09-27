@@ -113,3 +113,51 @@ def test_agent_run_default_bin_is_agy():
     agent_bin_param = next(p for p in agent_run.params if p.name == "agent_bin")
     assert agent_bin_param.default == "agy"
 
+
+
+BUSY_AGENT = textwrap.dedent(
+    """
+    import sys, time
+    # Um turno longo: fala o tempo todo, mas por mais tempo que o idle-timeout.
+    for i in range(8):
+        print("working " + str(i), flush=True)
+        time.sleep(0.5)
+    sys.exit(0)
+    """
+)
+
+SILENT_AGENT = textwrap.dedent(
+    """
+    import time
+    time.sleep(30)
+    """
+)
+
+
+def _run_with_timeout(tmp_path, source, idle_timeout):
+    script = tmp_path / "agent.py"
+    script.write_text(source, encoding="utf-8")
+    return subprocess.run(
+        [
+            sys.executable, "-m", "painkiller.cli.main", "agent-run",
+            "--stdin-file", str(tmp_path / "queue.jsonl"),
+            "--agent-bin", sys.executable,
+            "--idle-timeout", str(idle_timeout),
+            "--", str(script),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_agent_output_keeps_a_long_turn_alive(tmp_path):
+    """The idle timeout counts agent output, not only analyst input."""
+    result = _run_with_timeout(tmp_path, BUSY_AGENT, idle_timeout=2)
+    assert result.returncode == 0
+    assert "working 7" in result.stdout
+
+
+def test_a_silent_agent_still_times_out(tmp_path):
+    result = _run_with_timeout(tmp_path, SILENT_AGENT, idle_timeout=1)
+    assert result.returncode == 124

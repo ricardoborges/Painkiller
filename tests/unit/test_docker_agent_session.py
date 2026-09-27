@@ -351,3 +351,34 @@ async def test_dsh_receives_the_project_model_and_effort(tmp_path, client):
     env = client.containers.run.call_args.kwargs["environment"]
     assert env["PAINKILLER_DEEPSEEK_MODEL"] == "deepseek-v4-flash"
     assert env["PAINKILLER_DEEPSEEK_EFFORT"] == "low"
+
+
+def test_gemini_key_refusal_on_stderr_is_a_harness_error():
+    event = parse_agent_line("Error: 400 API key not valid. Please pass a valid API key. [API_KEY_INVALID]")
+    assert event.type == AgentEventType.ERROR
+    assert event.raw["harness_error"] == "AUTH"
+    assert "Gemini" in event.text and "DeepSeek" not in event.text
+
+
+def test_gemini_quota_on_stderr_is_a_harness_error():
+    event = parse_agent_line("Error: 429 RESOURCE_EXHAUSTED: quota exceeded")
+    assert event.raw["harness_error"] == "QUOTA"
+    assert "Gemini" in event.text
+
+
+def test_agy_result_with_error_is_a_harness_error():
+    line = json.dumps({"event": "result", "result": {"status": "ERROR", "error": {"message": "PERMISSION_DENIED"}}})
+    event = parse_agent_line(line)
+    assert event.type == AgentEventType.ERROR
+    assert event.raw["harness_error"] == "AUTH"
+
+
+def test_agy_successful_result_stays_a_result():
+    line = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "ok"}})
+    event = parse_agent_line(line)
+    assert event.type == AgentEventType.RESULT and event.text == "ok"
+
+
+def test_unreal_diagnostics_are_not_mistaken_for_gemini_errors():
+    event = parse_agent_line("unreal: PERMISSION_DENIED while reading file")
+    assert event.type == AgentEventType.SYSTEM

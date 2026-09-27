@@ -29,7 +29,12 @@ POLL_INTERVAL_SECONDS = 0.2
 @click.command(context_settings={"ignore_unknown_options": True})
 @click.option("--stdin-file", required=True, help="JSONL file polled for agent input.")
 @click.option("--agent-bin", default="agy", show_default=True, help="Executable to run as the agent.")
-@click.option("--idle-timeout", default=3600, type=int, help="Seconds without agent exit before giving up.")
+@click.option(
+    "--idle-timeout",
+    default=3600,
+    type=int,
+    help="Seconds without analyst input or agent output before giving up.",
+)
 @click.option("--stdin-offset", default=0, type=int, help="Byte offset in --stdin-file where unanswered input starts.")
 @click.option(
     "--fail-on-error-result",
@@ -39,7 +44,7 @@ POLL_INTERVAL_SECONDS = 0.2
 @click.option(
     "--agent-log",
     default=None,
-    help="JSON log the agent writes; auth/billing errors found there end the run (implies stdout relay).",
+    help="JSON log the agent writes; auth/billing errors found there end the run.",
 )
 @click.argument("agent_args", nargs=-1, type=click.UNPROCESSED)
 def agent_run(
@@ -88,20 +93,27 @@ def agent_run(
     proc = subprocess.Popen(
         [agent_bin, *agent_args],
         stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE if fail_on_error_result else None,
+        stdout=subprocess.PIPE,
         stderr=None,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
     )
 
-    # O maki relata chave recusada ou falta de saldo num `result` com is_error
-    # e segue vivo esperando o próximo turno; aqui isso encerra o contêiner,
-    # como a falha de qualquer outro harness.
+    # A saída passa sempre por aqui: cada linha conta como atividade, para o
+    # timeout ocioso não matar um turno longo no meio. O maki relata chave
+    # recusada ou falta de saldo num `result` com is_error e segue vivo
+    # esperando o próximo turno; com --fail-on-error-result isso encerra o
+    # contêiner, como a falha de qualquer outro harness.
     failed = threading.Event()
-    relay = None
-    if fail_on_error_result:
-        relay = threading.Thread(target=_relay_stdout, args=(proc.stdout, failed), daemon=True)
-        relay.start()
+    activity = _Activity()
+    relay = threading.Thread(
+        target=_relay_stdout,
+        args=(proc.stdout, failed, fail_on_error_result, activity),
+        daemon=True,
+    )
+    relay.start()
     if agent_log:
         # No modo SDK o maki não emite `result` quando a chave é recusada: fica
         # "esperando reautenticação" e só registra isso no próprio log.
@@ -112,7 +124,7 @@ def agent_run(
     offset = stdin_offset
     pending = ""
     stdin_closed = False
-    deadline = time.monotonic() + idle_timeout if idle_timeout > 0 else 0
+    last_input = time.monotonic()
 
     try:
         while True:
@@ -124,11 +136,10 @@ def agent_run(
             code = proc.poll()
             if code is not None:
                 # O `result` costuma ser a última linha: ela precisa chegar ao log.
-                if relay is not None:
-                    relay.join(timeout=5)
+                relay.join(timeout=5)
                 return sys.exit(1 if failed.is_set() else code)
 
-            if idle_timeout > 0 and time.monotonic() > deadline:
+            if idle_timeout > 0 and time.monotonic() - max(last_input, activity.last) > idle_timeout:
                 proc.kill()
                 return sys.exit(124)
 
@@ -139,8 +150,7 @@ def agent_run(
                     size = offset
 
                 if size > offset:
-                    if idle_timeout > 0:
-                        deadline = time.monotonic() + idle_timeout
+                    last_input = time.monotonic()
                     with open(stdin_file, "r", encoding="utf-8", errors="replace") as f:
                         f.seek(offset)
                         chunk = f.read()
@@ -158,8 +168,14 @@ def agent_run(
                             proc.stdin.close()
                             stdin_closed = True
                             break
-                        proc.stdin.write(line + "\n")
-                        proc.stdin.flush()
+                        try:
+                            proc.stdin.write(line + "\n")
+                            proc.stdin.flush()
+                        except OSError:
+                            # O agente morreu com a linha a caminho; o poll
+                            # acima colhe o código de saída na próxima volta.
+                            stdin_closed = True
+                            break
 
             time.sleep(POLL_INTERVAL_SECONDS)
     except KeyboardInterrupt:
@@ -173,13 +189,27 @@ _stdout_lock = threading.Lock()
 _FATAL_API_ERROR = re.compile(r"API error \((401|402|403)\)|auth error|insufficient balance", re.IGNORECASE)
 
 
-def _relay_stdout(stream, failed: threading.Event) -> None:
-    """Pass the agent's stdout through, flagging a stream-json error result."""
+class _Activity:
+    """Moment of the agent's last output line, shared with the relay thread."""
+
+    def __init__(self) -> None:
+        self.last = time.monotonic()
+
+
+def _relay_stdout(
+    stream,
+    failed: threading.Event,
+    fail_on_error: bool = True,
+    activity: Optional[_Activity] = None,
+) -> None:
+    """Pass the agent's stdout through, noting activity and flagging an error result."""
     for line in stream:
+        if activity is not None:
+            activity.last = time.monotonic()
         with _stdout_lock:
             sys.stdout.write(line)
             sys.stdout.flush()
-        if _is_error_result(line):
+        if fail_on_error and _is_error_result(line):
             failed.set()
 
 

@@ -2,7 +2,8 @@
 FROM node:22-slim
 
 ARG SUPERPOWERS_REPO=https://github.com/obra/superpowers
-ARG SUPERPOWERS_REF=main
+# Commit fixado: as skills mudam o comportamento do agente; atualize de propósito.
+ARG SUPERPOWERS_REF=8ca22dba9a94f28898bbce59f2537ff4d87c747d
 ARG MAKI_VERSION=v0.5.6
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,7 +35,9 @@ RUN set -eux; \
 
 # Clona o repositório superpowers e publica as skills onde o maki as procura
 # (~/.agents/skills/<nome>/SKILL.md, o mesmo formato do repo).
-RUN git clone --depth 1 --branch "${SUPERPOWERS_REF}" "${SUPERPOWERS_REPO}" /opt/superpowers \
+RUN git init -q /opt/superpowers \
+    && git -C /opt/superpowers fetch -q --depth 1 "${SUPERPOWERS_REPO}" "${SUPERPOWERS_REF}" \
+    && git -C /opt/superpowers checkout -q FETCH_HEAD \
     && rm -rf /opt/superpowers/.git \
     && mkdir -p /root/.agents \
     && ln -s /opt/superpowers/skills /root/.agents/skills
