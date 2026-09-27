@@ -193,3 +193,41 @@ async def test_test_deploy_refuses_task_of_finalized_session():
     with pytest.raises(BranchUnavailableError):
         await service.trigger_deploy(project_id="proj-1", environment=EnvironmentType.TEST, task_id="task-10")
     mock_deployment.deploy_environment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deploy_pushes_branch_to_gitea_before_coolify():
+    """A push that failed at task completion left Coolify with "Remote branch not found"."""
+    from painkiller.engine.deployment_service import BranchPushError
+
+    tracker = AsyncMock()
+    deployment = AsyncMock()
+    git = AsyncMock()
+    project = Project(id="proj-1", name="App", repo_path="/repo", default_branch="main",
+                      repo_url="http://gitea:3000/alice/app.git")
+    tracker.get_project.return_value = project
+    tracker.get_task.return_value = Task(id="t1", project_id="proj-1", title="A", description="d",
+                                         status=TaskStatus.COMPLETED, assigned_branch="feature/t1")
+    tracker.get_session.return_value = None
+    tracker.save_deployment.side_effect = lambda rec: rec
+    deployment.deploy_environment.return_value = DeploymentRecord(
+        id="dep-1", project_id="proj-1", environment=EnvironmentType.TEST,
+        branch="feature/t1", status=DeploymentStatus.BUILDING,
+    )
+    git.push.return_value = (0, "")
+    service = DeploymentService(tracker=tracker, deployment=deployment, git=git)
+
+    await service.trigger_deploy(project_id="proj-1", environment=EnvironmentType.TEST, task_id="t1")
+    git.push.assert_awaited_once_with("/repo", "feature/t1")
+
+    # Produção publica a branch padrão: sem o push, sairia um commit antigo.
+    git.push.reset_mock()
+    await service.trigger_deploy(project_id="proj-1", environment=EnvironmentType.PRODUCTION)
+    git.push.assert_awaited_once_with("/repo", "main")
+
+    # Push recusado: o Coolify nem é chamado.
+    git.push.return_value = (1, "fatal: unable to access")
+    deployment.deploy_environment.reset_mock()
+    with pytest.raises(BranchPushError):
+        await service.trigger_deploy(project_id="proj-1", environment=EnvironmentType.TEST, task_id="t1")
+    deployment.deploy_environment.assert_not_called()

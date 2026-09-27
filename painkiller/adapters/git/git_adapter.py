@@ -16,6 +16,12 @@ def strip_userinfo(url: str) -> str:
     return urllib.parse.urlunsplit(parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1]))
 
 
+def _is_permanent_push_error(output: str) -> bool:
+    """A rejection that retrying cannot fix (history diverged, hook refused)."""
+    text = output.lower()
+    return any(s in text for s in ("[rejected]", "non-fast-forward", "pre-receive hook declined", "protected branch"))
+
+
 class GitCliAdapter(GitPort):
     """Asynchronous Git operations executing git CLI commands.
 
@@ -24,6 +30,9 @@ class GitCliAdapter(GitPort):
     never ``.git/config``: the repo is bind-mounted into the agent containers,
     so anything stored there is readable by the agent.
     """
+
+    #: Pausas (s) entre as tentativas de push; os testes zeram.
+    push_retry_delays: tuple[float, ...] = (2.0, 5.0)
 
     def __init__(self, http_credentials: Optional[dict[str, tuple[str, str]]] = None):
         self.set_http_credentials(http_credentials)
@@ -172,8 +181,17 @@ class GitCliAdapter(GitPort):
             args.extend(["-u", remote_name, branch_name])
         else:
             args.extend([remote_name, branch_name])
-        code, out, err = await self._run_git(repo_path, *args, env=self._auth_env(remote_url))
-        return code, (out + "\n" + err).strip()
+        env = self._auth_env(remote_url)
+        # O Gitea some por alguns segundos quando reinicia (sync_gitea_root_url,
+        # restart do compose). Sem nova tentativa, o push da branch da tarefa
+        # falhava calado e o "Testar" do Coolify não achava a branch.
+        for delay in (*self.push_retry_delays, None):
+            code, out, err = await self._run_git(repo_path, *args, env=env)
+            output = (out + "\n" + err).strip()
+            if code == 0 or delay is None or _is_permanent_push_error(output):
+                return code, output
+            await asyncio.sleep(delay)
+        return code, output
 
     async def scrub_remote_credentials(self, repo_path: str, remote_name: str = "origin") -> Optional[str]:
         """Rewrite a remote that still carries ``user:password@``; return the clean URL.

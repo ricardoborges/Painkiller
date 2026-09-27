@@ -158,3 +158,34 @@ async def test_delete_branch_removes_merged_branch_locally_and_on_remote():
         _, remote_heads, _ = await adapter._run_git(remote, "branch", "--list")
         assert "feature/merged" not in local and "feature/pending" in local
         assert "feature/merged" not in remote_heads and "feature/pending" in remote_heads
+
+
+@pytest.mark.asyncio
+async def test_push_retries_transient_failures_but_not_rejections():
+    from unittest.mock import patch
+
+    adapter = GitCliAdapter()
+    adapter.push_retry_delays = (0, 0)
+    results = [(128, "", "fatal: unable to access 'http://gitea:3000/': Connection refused"), (0, "ok", "")]
+
+    async def flaky(repo_path, *args, env=None):
+        if args[0] == "push":
+            return results.pop(0)
+        return 1, "", ""
+
+    with patch.object(adapter, "_run_git", side_effect=flaky):
+        code, _ = await adapter.push("/repo", "feature/t1")
+    assert code == 0
+
+    calls = []
+
+    async def rejected(repo_path, *args, env=None):
+        if args[0] == "push":
+            calls.append(args)
+            return 1, "", " ! [rejected]        main -> main (non-fast-forward)"
+        return 1, "", ""
+
+    with patch.object(adapter, "_run_git", side_effect=rejected):
+        code, _ = await adapter.push("/repo", "main")
+    assert code == 1
+    assert len(calls) == 1

@@ -12,6 +12,7 @@ from painkiller.core.domain.models import (
     SessionStatus,
 )
 from painkiller.core.ports.deployment import DeploymentPort
+from painkiller.core.ports.git import GitPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 
 logger = logging.getLogger(__name__)
@@ -21,12 +22,22 @@ class BranchUnavailableError(Exception):
     """The task's branch was deleted when its session was finalized."""
 
 
+class BranchPushError(Exception):
+    """The branch to deploy could not be sent to Gitea, so Coolify cannot clone it."""
+
+
 class DeploymentService:
     """Orchestrates testing and production deployment requests."""
 
-    def __init__(self, tracker: IssueTrackerPort, deployment: DeploymentPort):
+    def __init__(
+        self,
+        tracker: IssueTrackerPort,
+        deployment: DeploymentPort,
+        git: Optional[GitPort] = None,
+    ):
         self.tracker = tracker
         self.deployment = deployment
+        self.git = git
 
     async def trigger_deploy(
         self,
@@ -74,6 +85,8 @@ class DeploymentService:
                     branch = chosen_task.assigned_branch or f"feature/{chosen_task.id}"
                     task_id = chosen_task.id
 
+        await self._publish_branch(project, branch)
+
         record = await self.deployment.deploy_environment(
             project=project,
             environment=environment,
@@ -93,6 +106,26 @@ class DeploymentService:
                 await self.tracker.update_project_deployment_urls(project_id, production_url=saved.url)
 
         return saved
+
+    async def _publish_branch(self, project: Project, branch: str) -> None:
+        """Push the branch to Gitea before Coolify clones it.
+
+        O push da conclusão da tarefa pode ter falhado (Gitea reiniciando), e
+        aí o Coolify falha com "Remote branch ... not found" — ou, na branch
+        padrão, publica um commit antigo sem avisar. Empurrar aqui corrige os
+        dois casos; sem nada novo, o push não faz nada.
+        """
+        if self.git is None or not project.repo_url:
+            return
+        try:
+            code, out = await self.git.push(project.repo_path, branch)
+        except Exception as e:
+            code, out = 1, str(e)
+        if code != 0:
+            logger.warning(f"Push de {branch} antes do deploy falhou: {out}")
+            raise BranchPushError(
+                f"Não foi possível enviar a branch {branch} ao Gitea antes do deploy: {out[-500:]}"
+            )
 
     async def _session_finalized(self, session_id: Optional[str]) -> bool:
         if not session_id:

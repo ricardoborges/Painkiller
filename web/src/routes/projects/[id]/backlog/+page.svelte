@@ -18,6 +18,7 @@
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
+  import { deploys, isDeployActive, DEPLOY_STAGE, lastLogLine } from '$lib/stores/deploys.svelte';
   import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
   import { onDestroy } from 'svelte';
 
@@ -63,7 +64,15 @@
   let deployingEnv = $state<'test' | 'production' | null>(null);
   let deployingTaskId = $state<string | null>(null);
   let deploymentModalOpen = $state(false);
-  let currentDeployment = $state<DeploymentRecord | null>(null);
+  // O registro vive no rastreador (que consulta o Coolify até terminar); aqui
+  // só se guarda qual deploy o modal mostra.
+  let shownDeploymentId = $state<string | null>(null);
+  const currentDeployment = $derived<DeploymentRecord | null>(
+    (shownDeploymentId && deploys.records[shownDeploymentId]) || deploys.latest(data.project.id)
+  );
+  const runningDeploy = $derived(deploys.active(data.project.id));
+  const productionDeploy = $derived(deploys.active(data.project.id, 'production'));
+  let logBox = $state<HTMLPreElement | null>(null);
 
   const justCreated = $derived(Number(page.url.searchParams.get('new') ?? 0));
   const byId = $derived(new Map(tasks.map((t) => [t.id, t])));
@@ -281,12 +290,40 @@
   async function loadEnvStatus() {
     try {
       envStatus = await api.getEnvironmentStatus(data.project.id);
+      // Um deploy disparado antes de um F5 (ou em outra aba) continua sendo
+      // acompanhado daqui.
+      for (const env of [envStatus.test, envStatus.production]) {
+        if (env.deployment_id && (env.status === 'PENDING' || env.status === 'BUILDING')) {
+          deploys.resume(env.deployment_id);
+        }
+      }
     } catch {
       // Ignora erro para não bloquear interface
     }
   }
 
+  function showDeployment(id: string) {
+    shownDeploymentId = id;
+    deploymentModalOpen = true;
+  }
+
+  // Deploy encerrado: as URLs e os pontos de status da barra de ambientes mudam.
+  $effect(() => {
+    if (deploys.settled) loadEnvStatus();
+  });
+
+  // O log acompanha o fim enquanto chega, como um terminal.
+  $effect(() => {
+    void currentDeployment?.logs;
+    if (logBox && deploymentModalOpen) logBox.scrollTop = logBox.scrollHeight;
+  });
+
   async function deployTest(taskId: string) {
+    const running = deploys.activeForTask(taskId);
+    if (running) {
+      showDeployment(running.id);
+      return;
+    }
     deployingEnv = 'test';
     deployingTaskId = taskId;
     try {
@@ -296,8 +333,8 @@
         taskId,
         activeSession?.id
       );
-      currentDeployment = record;
-      deploymentModalOpen = true;
+      deploys.track(record);
+      showDeployment(record.id);
       await loadEnvStatus();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Falha ao disparar deploy no ambiente de teste.');
@@ -308,6 +345,10 @@
   }
 
   async function deployProduction() {
+    if (productionDeploy) {
+      showDeployment(productionDeploy.id);
+      return;
+    }
     if (!confirm('Deseja iniciar o provisionamento e deploy para o ambiente de PRODUÇÃO no Coolify?')) {
       return;
     }
@@ -319,8 +360,8 @@
         undefined,
         activeSession?.id
       );
-      currentDeployment = record;
-      deploymentModalOpen = true;
+      deploys.track(record);
+      showDeployment(record.id);
       await loadEnvStatus();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Falha ao disparar deploy no ambiente de produção.');
@@ -671,11 +712,19 @@
           type="button"
           class="btn btn-solid btn-sm"
           onclick={deployProduction}
-          disabled={deployingEnv === 'production' || isQueueRunning || (tasks.length > 0 && completedCount < tasks.length)}
-          title={completedCount < tasks.length ? 'Conclua as tarefas do backlog para liberar o deploy em produção' : 'Disparar provisionamento e deploy em produção no Coolify'}
+          disabled={deployingEnv === 'production' ||
+            (!productionDeploy && (isQueueRunning || (tasks.length > 0 && completedCount < tasks.length)))}
+          title={productionDeploy
+            ? 'Deploy em produção em andamento — ver o log'
+            : completedCount < tasks.length
+              ? 'Conclua as tarefas do backlog para liberar o deploy em produção'
+              : 'Disparar provisionamento e deploy em produção no Coolify'}
         >
           {#if deployingEnv === 'production'}
-            <span class="spinner-inline" aria-hidden="true"></span> Publicando…
+            <span class="spinner-inline" aria-hidden="true"></span> Preparando…
+          {:else if productionDeploy}
+            <span class="spinner-inline" aria-hidden="true"></span> Publicando
+            <span class="mono tabular">{deploys.elapsed(productionDeploy)}</span>
           {:else}
             <Icon name="upload" size={11} /> Deploy
           {/if}
@@ -770,16 +819,42 @@
         </div>
       </div>
 
-      {#if currentDeployment}
+      {#if currentDeployment && !runningDeploy}
         <button
           type="button"
           class="btn btn-ghost btn-xs mono"
-          onclick={() => (deploymentModalOpen = true)}
+          onclick={() => showDeployment(currentDeployment.id)}
         >
-          Ver status do deploy
+          Ver último deploy
         </button>
       {/if}
     </div>
+
+    {#if runningDeploy}
+      {@const tail = lastLogLine(runningDeploy.logs)}
+      <!-- Deploy em andamento: fica visível até o Coolify responder que terminou -->
+      <div class="deploy-progress" role="status" aria-live="polite">
+        <div class="deploy-progress-row">
+          <span class="spinner-inline" aria-hidden="true"></span>
+          <span class="mono deploy-progress-title">
+            {runningDeploy.environment === 'test' ? 'Teste' : 'Produção'} · {DEPLOY_STAGE[runningDeploy.status]}
+            <span class="faint">· {runningDeploy.branch}</span>
+          </span>
+          <span class="mono tabular deploy-progress-clock">{deploys.elapsed(runningDeploy)}</span>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs mono"
+            onclick={() => showDeployment(runningDeploy.id)}
+          >
+            Ver log
+          </button>
+        </div>
+        {#if tail}
+          <p class="deploy-progress-tail mono faint" title={tail}>{tail}</p>
+        {/if}
+        <span class="indeterminate" aria-hidden="true"></span>
+      </div>
+    {/if}
 
     {#if queueMessage}
       <div class="queue-status-banner" class:running={isQueueRunning}>
@@ -1004,15 +1079,21 @@
         <div class="side">
           {#if isCompleted}
             {#if branchesAlive}
+            {@const taskDeploy = deploys.activeForTask(task.id)}
             <button
               type="button"
               class="btn btn-line btn-xs test-task-btn"
               onclick={() => deployTest(task.id)}
-              disabled={deployingTaskId === task.id || isQueueRunning}
-              title="Provisionar ambiente de teste no Coolify com a branch desta tarefa"
+              disabled={deployingTaskId === task.id || (isQueueRunning && !taskDeploy)}
+              title={taskDeploy
+                ? 'Deploy desta branch em andamento — ver o log'
+                : 'Provisionar ambiente de teste no Coolify com a branch desta tarefa'}
             >
               {#if deployingTaskId === task.id}
-                <span class="spinner-inline" aria-hidden="true"></span> Testando…
+                <span class="spinner-inline" aria-hidden="true"></span> Preparando…
+              {:else if taskDeploy}
+                <span class="spinner-inline" aria-hidden="true"></span> Publicando
+                <span class="mono tabular">{deploys.elapsed(taskDeploy)}</span>
               {:else}
                 <Icon name="play" size={10} /> Testar
               {/if}
@@ -1104,15 +1185,27 @@
           <span>Branch: <strong>{currentDeployment.branch}</strong></span>
         </div>
 
-        <div class="deploy-status-box mono">
+        <div class="deploy-status-box mono" class:hatch={currentDeployment.status === 'FAILED'}>
           <div class="spread">
-            <span>Status: <strong>{currentDeployment.status}</strong></span>
-            {#if currentDeployment.url}
+            <span class="deploy-stage">
+              {#if isDeployActive(currentDeployment)}
+                <span class="spinner-inline" aria-hidden="true"></span>
+              {/if}
+              <strong>{DEPLOY_STAGE[currentDeployment.status]}</strong>
+              <span class="faint tabular">{deploys.elapsed(currentDeployment)}</span>
+            </span>
+            {#if currentDeployment.url && currentDeployment.status === 'HEALTHY'}
               <a href={currentDeployment.url} target="_blank" rel="noopener noreferrer" class="link-ext bold">
                 Abrir Aplicação <Icon name="external" size={10} />
               </a>
             {/if}
           </div>
+          {#if isDeployActive(currentDeployment)}
+            <p class="faint deploy-hint">
+              O Coolify está clonando, construindo e publicando a aplicação. Pode fechar esta janela:
+              o andamento continua na barra de ambientes e você recebe um aviso quando terminar.
+            </p>
+          {/if}
           {#if currentDeployment.url}
             <div class="deploy-url-line">
               <span class="muted">URL:</span>
@@ -1126,7 +1219,7 @@
         {#if currentDeployment.logs}
           <div class="deploy-logs">
             <span class="label mono">Logs do Deploy</span>
-            <pre class="log-pre mono">{currentDeployment.logs}</pre>
+            <pre class="log-pre mono" bind:this={logBox}>{currentDeployment.logs}</pre>
           </div>
         {/if}
       </div>
@@ -1356,6 +1449,78 @@
     display: flex;
     flex-direction: column;
     gap: var(--s2);
+  }
+
+  .deploy-stage {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .deploy-hint {
+    font-size: var(--t-micro);
+    margin: 0;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Faixa de deploy em andamento, sob a barra de ambientes */
+  .deploy-progress {
+    position: relative;
+    margin-top: var(--s3);
+    padding: var(--s2) var(--s4) calc(var(--s2) + 2px);
+    border: 1px solid var(--rule-2);
+    background: var(--paper-sunk);
+    overflow: hidden;
+  }
+
+  .deploy-progress-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+
+  .deploy-progress-title {
+    font-size: var(--t-small);
+    flex: 1;
+    min-width: 0;
+  }
+
+  .deploy-progress-clock {
+    font-size: var(--t-small);
+    color: var(--ink-2);
+  }
+
+  .deploy-progress-tail {
+    margin: var(--s1) 0 0;
+    padding-left: calc(12px + var(--s3));
+    font-size: var(--t-micro);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Barra indeterminada: o Coolify não informa porcentagem de progresso */
+  .indeterminate {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent 0%, var(--ink) 50%, transparent 100%) 0 0 / 40% 100%
+      no-repeat;
+    animation: sweep 1.6s var(--ease) infinite;
+  }
+
+  @keyframes sweep {
+    from {
+      background-position: -60% 0;
+    }
+    to {
+      background-position: 160% 0;
+    }
   }
 
   .deploy-url-line {

@@ -6,9 +6,11 @@
   import { pending } from '$lib/stores/pending.svelte';
   import { disposeAnalyses } from '$lib/stores/analysis.svelte';
   import { setup } from '$lib/stores/setup.svelte';
+  import { deploys } from '$lib/stores/deploys.svelte';
   import { theme } from '$lib/stores/theme.svelte';
 
   import Icon from '$lib/components/Icon.svelte';
+  import Toaster from '$lib/components/Toaster.svelte';
 
   let { children } = $props();
 
@@ -53,6 +55,7 @@
     auth.signOut();
     pending.reset();
     setup.reset();
+    deploys.reset();
     // As sessões de análise vivem num módulo e sobrevivem à navegação de
     // propósito; o logout é o único momento em que devem ser descartadas.
     disposeAnalyses();
@@ -132,6 +135,8 @@
   <main class="shell" class:fluid={isFluid}>
     {@render children()}
   </main>
+
+  <Toaster />
 {/if}
 
 <style>

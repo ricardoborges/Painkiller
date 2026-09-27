@@ -80,6 +80,23 @@ class PainkillerOrchestrator:
         """Tell whoever watches the task what the orchestrator itself is doing."""
         self.activity.publish(task_id, AgentEvent(type=AgentEventType.SYSTEM, text=text))
 
+    async def _push(self, repo_path: str, branch: str, task_id: str) -> bool:
+        """Push a branch to Gitea without failing the task; say so when it does not go.
+
+        A branch that never reaches Gitea breaks the task's "Testar" (Coolify
+        clones from there), so the failure is logged and shown on the task
+        instead of disappearing into a debug line.
+        """
+        try:
+            code, out = await self.git.push(repo_path, branch)
+        except Exception as e:
+            code, out = 1, str(e)
+        if code == 0:
+            return True
+        logger.warning(f"Push de {branch} falhou (tarefa {task_id}): {out}")
+        self._note(task_id, f"Não foi possível enviar a branch {branch} ao Gitea: {out[-300:]}")
+        return False
+
     async def dispatch_task(self, task_id: str) -> Task:
         """Dispatch a task to the sandbox environment and update lifecycle accordingly."""
         task = await self.tracker.get_task(task_id)
@@ -210,10 +227,7 @@ class PainkillerOrchestrator:
                 test_code, test_out = await self.git.run_tests(project.repo_path)
             if test_code in (0, 5):
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
-                try:
-                    await self.git.push(project.repo_path, branch_name)
-                except Exception as push_err:
-                    logger.debug(f"Git push skipped or failed: {push_err}")
+                await self._push(project.repo_path, branch_name, task.id)
 
                 # Auto-merge é a regra do Painkiller: aprovada e incorporada na branch padrão
                 self._note(task.id, f"Incorporando branch na {project.default_branch}")
@@ -223,10 +237,7 @@ class PainkillerOrchestrator:
                     target_branch=project.default_branch,
                 )
                 if code_m == 0:
-                    try:
-                        await self.git.push(project.repo_path, project.default_branch)
-                    except Exception as e:
-                        logger.debug(f"Push after merge skipped or failed: {e}")
+                    await self._push(project.repo_path, project.default_branch, task.id)
 
                     await self.tracker.update_task_status(task.id, TaskStatus.COMPLETED)
                     comment = f"✅ Tarefa concluída, testada e incorporada na {project.default_branch}."
@@ -506,10 +517,7 @@ class PainkillerOrchestrator:
         branch_name = task.assigned_branch or f"feature/{task.id}"
         # A branch da tarefa continua viva no Gitea após o merge: o botão
         # "Testar" de cada tarefa concluída faz deploy dela no Coolify.
-        try:
-            await self.git.push(project.repo_path, branch_name)
-        except Exception as e:
-            logger.debug(f"Push of {branch_name} before merge skipped or failed: {e}")
+        await self._push(project.repo_path, branch_name, task.id)
 
         code, out = await self.git.merge_branch(
             project.repo_path,
@@ -519,10 +527,7 @@ class PainkillerOrchestrator:
         if code != 0:
             raise RuntimeError(f"Falha ao realizar merge da branch {branch_name} na {project.default_branch}: {out}")
 
-        try:
-            await self.git.push(project.repo_path, project.default_branch)
-        except Exception as e:
-            logger.debug(f"Push after merge skipped or failed: {e}")
+        await self._push(project.repo_path, project.default_branch, task.id)
 
         await self.tracker.update_task_status(task.id, TaskStatus.COMPLETED)
         await self.tracker.add_comment(

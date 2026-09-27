@@ -1,5 +1,6 @@
 """Coolify Deployment Adapter using async httpx to orchestrate on-premise environments."""
 
+import json
 import logging
 import os
 import uuid
@@ -34,6 +35,35 @@ def generate_ssh_keypair() -> tuple[str, str]:
         serialization.PublicFormat.OpenSSH,
     ).decode()
     return private_pem, public_line
+
+
+def format_deployment_logs(raw: Any) -> str:
+    """Turn Coolify's deployment log (a JSON array of entries, as a string) into plain text.
+
+    Each entry carries ``output`` and may be ``hidden`` (internal commands Coolify
+    itself hides in its UI). Anything that is not that shape is returned as-is.
+    """
+    if raw is None:
+        return ""
+    entries = raw
+    if isinstance(raw, str):
+        try:
+            entries = json.loads(raw)
+        except ValueError:
+            return raw
+    if not isinstance(entries, list):
+        return str(raw)
+    lines: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            lines.append(str(entry))
+            continue
+        if entry.get("hidden"):
+            continue
+        output = str(entry.get("output") or "").rstrip()
+        if output:
+            lines.append(output)
+    return "\n".join(lines)
 
 
 class CoolifyAdapter(DeploymentPort):
@@ -433,6 +463,7 @@ class CoolifyAdapter(DeploymentPort):
                 )
                 coolify_dep_uuid: Optional[str] = None
                 status = DeploymentStatus.BUILDING
+                logs = "Deploy disparado com sucesso no Coolify."
 
                 if deploy_resp.is_success:
                     deploy_data = deploy_resp.json()
@@ -441,7 +472,11 @@ class CoolifyAdapter(DeploymentPort):
                         or (deploy_data.get("deployments", [{}])[0].get("deployment_uuid") if isinstance(deploy_data.get("deployments"), list) else None)
                     )
                 else:
+                    # Sem deployment_uuid não há o que acompanhar: um BUILDING
+                    # aqui deixaria a interface esperando para sempre.
                     logger.warning(f"Resposta de deploy do Coolify: {deploy_resp.status_code} {deploy_resp.text}")
+                    status = DeploymentStatus.FAILED
+                    logs = f"O Coolify recusou o deploy ({deploy_resp.status_code}): {deploy_resp.text}"
 
                 return DeploymentRecord(
                     id=deployment_id,
@@ -454,7 +489,7 @@ class CoolifyAdapter(DeploymentPort):
                     coolify_app_uuid=app_uuid,
                     coolify_deployment_uuid=coolify_dep_uuid,
                     url=fqdn,
-                    logs="Deploy disparado com sucesso no Coolify.",
+                    logs=logs,
                     created_at=now,
                     updated_at=now,
                 )
@@ -494,10 +529,10 @@ class CoolifyAdapter(DeploymentPort):
                         record.status = DeploymentStatus.FAILED
                     elif c_status in ("in_progress", "queued", "building"):
                         record.status = DeploymentStatus.BUILDING
-                    elif c_status in ("killed", "stopped", "cancelled"):
+                    elif c_status in ("killed", "stopped") or c_status.startswith("cancel"):
                         record.status = DeploymentStatus.STOPPED
 
-                    logs = data.get("logs")
+                    logs = format_deployment_logs(data.get("logs"))
                     if logs:
                         record.logs = logs
                     record.updated_at = datetime.now(timezone.utc)
@@ -518,7 +553,7 @@ class CoolifyAdapter(DeploymentPort):
                 )
                 if resp.is_success:
                     data = resp.json()
-                    return str(data.get("logs") or record.logs or "Logs vazios.")
+                    return format_deployment_logs(data.get("logs")) or record.logs or "Logs vazios."
             except Exception as e:
                 return f"Erro ao obter logs: {e}"
         return record.logs or ""

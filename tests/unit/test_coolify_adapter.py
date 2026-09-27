@@ -215,3 +215,67 @@ async def test_coolify_reuses_existing_deploy_key():
     assert uuid == "k-9"
     vcs.add_deploy_key.assert_not_awaited()
     client.post.assert_not_awaited()
+
+
+def test_format_deployment_logs_drops_hidden_entries():
+    import json
+    from painkiller.adapters.deployment.coolify_adapter import format_deployment_logs
+
+    raw = json.dumps([
+        {"output": "Cloning repo", "hidden": False},
+        {"output": "docker inspect ...", "hidden": True},
+        {"output": "Build finished\n", "hidden": False},
+    ])
+
+    assert format_deployment_logs(raw) == "Cloning repo\nBuild finished"
+    assert format_deployment_logs("plain text") == "plain text"
+    assert format_deployment_logs(None) == ""
+
+
+@pytest.mark.asyncio
+async def test_coolify_status_poll_maps_finished_and_formats_logs():
+    from datetime import datetime, timezone
+    from painkiller.core.domain.models import DeploymentRecord
+
+    adapter = CoolifyAdapter(api_url="http://coolify.test", api_token="t")
+    now = datetime.now(timezone.utc)
+    record = DeploymentRecord(
+        id="dep-1", project_id="p", environment=EnvironmentType.TEST, branch="feature/x",
+        status=DeploymentStatus.BUILDING, coolify_deployment_uuid="c-1",
+        created_at=now, updated_at=now,
+    )
+    resp = MagicMock(
+        is_success=True,
+        json=lambda: {"status": "finished", "logs": '[{"output": "ok", "hidden": false}]'},
+    )
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=resp):
+        updated = await adapter.get_deployment_status(record)
+
+    assert updated.status == DeploymentStatus.HEALTHY
+    assert updated.logs == "ok"
+
+
+@pytest.mark.asyncio
+async def test_coolify_refused_deploy_is_failed_not_building():
+    """Without a deployment uuid nothing can be polled, so the UI must not wait forever."""
+    adapter = CoolifyAdapter(
+        api_url="http://coolify.test", api_token="t", server_uuid="srv-1", wildcard_domain="coolify.local"
+    )
+    project = Project(id="proj-1", name="app", repo_path="/tmp/x", default_branch="main")
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("httpx.AsyncClient.patch", new_callable=AsyncMock) as mock_patch:
+        mock_get.side_effect = [
+            MagicMock(is_success=True, json=lambda: [{"name": "painkiller-app", "uuid": "pu"}]),
+            MagicMock(is_success=True, json=lambda: [{"name": "test"}]),
+            MagicMock(is_success=True, json=lambda: [{"name": "app-test", "uuid": "app-1"}]),
+        ]
+        mock_patch.return_value = MagicMock(is_success=True)
+        mock_post.return_value = MagicMock(is_success=False, status_code=400, text="no server")
+
+        record = await adapter.deploy_environment(
+            project=project, environment=EnvironmentType.TEST, branch="feature/t"
+        )
+
+    assert record.status == DeploymentStatus.FAILED
+    assert "no server" in (record.logs or "")
