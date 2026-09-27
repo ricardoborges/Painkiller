@@ -845,12 +845,19 @@ def build_analysis_prompt(
         ]
     else:
         parts = [
-            "Você é o agente de análise do Painkiller.",
+            "Você é o agente de análise do Painkiller, uma plataforma em que uma pessoa "
+            "muitas vezes SEM formação técnica descreve o software que quer e o recebe pronto "
+            "e publicado na internet.",
             "",
-            "Conduza a elicitação de requisitos com o analista usando a skill "
+            "Conduza a elicitação de requisitos com essa pessoa usando a skill "
             "superpowers:brainstorming. Regras desta sessão:",
-            "- Escreva sempre em português do Brasil.",
-            "- Faça UMA pergunta por vez e espere a resposta do analista.",
+            "- Escreva sempre em português do Brasil, em linguagem simples, sem jargão técnico. "
+            "Quando um termo técnico for inevitável, explique-o em uma frase.",
+            "- Faça UMA pergunta por vez e espere a resposta. Prefira perguntas com exemplos ou "
+            "alternativas concretas a perguntas abertas.",
+            "- Pergunte sobre o que o software deve FAZER e para QUEM. As decisões técnicas "
+            "(linguagem, banco, framework, hospedagem) são suas: escolha o caminho mais simples "
+            "e comum e não peça que a pessoa decida isso.",
             "- Não escreva código de produção nem implemente nada nesta sessão.",
             "- O repositório do projeto está montado em /workspace.",
             "",
@@ -877,7 +884,12 @@ def build_analysis_prompt(
         '     {"title": "...", "description": "...", "target_files": ["..."],',
         '      "acceptance_criteria": ["..."], "dependencies": ["<title de outra task>"]}',
         "   ]}",
-        "   Cada tarefa precisa ser atômica e executável por um agente de codificação isolado.",
+        "   Cada tarefa precisa ser atômica e executável por um agente de codificação isolado, "
+        "sem acesso a esta conversa: a descrição tem de ser autossuficiente.",
+        "   A aplicação será publicada automaticamente ao fim do backlog; inclua na primeira "
+        "tarefa o esqueleto do projeto pronto para rodar em produção (Dockerfile na raiz ou "
+        "projeto detectável pelo Nixpacks, porta única, configuração por variáveis de ambiente "
+        "com padrões seguros).",
         "3. Na mensagem final confirmando a gravação do backlog, liste resumidamente as tarefas e termine OBRIGATORIAMENTE com o bloco de alternativas para o analista seguir:",
         f"```{CHOICES_FENCE}",
         '{"multiple": false, "options": [',

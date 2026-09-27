@@ -87,7 +87,9 @@ The distinguishing mechanism of this codebase. When the agent in the container h
 
 `DockerSandboxRunner` sees exit 42, reads that JSON back off the bind-mounted repo path, and returns it as `ExecutionResult.clarification`. The orchestrator then records the clarification, sets the task to `AWAITING_ANALYST`, and stops. `POST /api/tasks/{id}/clarification` resolves it and re-enters `dispatch_task` from the top — the task re-runs on the same branch with the WIP commit already in place.
 
-So exit codes carry meaning end to end: `42` = paused for the analyst, `0` = agent finished (orchestrator then runs `git.run_tests`, which defaults to bare `pytest` in the *target* repo; failure → `FAILED`, success → commit + `IN_REVIEW`), anything else = `FAILED`. Do not repurpose 42.
+So exit codes carry meaning end to end: `42` = paused for the analyst, `0` = agent finished (orchestrator then runs `git.run_tests`, which defaults to bare `pytest` in the *target* repo; failure → `FAILED`, success → commit + auto-merge → `COMPLETED`), anything else = `FAILED`. Do not repurpose 42.
+
+**Answers must reach the agent.** The worker is one-shot and has no memory of the paused run, so `_build_task_instructions` appends every *answered* clarification of the task (`IssueTrackerPort.list_clarifications`) as a "já respondido, não pergunte de novo" block. Without it the re-run asks the same question again and the task loops on exit 42. A tracker that cannot list clarifications degrades to no block rather than failing the dispatch.
 
 ### Initial analysis (Antigravity CLI + superpowers + Gemini 3.8 Flash, streamed)
 

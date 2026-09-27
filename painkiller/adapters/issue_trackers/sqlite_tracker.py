@@ -685,16 +685,29 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             record = res.scalars().first()
             if not record:
                 return None
-            return ClarificationRequest(
-                id=record.id,
-                task_id=record.task_id,
-                question=record.question,
-                context_summary=record.context_summary,
-                status=record.status,
-                answer=record.answer,
-                created_at=record.created_at,
-                answered_at=record.answered_at,
+            return self._to_clarification_domain(record)
+
+    async def list_clarifications(self, task_id: str) -> list[ClarificationRequest]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(ClarificationRecord)
+                .where(ClarificationRecord.task_id == task_id)
+                .order_by(ClarificationRecord.created_at.asc())
             )
+            return [self._to_clarification_domain(r) for r in res.scalars().all()]
+
+    @staticmethod
+    def _to_clarification_domain(record: ClarificationRecord) -> ClarificationRequest:
+        return ClarificationRequest(
+            id=record.id,
+            task_id=record.task_id,
+            question=record.question,
+            context_summary=record.context_summary,
+            status=record.status,
+            answer=record.answer,
+            created_at=record.created_at,
+            answered_at=record.answered_at,
+        )
 
     def _to_task_domain(self, record: TaskRecord) -> Task:
         return Task(
