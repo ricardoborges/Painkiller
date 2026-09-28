@@ -30,6 +30,7 @@ from painkiller.core.ports.usage_ledger import UsageLedgerPort
 from painkiller.core.usage import parse_agent_usage
 from painkiller.core.attachment_reader import extract_attachment_text
 from painkiller.core.i18n import DEFAULT_LOCALE, use_locale
+from painkiller.engine.brainstorming_doc import update_brainstorming_document
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,8 @@ class AnalysisRun:
         # O agy escolhe o id da conversa e o anuncia no `init`; os outros
         # harnesses usam o id que o Painkiller gerou.
         self.adopts_conversation_id = _harness_name(harness) == HarnessType.AGY_SUPERPOWERS.value
+        self.session_number = 1
+        self.project_name = ""
 
 
 class AnalysisOrchestrator:
@@ -309,6 +312,8 @@ class AnalysisOrchestrator:
             except Exception:
                 pass
 
+        run.session_number = session_number
+        run.project_name = getattr(project, "name", "")
         await self._ensure_default_branch(project)
         prompt = build_analysis_prompt(
             project,
@@ -364,6 +369,7 @@ class AnalysisOrchestrator:
             harness=project.harness,
             language=project.language,
         )
+            run.project_name = getattr(project, "name", "")
             events = await self.tracker.list_analysis_events(session_id)
             run.events = list(events) if isinstance(events, (list, tuple)) else []
             self.runs[session_id] = run
@@ -438,6 +444,7 @@ class AnalysisOrchestrator:
                     # `_rewind` já foi contabilizado na primeira passagem.
                     if event.type == AgentEventType.RESULT:
                         await self._record_usage(run, event)
+                        await self._sync_brainstorming_doc(run)
                         await self.sync_docs(run)
                     elif event.type == AgentEventType.ERROR and event.raw.get("harness_error"):
                         # Um turno que falhou no meio também gastou tokens; o
@@ -525,6 +532,55 @@ class AnalysisOrchestrator:
                 )
         except Exception as e:
             logger.warning(f"Não foi possível trocar para {project.default_branch}: {e}")
+
+    async def _get_session_number(self, run: AnalysisRun) -> int:
+        if getattr(run, "session_number", None):
+            return run.session_number
+        try:
+            sessions = await self.tracker.list_sessions(run.session.project_id)
+            for s in sessions:
+                if getattr(s, "analysis_session_id", None) == run.session.id:
+                    num = getattr(s, "number", 1)
+                    run.session_number = num if isinstance(num, int) else 1
+                    return run.session_number
+        except Exception:
+            pass
+        return 1
+
+    async def _get_project_name(self, run: AnalysisRun) -> str:
+        if getattr(run, "project_name", None):
+            return run.project_name
+        try:
+            proj = await self.tracker.get_project(run.session.project_id)
+            if proj and hasattr(proj, "name"):
+                run.project_name = proj.name
+                return proj.name
+        except Exception:
+            pass
+        return "Projeto"
+
+    async def _sync_brainstorming_doc(self, run: AnalysisRun) -> Optional[str]:
+        """Update docs/brainstorming/sessao-{N}.md with the conversation turns."""
+        if not run.repo_path:
+            return None
+        try:
+            sess_num = await self._get_session_number(run)
+            proj_name = await self._get_project_name(run)
+            status_desc = "Concluído" if run.session.status == AnalysisStatus.FINISHED else "Em andamento"
+            if run.language == "en-US":
+                status_desc = "Completed" if run.session.status == AnalysisStatus.FINISHED else "In progress"
+
+            return update_brainstorming_document(
+                repo_path=run.repo_path,
+                session_number=sess_num,
+                events=run.events,
+                project_name=proj_name,
+                status=status_desc,
+                language=run.language,
+            )
+        except Exception as e:
+            logger.warning(f"Erro ao atualizar documento de brainstorming: {e}")
+            return None
 
     async def sync_docs(self, run: AnalysisRun) -> Optional[str]:
         """Commit docs/ on the current branch and push it to the remote.
@@ -639,10 +695,13 @@ class AnalysisOrchestrator:
             if isinstance(project, Project):
                 await self.resume(project, session_id)
         user_event = AgentEvent(type=AgentEventType.USER, text=text)
+        run.events.append(user_event)
         try:
             await self.tracker.save_analysis_event(session_id, user_event)
         except Exception:
             pass
+        await self._sync_brainstorming_doc(run)
+        await self.sync_docs(run)
         await self.agent.send(session_id, text)
         run.session.status = AnalysisStatus.WAITING_AGENT
         try:

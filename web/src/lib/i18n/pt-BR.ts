@@ -127,6 +127,7 @@ export const ptBR = {
   // ---- DocViewer ----
   "docViewer.category.spec": "Especificação (Design)",
   "docViewer.category.plan": "Plano de Implementação",
+  "docViewer.category.brainstorming": "Brainstorming (Q&A)",
   "docViewer.category.backlog": "Backlog Decomposto",
   "docViewer.category.doc": "Documento",
   "docViewer.loadFailed": "Falha ao carregar conteúdo do documento.",
@@ -611,6 +612,8 @@ export const ptBR = {
   "artifacts.specHint": "O que o brainstorming decidiu construir.",
   "artifacts.plan": "Planos de implementação",
   "artifacts.planHint": "Como o trabalho foi dividido.",
+  "artifacts.brainstorming": "Brainstorming / Entrevista",
+  "artifacts.brainstormingHint": "Perguntas do agente e respostas do analista gravadas a cada turno.",
   "artifacts.backlog": "Backlog decomposto",
   "artifacts.backlogHint": "O JSON que vira tarefas ao importar.",
   "artifacts.doc": "Outros documentos",
@@ -633,6 +636,7 @@ export const ptBR = {
   "artifacts.noRemote": "Este projeto não tem repositório remoto registrado; os arquivos existem apenas no workspace local.",
   "artifacts.legend": "Onde cada coisa nasce",
   "artifacts.legendSpecs": "Escrito pelo agente de análise ao fechar o brainstorming.",
+  "artifacts.legendBrainstorming": "Registrado incrementalmente a cada turno da conversa de elicitação de requisitos.",
   "artifacts.legendBacklogs": "Um arquivo por análise, lido por “Importar backlog” daquela sessão e convertido em tarefas.",
   "artifacts.legendClarification": "Escrito por um agente de código que parou para perguntar.",
   // ---- costs ----

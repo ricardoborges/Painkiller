@@ -607,3 +607,26 @@ async def test_answering_a_live_session_does_not_restart_it(tmp_path):
     await engine.send(session.id, "oi")
 
     assert agent.resume is None
+
+
+async def test_brainstorming_doc_generated_on_turns(tmp_path):
+    agent = FakeAgentSession([
+        AgentEvent(type=AgentEventType.ASSISTANT, text="Qual o objetivo do sistema?"),
+        AgentEvent(type=AgentEventType.RESULT, text=""),
+    ])
+    tracker = AsyncMock()
+    tracker.list_sessions.return_value = []
+    tracker.get_project.return_value = _project(tmp_path)
+    engine = AnalysisOrchestrator(agent=agent, tracker=tracker)
+
+    session = await engine.start(_project(tmp_path))
+    await asyncio.wait_for(agent.release.wait(), timeout=5)
+    await asyncio.sleep(0)
+
+    doc_file = tmp_path / "docs" / "brainstorming" / "sessao-1.md"
+    assert doc_file.exists()
+    assert "Qual o objetivo do sistema?" in doc_file.read_text(encoding="utf-8")
+
+    await engine.send(session.id, "Um sistema de agendamento")
+    updated = doc_file.read_text(encoding="utf-8")
+    assert "Um sistema de agendamento" in updated

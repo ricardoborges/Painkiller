@@ -39,6 +39,7 @@
   const categoryLabel = $derived<Record<string, string>>({
     spec: t('docViewer.category.spec'),
     plan: t('docViewer.category.plan'),
+    brainstorming: t('docViewer.category.brainstorming'),
     backlog: t('docViewer.category.backlog'),
     doc: t('docViewer.category.doc')
   });

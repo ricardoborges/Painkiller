@@ -368,6 +368,8 @@ async def list_project_docs(project_id: str, request: Request):
                     category = "spec"
                 elif "plans" in rel_path:
                     category = "plan"
+                elif "brainstorming" in rel_path:
+                    category = "brainstorming"
                 stat = file_path.stat()
                 results.append({
                     "path": rel_path,

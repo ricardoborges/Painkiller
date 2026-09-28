@@ -242,6 +242,7 @@
   const categoryLabels = $derived<Record<string, string>>({
     spec: t('analysis.cat.spec'),
     plan: t('analysis.cat.plan'),
+    brainstorming: t('artifacts.brainstorming'),
     backlog: t('projectNav.backlog'),
     doc: t('docViewer.category.doc')
   });
@@ -680,7 +681,7 @@
             >
               {t('templates.all')} <span class="mono count">({a.docs.length})</span>
             </button>
-            {#each ['spec', 'plan', 'backlog', 'doc'] as cat (cat)}
+            {#each ['spec', 'plan', 'brainstorming', 'backlog', 'doc'] as cat (cat)}
               {@const count = a.docs.filter((d) => d.category === cat).length}
               {#if count > 0}
                 <button

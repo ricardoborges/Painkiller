@@ -25,6 +25,7 @@
   const GROUPS = $derived([
     { key: 'spec', title: t('artifacts.spec'), hint: t('artifacts.specHint') },
     { key: 'plan', title: t('artifacts.plan'), hint: t('artifacts.planHint') },
+    { key: 'brainstorming', title: t('artifacts.brainstorming'), hint: t('artifacts.brainstormingHint') },
     { key: 'backlog', title: t('artifacts.backlog'), hint: t('artifacts.backlogHint') },
     { key: 'doc', title: t('artifacts.doc'), hint: t('artifacts.docHint') }
   ] as const);
@@ -221,6 +222,10 @@
         <div>
           <dt class="mono">docs/superpowers/specs/</dt>
           <dd class="help">{t('artifacts.legendSpecs')}</dd>
+        </div>
+        <div>
+          <dt class="mono">docs/brainstorming/</dt>
+          <dd class="help">{t('artifacts.legendBrainstorming')}</dd>
         </div>
         <div>
           <dt class="mono">.painkiller/backlogs/</dt>

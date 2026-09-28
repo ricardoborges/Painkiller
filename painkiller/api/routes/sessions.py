@@ -153,6 +153,11 @@ async def list_session_artifacts(project_id: str, session_id: str, request: Requ
                     category = "spec"
                 elif "plans" in rel_path:
                     category = "plan"
+                elif "brainstorming" in rel_path:
+                    category = "brainstorming"
+                    # Documento de brainstorming de outra sessão não entra no escopo desta
+                    if not rel_path.endswith(f"sessao-{session.number}.md"):
+                        continue
 
                 stat = file_path.stat()
                 # Se a sessão tiver um spec específico apontado, dar prioridade

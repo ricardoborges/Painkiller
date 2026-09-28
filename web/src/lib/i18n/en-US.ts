@@ -126,6 +126,7 @@ export const enUS: Record<keyof typeof ptBR, string> = {
   // ---- DocViewer ----
   "docViewer.category.spec": "Specification (Design)",
   "docViewer.category.plan": "Implementation Plan",
+  "docViewer.category.brainstorming": "Brainstorming (Q&A)",
   "docViewer.category.backlog": "Decomposed Backlog",
   "docViewer.category.doc": "Document",
   "docViewer.loadFailed": "Failed to load the document content.",
@@ -610,6 +611,8 @@ export const enUS: Record<keyof typeof ptBR, string> = {
   "artifacts.specHint": "What the brainstorming decided to build.",
   "artifacts.plan": "Implementation plans",
   "artifacts.planHint": "How the work was split.",
+  "artifacts.brainstorming": "Brainstorming / Interview",
+  "artifacts.brainstormingHint": "Agent questions and analyst answers recorded at each turn.",
   "artifacts.backlog": "Decomposed backlog",
   "artifacts.backlogHint": "The JSON that becomes tasks on import.",
   "artifacts.doc": "Other documents",
@@ -632,6 +635,7 @@ export const enUS: Record<keyof typeof ptBR, string> = {
   "artifacts.noRemote": "This project has no remote repository registered; the files exist only in the local workspace.",
   "artifacts.legend": "Where each thing comes from",
   "artifacts.legendSpecs": "Written by the analysis agent when brainstorming wraps up.",
+  "artifacts.legendBrainstorming": "Recorded incrementally on each turn of the requirements elicitation chat.",
   "artifacts.legendBacklogs": "One file per analysis, read by that session's “Import backlog” and turned into tasks.",
   "artifacts.legendClarification": "Written by a coding agent that stopped to ask.",
   // ---- costs ----

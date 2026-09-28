@@ -170,7 +170,7 @@ export interface Project {
 export interface ProjectDoc {
   path: string;
   filename: string;
-  category: 'spec' | 'plan' | 'backlog' | 'doc';
+  category: 'spec' | 'plan' | 'brainstorming' | 'backlog' | 'doc';
   size_bytes: number;
   modified_at: string;
   is_session_spec?: boolean;
