@@ -121,7 +121,6 @@ The script checks Docker/Compose, creates the `coolify` network, builds **every*
 
 1. Build and start the services (no `.env` needed):
    ```bash
-   docker network create coolify   # once per machine; owned by Coolify, external to compose
    docker compose --profile build build
    docker compose up -d
    ```

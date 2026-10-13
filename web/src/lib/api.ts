@@ -197,6 +197,7 @@ export const api = {
     description?: string;
     purpose?: string;
     solution_description?: string;
+    implementation_notes?: string;
     harness?: string;
     api_key?: string;
     model?: string;
@@ -211,6 +212,7 @@ export const api = {
       description?: string;
       purpose?: string;
       solution_description?: string;
+      implementation_notes?: string;
       harness?: string;
       api_key?: string;
       model?: string;

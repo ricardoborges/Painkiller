@@ -27,10 +27,15 @@ class FakeDocker:
         def run(image, command, volumes, **kwargs):
             self.runs.append((image, volumes))
             source = next(iter(volumes))
-            if not self.echo:
-                return b"outra-coisa"
-            with open(f"{source}/.painkiller-mount-probe", "rb") as f:
-                return f.read()
+            if self.echo:
+                with open(f"{source}/.painkiller-mount-probe", "rb") as f:
+                    output = f.read()
+            else:
+                output = b"outra-coisa"
+            # Destacado: a saída vem de logs(), como no Docker real.
+            container = MagicMock()
+            container.logs.return_value = output
+            return container
 
         self.containers.run.side_effect = run
 

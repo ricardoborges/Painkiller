@@ -510,6 +510,16 @@ class PainkillerOrchestrator:
             for c in task.acceptance_criteria:
                 instructions.append(f"- {c}")
 
+        # O worker é one-shot e nem sempre lê a spec: as regras do projeto vão
+        # junto em toda tarefa.
+        if project.implementation_notes:
+            instructions.append(L(
+                "\n## Detalhes de implementação e regras de negócio do projeto:\n"
+                "Definidos pelo analista; siga-os, salvo se a descrição desta tarefa disser o contrário.\n",
+                "\n## Project implementation details and business rules:\n"
+                "Set by the analyst; follow them unless this task's description says otherwise.\n",
+            ) + project.implementation_notes)
+
         answered = [
             c for c in (clarifications or [])
             if c.status == ClarificationStatus.ANSWERED and c.answer

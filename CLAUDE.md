@@ -55,7 +55,6 @@ npm run check      # svelte-check; must stay at 0 errors
 Whole stack in Docker (see **Container topology** below):
 
 ```bash
-docker network create coolify           # once per machine — see below
 docker compose --profile build build    # api image + painkiller-worker + painkiller-agent
 docker compose up -d                    # api on :8000; the *-image services never start
 docker compose logs -f api
@@ -85,7 +84,7 @@ Hexagonal / ports & adapters. The dependency rule is strict: `core/` and `engine
 - **[engine/analysis.py](painkiller/engine/analysis.py)** — the interactive initial analysis (see **Initial analysis** below). `self.runs` is a cache over the tracker, not the source of truth.
 - **[interrogation/wizard.py](painkiller/interrogation/wizard.py)** — the *older* LLM interview + backlog generation, still wired at `/api/interrogation/*` but no longer reachable from the UI. **Sessions live in an in-process dict**, so they are lost on restart and will not survive multiple workers.
 - **[api/](painkiller/api/)** — FastAPI. Adapters are instantiated in `create_app()` and reached from handlers via `request.app.state.<name>`; tests override by passing a temp `db_url` to `create_app()`.
-- **[api/static/](painkiller/api/static/)** — **generated**, never hand-edited. It is the SvelteKit build output, committed so that a clone can run `uvicorn` with no Node toolchain. The source is `web/`.
+- **[api/static/](painkiller/api/static/)** — **generated**, never hand-edited. It is the SvelteKit build output, **not versioned** (`.gitignore`): a fresh clone needs `npm run build` before `uvicorn` serves a UI (without it the API still starts, with no SPA). The source is `web/`.
 
 ### Clean-interruption protocol (exit code 42)
 
@@ -254,14 +253,14 @@ The host path of `./storage` is **detected**: at startup `PlatformConfig.load` c
 
 `./storage` must stay a bind mount rather than a named volume, precisely because the sibling containers address it through the host.
 
-The `coolify` network is `external: true` on purpose: Coolify creates it itself (without compose labels) whenever it is missing, so a compose-managed declaration fails with `network coolify was found but has incorrect label com.docker.compose.network`. Do not make it compose-managed again; it only has to exist before `up`.
+The `coolify` network is **not in compose at all**. Coolify creates it itself (without compose labels) whenever it is missing, so a compose-managed declaration fails with `network coolify was found but has incorrect label com.docker.compose.network`, and an `external: true` one made `up` fail on a fresh machine until someone ran `docker network create coolify`. Instead `GiteaAdapter.ensure_deploy_network` creates it if missing and connects `painkiller-gitea` to it with the alias `gitea` (Coolify's build helpers clone from there) — at startup (`_bootstrap_gitea`) and before every deploy (`DeploymentService(prepare=…)`), which also covers a Gitea recreated by compose. Do not put the network back into compose.
 
 Coolify's "localhost" server (id 0) is the `coolify-host` SSH bridge, and three pieces make that work on any fresh machine — without them onboarding dies with `getPublicKey() on null`, because the seeder creates server 0 pointing at a private key it never found:
 - `coolify-ssh-init` (one-shot) generates the key per machine into the `coolify-ssh` volume as `keys/id.root@host.docker.internal`, the name Coolify's `ProductionSeeder` imports on every boot. Coolify then renames it to `ssh_key@<uuid>`, so `authorized_keys` in the volume is the source of truth: when it exists nothing is regenerated (a new key would no longer match the one in Coolify's database). No key is committed.
 - The volume is mounted at Coolify's `storage/app/ssh` and read-only into `coolify-host`, which installs `authorized_keys` at start.
 - On the private `coolify-ssh` network, `coolify-host` carries the alias `host.docker.internal` — the IP the seeder hardcodes, which on Docker Desktop is otherwise the Windows host, with no sshd. Only Coolify is on that network, so no other container's `host.docker.internal` changes.
 
-Other pieces: `docker/api.Dockerfile` is multi-stage (Node builds `web/`, then a Python runtime with no Node), so the image does not depend on the committed `painkiller/api/static/`. `PAINKILLER_DB_URL` puts SQLite on a named volume. The `worker-image` service exists only so compose builds the image the API instantiates by name; it sits behind a `build` profile so `up` never starts it.
+Other pieces: `docker/api.Dockerfile` is multi-stage (Node builds `web/`, then a Python runtime with no Node), so the image builds the SPA itself. `PAINKILLER_DB_URL` puts SQLite on a named volume. The `worker-image` service exists only so compose builds the image the API instantiates by name; it sits behind a `build` profile so `up` never starts it.
 
 ### Packaging note
 

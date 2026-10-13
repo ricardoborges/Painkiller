@@ -151,6 +151,7 @@ export interface Project {
   description: string;
   purpose: string;
   solution_description: string;
+  implementation_notes?: string;
   attachments: string[];
   default_branch: string;
   repo_url?: string | null;

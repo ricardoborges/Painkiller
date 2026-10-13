@@ -210,3 +210,31 @@ async def test_add_deploy_key_replaces_orphan_with_same_title():
         ("DELETE", "/repos/alice/damas/keys/7"),
         ("POST", "/repos/alice/damas/keys"),
     ]
+
+
+async def test_ensure_deploy_network_creates_missing_network_and_attaches_gitea():
+    import docker
+
+    client = MagicMock()
+    container = MagicMock(attrs={"NetworkSettings": {"Networks": {"painkiller_default": {}}}})
+    client.containers.get.return_value = container
+    client.networks.get.side_effect = docker.errors.NotFound("no network")
+    adapter = GiteaAdapter(docker_client=client)
+
+    assert await adapter.ensure_deploy_network() is True
+    client.networks.create.assert_called_once_with("coolify", driver="bridge")
+    client.networks.create.return_value.connect.assert_called_once_with(container, aliases=["gitea"])
+
+
+async def test_ensure_deploy_network_is_a_noop_when_already_attached_or_without_gitea():
+    import docker
+
+    client = MagicMock()
+    client.containers.get.return_value = MagicMock(attrs={"NetworkSettings": {"Networks": {"coolify": {}}}})
+    assert await GiteaAdapter(docker_client=client).ensure_deploy_network() is True
+    client.networks.get.assert_not_called()
+
+    client = MagicMock()
+    client.containers.get.side_effect = docker.errors.NotFound("no gitea")
+    assert await GiteaAdapter(docker_client=client).ensure_deploy_network() is False
+    client.networks.create.assert_not_called()

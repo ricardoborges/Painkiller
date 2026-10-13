@@ -109,6 +109,8 @@ async def _bootstrap_gitea(platform: PlatformConfig) -> None:
     vcs = getattr(platform.state, "vcs", None)
     if vcs is None or not hasattr(vcs, "is_available"):
         return
+    if hasattr(vcs, "ensure_deploy_network"):
+        await vcs.ensure_deploy_network()
     for _ in range(60):
         if await vcs.is_available():
             break
@@ -212,7 +214,9 @@ def create_app(
     analysis = AnalysisOrchestrator(agent=agent, tracker=tracker, usage=usage, git=git)
 
     deployment = deployment_adapter or CoolifyAdapter(vcs=vcs)
-    deployment_service = DeploymentService(tracker=tracker, deployment=deployment, git=git)
+    deployment_service = DeploymentService(
+        tracker=tracker, deployment=deployment, git=git, prepare=vcs.ensure_deploy_network
+    )
 
     # Attach to application state
     app.state.tracker = tracker

@@ -210,15 +210,24 @@ async def save_environment(body: EnvironmentRequest, request: Request):
 
 def _probe_mount(client, image: str, storage: str, token: str) -> tuple[bool, str]:
     source = daemon_path(storage)
-    output = client.containers.run(
+    # Destacado + logs(): o run() síncrono do docker-py só devolve a saída com
+    # os drivers json-file/journald; com o "local" (padrão do Docker Desktop)
+    # devolve None e o teste falhava com a montagem certa.
+    container = client.containers.run(
         image,
         command=["cat", f"/probe/{PROBE_FILE}"],
         entrypoint=[],
         volumes={source: {"bind": "/probe", "mode": "ro"}},
-        remove=True,
-        stdout=True,
-        stderr=True,
+        detach=True,
     )
+    try:
+        container.wait(timeout=60)
+        output = container.logs(stdout=True, stderr=True)
+    finally:
+        try:
+            container.remove(force=True)
+        except Exception:
+            pass
     text = (output or b"").decode("utf-8", errors="replace").strip()
     return text == token, source
 

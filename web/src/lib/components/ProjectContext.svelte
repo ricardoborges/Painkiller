@@ -113,7 +113,11 @@
   const sections = $derived([
     { label: t('form.description'), text: project.description },
     { label: t('context.businessPurpose'), text: project.purpose },
-    { label: t('form.solution'), text: project.solution_description }
+    { label: t('form.solution'), text: project.solution_description },
+    // Opcional: só aparece quando o analista preencheu.
+    ...(project.implementation_notes
+      ? [{ label: t('form.implementationNotes'), text: project.implementation_notes }]
+      : [])
   ]);
 </script>
 

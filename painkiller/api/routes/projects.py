@@ -26,6 +26,7 @@ class CreateProjectRequest(BaseModel):
     description: Optional[str] = ""
     purpose: Optional[str] = ""
     solution_description: Optional[str] = ""
+    implementation_notes: Optional[str] = ""
     default_branch: Optional[str] = "main"
     harness: Optional[str] = "agy_superpowers"
     api_key: Optional[str] = None
@@ -40,6 +41,7 @@ class UpdateProjectRequest(BaseModel):
     description: Optional[str] = None
     purpose: Optional[str] = None
     solution_description: Optional[str] = None
+    implementation_notes: Optional[str] = None
     harness: Optional[str] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
@@ -163,6 +165,7 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         description=req.description or "",
         purpose=req.purpose or "",
         solution_description=req.solution_description or "",
+        implementation_notes=req.implementation_notes or "",
         default_branch=default_branch,
         repo_url=repo_url,
         owner_id=None if user.is_admin else user.id,
@@ -212,6 +215,7 @@ async def update_project(project_id: str, req: UpdateProjectRequest, request: Re
             description=req.description,
             purpose=req.purpose,
             solution_description=req.solution_description,
+            implementation_notes=req.implementation_notes,
             harness=req.harness,
             api_key=req.api_key,
             model=req.model,
@@ -295,6 +299,8 @@ async def start_project_interrogation(project_id: str, request: Request):
         f"Propósito de Negócio: {project.purpose}",
         f"Descrição da Solução: {project.solution_description}",
     ]
+    if project.implementation_notes:
+        context_parts.append(f"Detalhes de Implementação e Regras de Negócio: {project.implementation_notes}")
 
     if project.attachments:
         context_parts.append("\n=== DOCUMENTOS DE CONTEXTO ANEXADOS ===")

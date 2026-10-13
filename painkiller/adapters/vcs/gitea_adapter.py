@@ -23,6 +23,8 @@ SERVICE_ACCOUNT = "painkiller"
 SERVICE_EMAIL = "bot@painkiller.local"
 #: Onde o `environment-to-ini` da imagem oficial grava a configuração.
 GITEA_APP_INI = "/data/gitea/conf/app.ini"
+#: Rede onde o Coolify roda os containers de build e das aplicações.
+DEPLOY_NETWORK = "coolify"
 
 
 class GiteaAdapter:
@@ -109,6 +111,48 @@ class GiteaAdapter:
             return await asyncio.get_running_loop().run_in_executor(None, _ensure)
         except Exception as e:
             logger.warning(f"Could not align Gitea ROOT_URL: {e}")
+            return False
+
+    async def ensure_deploy_network(self, network: str = DEPLOY_NETWORK) -> bool:
+        """Create the Coolify network if missing and attach Gitea to it as `gitea`.
+
+        O Coolify clona e builda em containers auxiliares na rede "coolify", e
+        o Gitea precisa estar nela. Não fica no compose: declarada externa, o
+        `up` falhava numa máquina nova sem `docker network create coolify`;
+        gerenciada pelo compose, colidia com a que o próprio Coolify cria (sem
+        labels). Chamado na subida e antes de cada deploy, então também cobre
+        um Gitea recriado pelo compose (que perde a conexão). Devolve True se
+        o Gitea está na rede.
+        """
+        if not self.docker_client:
+            return False
+
+        def _ensure() -> bool:
+            client = self.docker_client
+            try:
+                container = client.containers.get(self.container_name)
+            except docker.errors.NotFound:
+                # Fora do compose (testes, api no host) não há Gitea a conectar.
+                return False
+            if network in (container.attrs.get("NetworkSettings", {}).get("Networks") or {}):
+                return True
+            try:
+                net = client.networks.get(network)
+            except docker.errors.NotFound:
+                try:
+                    net = client.networks.create(network, driver="bridge")
+                    logger.info(f"Docker network {network} created.")
+                except docker.errors.APIError:
+                    # O Coolify pode tê-la criado no meio-tempo.
+                    net = client.networks.get(network)
+            net.connect(container, aliases=["gitea"])
+            logger.info(f"Gitea connected to the {network} network.")
+            return True
+
+        try:
+            return await asyncio.get_running_loop().run_in_executor(None, _ensure)
+        except Exception as e:
+            logger.warning(f"Could not attach Gitea to the {network} network: {e}")
             return False
 
     def push_credentials(self) -> dict[str, tuple[str, str]]:

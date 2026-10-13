@@ -1082,6 +1082,20 @@ def build_analysis_prompt(
         f"{L('Solução desejada', 'Desired solution')}: {project.solution_description}",
     ]
 
+    # Restrições que o analista já decidiu: a entrevista não as rediscute, e a
+    # spec e o backlog as carregam adiante.
+    if project.implementation_notes:
+        parts.append("")
+        parts.append(L("=== DETALHES DE IMPLEMENTAÇÃO E REGRAS DE NEGÓCIO ===",
+                       "=== IMPLEMENTATION DETAILS AND BUSINESS RULES ==="))
+        parts.append(L(
+            "Definidos pelo analista. Trate-os como decisões já tomadas: não pergunte de novo, "
+            "registre-os na spec e respeite-os ao decompor as tarefas.",
+            "Set by the analyst. Treat them as decisions already made: do not ask about them again, "
+            "record them in the spec and respect them when decomposing the tasks."
+        ))
+        parts.append(project.implementation_notes)
+
     if project.attachments:
         parts.append("")
         parts.append(L("=== DOCUMENTOS DE CONTEXTO ANEXADOS ===", "=== ATTACHED CONTEXT DOCUMENTS ==="))

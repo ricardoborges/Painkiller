@@ -182,3 +182,17 @@ def test_task_instructions_in_project_language():
     assert "Do NOT ask again" in en and "Answer: PyJWT" in en
     pt = orch._build_task_instructions(task, Project(id="p", name="x", repo_path="."))
     assert "# Tarefa: Login" in pt and "Protocolo de Dúvidas" in pt
+
+
+def test_task_instructions_carry_implementation_notes():
+    orch = PainkillerOrchestrator(tracker=None, sandbox=None, git=None)
+    task = Task(id="t1", project_id="p", title="Login", description="Build it")
+    assert "regras de negócio" not in orch._build_task_instructions(task, Project(id="p", name="x", repo_path="."))
+    pt = orch._build_task_instructions(
+        task, Project(id="p", name="x", repo_path=".", implementation_notes="Use PostgreSQL.")
+    )
+    assert "Detalhes de implementação e regras de negócio" in pt and "Use PostgreSQL." in pt
+    en = orch._build_task_instructions(
+        task, Project(id="p", name="x", repo_path=".", language="en-US", implementation_notes="Use PostgreSQL.")
+    )
+    assert "Project implementation details and business rules" in en

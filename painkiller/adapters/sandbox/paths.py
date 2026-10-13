@@ -77,6 +77,8 @@ def daemon_path(path: str) -> str:
         # Outside the mapped root: nothing to rewrite.
         return local
 
+    if relative == PurePosixPath("."):
+        return host
     # A drive letter means the host expects Windows separators.
     separator = "\\" if len(host) >= 2 and host[1] == ":" else "/"
     return host + separator + str(relative).replace("/", separator)

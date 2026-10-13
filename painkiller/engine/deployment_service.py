@@ -1,7 +1,7 @@
 """Deployment Service coordinating environment provisioning with Coolify."""
 
 import logging
-from typing import Optional, Any
+from typing import Any, Awaitable, Callable, Optional
 from painkiller.core.domain.models import (
     Project,
     Task,
@@ -34,10 +34,14 @@ class DeploymentService:
         tracker: IssueTrackerPort,
         deployment: DeploymentPort,
         git: Optional[GitPort] = None,
+        prepare: Optional[Callable[[], Awaitable[Any]]] = None,
     ):
         self.tracker = tracker
         self.deployment = deployment
         self.git = git
+        # Garante a infraestrutura do deploy (o Gitea na rede do Coolify) antes
+        # de cada disparo; falhas são só registradas pelo próprio hook.
+        self.prepare = prepare
 
     async def trigger_deploy(
         self,
@@ -86,6 +90,8 @@ class DeploymentService:
                     task_id = chosen_task.id
 
         await self._publish_branch(project, branch)
+        if self.prepare is not None:
+            await self.prepare()
 
         record = await self.deployment.deploy_environment(
             project=project,

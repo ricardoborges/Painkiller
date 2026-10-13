@@ -136,3 +136,27 @@ async def test_effort_is_stored_per_project_and_follows_the_harness(client: Asyn
     # Maki não tem: o valor é apagado.
     dropped = (await client.put(f"/api/projects/{proj['id']}", json={"harness": "maki_superpowers"}, headers=headers)).json()
     assert dropped["effort"] is None
+
+
+@pytest.mark.asyncio
+async def test_implementation_notes_are_optional_and_editable(client: AsyncClient):
+    headers = admin_headers()
+    res = await client.post(
+        "/api/projects",
+        json={"name": "Notes", "purpose": "p", "solution_description": "s", "api_key": "AIzaSyTest1234"},
+        headers=headers,
+    )
+    assert res.status_code == 200
+    proj = res.json()
+    assert proj["implementation_notes"] == ""
+
+    upd = await client.put(
+        f"/api/projects/{proj['id']}",
+        json={"implementation_notes": "Valores em centavos."},
+        headers=headers,
+    )
+    assert upd.status_code == 200
+    assert upd.json()["implementation_notes"] == "Valores em centavos."
+    # Um PUT sem o campo não o apaga.
+    upd = await client.put(f"/api/projects/{proj['id']}", json={"name": "Notes 2"}, headers=headers)
+    assert upd.json()["implementation_notes"] == "Valores em centavos."

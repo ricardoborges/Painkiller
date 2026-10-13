@@ -16,6 +16,8 @@ env/
 node_modules/
 .svelte-kit/
 web/build/
+# Build da SPA (npm run build): gerado, não versionado
+painkiller/api/static/
 *.tsbuildinfo
 npm-debug.log*
 

@@ -203,13 +203,11 @@ services:
       - "2222:22"
     volumes:
       - gitea-data:/data
-    # O Coolify clona e builda em containers auxiliares na rede "coolify";
-    # sem estar nela o Gitea nao resolve como gitea:3000 no clone do deploy.
-    networks:
-      default:
-      coolify:
-        aliases:
-          - gitea
+    # O Coolify clona e builda em containers auxiliares na rede "coolify". A
+    # api cria essa rede se faltar e conecta o Gitea nela (alias gitea) na
+    # subida e antes de cada deploy (GiteaAdapter.ensure_deploy_network): como
+    # externa aqui, o "up" falhava numa maquina nova; gerenciada pelo compose,
+    # colidia com a que o Coolify cria sem labels.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/version"]
       interval: 10s
@@ -342,13 +340,6 @@ services:
 
 networks:
   coolify-ssh:
-  # A rede "coolify" pertence ao Coolify: ele a cria (sem labels do compose)
-  # sempre que ela falta. Declara-la como gerenciada pelo compose gera o erro
-  # "has incorrect label com.docker.compose.network". Externa, o compose so a
-  # usa; crie-a uma vez com: docker network create coolify
-  coolify:
-    name: coolify
-    external: true
 
 
 volumes:

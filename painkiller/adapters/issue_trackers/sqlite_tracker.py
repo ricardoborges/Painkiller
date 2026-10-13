@@ -66,6 +66,7 @@ class ProjectRecord(Base):
     description = Column(Text, default="")
     purpose = Column(Text, default="")
     solution_description = Column(Text, default="")
+    implementation_notes = Column(Text, default="")
     attachments = Column(Text, default="[]")
     default_branch = Column(String, default="main")
     repo_url = Column(String, default="", nullable=True)
@@ -308,6 +309,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         description: str = "",
         purpose: str = "",
         solution_description: str = "",
+        implementation_notes: str = "",
         attachments: Optional[Sequence[str]] = None,
         default_branch: str = "main",
         repo_url: Optional[str] = None,
@@ -328,6 +330,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             description=description,
             purpose=purpose,
             solution_description=solution_description,
+            implementation_notes=implementation_notes,
             attachments=json.dumps(list(attachments or [])),
             default_branch=default_branch,
             repo_url=repo_url or "",
@@ -368,6 +371,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         description: Optional[str] = None,
         purpose: Optional[str] = None,
         solution_description: Optional[str] = None,
+        implementation_notes: Optional[str] = None,
         attachments: Optional[Sequence[str]] = None,
         repo_url: Optional[str] = None,
         harness: Optional[HarnessType] = None,
@@ -385,6 +389,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             values["purpose"] = purpose
         if solution_description is not None:
             values["solution_description"] = solution_description
+        if implementation_notes is not None:
+            values["implementation_notes"] = implementation_notes
         if attachments is not None:
             values["attachments"] = json.dumps(list(attachments))
         if repo_url is not None:
@@ -436,6 +442,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             description=record.description or "",
             purpose=record.purpose or "",
             solution_description=record.solution_description or "",
+            implementation_notes=getattr(record, "implementation_notes", None) or "",
             attachments=json.loads(record.attachments or "[]"),
             default_branch=record.default_branch,
             repo_url=record.repo_url or None,

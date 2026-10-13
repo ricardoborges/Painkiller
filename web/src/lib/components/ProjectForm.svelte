@@ -28,6 +28,8 @@
   let description = $state('');
   let purpose = $state('');
   let solution = $state('');
+  /** Opcional, para usuários avançados: stack, padrões, regras de negócio. */
+  let notes = $state('');
   let harness = $state<HarnessType>('agy_superpowers');
   /** dsh e maki usam a mesma chave DeepSeek: trocar entre eles a preserva. */
   const usesDeepseekKey = $derived(DEEPSEEK_KEY_HARNESSES.includes(harness));
@@ -123,6 +125,7 @@
     description = project?.description ?? '';
     purpose = project?.purpose ?? '';
     solution = project?.solution_description ?? '';
+    notes = project?.implementation_notes ?? '';
     // Variável local: ler `harness` aqui o tornaria dependência do efeito,
     // que então desfaria toda troca de harness feita pelo usuário.
     const initialHarness: HarnessType = project?.harness ?? 'agy_superpowers';
@@ -230,6 +233,7 @@
         description: string;
         purpose: string;
         solution_description: string;
+        implementation_notes: string;
         harness: HarnessType;
         api_key?: string;
         model?: string;
@@ -240,6 +244,7 @@
         description: description.trim(),
         purpose: purpose.trim(),
         solution_description: effectiveSolution,
+        implementation_notes: notes.trim(),
         harness: harness,
         model: effectiveModel || undefined,
         // Só agy e dsh têm o ajuste; para os demais o backend o descarta.
@@ -358,6 +363,19 @@
         {writesSolution ? t('form.solutionError') : t('form.solutionChoiceError')}
       </p>
     {/if}
+  </div>
+
+  <div class="field">
+    <label for="pnotes">
+      {t('form.implementationNotes')} <span class="faint">({t('setup.optional')})</span>
+    </label>
+    <p class="help">{t('form.implementationNotesHelp')}</p>
+    <textarea
+      id="pnotes"
+      class="textarea notes"
+      bind:value={notes}
+      placeholder={t('form.implementationNotesPlaceholder')}
+    ></textarea>
   </div>
 
   <div class="field">
@@ -728,6 +746,10 @@
   .select-input {
     background-color: var(--paper);
     cursor: pointer;
+  }
+
+  .notes {
+    min-height: 8rem;
   }
 
   .custom-model-input {

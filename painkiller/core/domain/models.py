@@ -194,6 +194,9 @@ class Project(BaseModel):
     description: str = ""
     purpose: str = ""
     solution_description: str = ""
+    # Opcional, para analistas avançados: detalhes de implementação e regras de
+    # negócio que o agente deve seguir (stack, padrões, restrições).
+    implementation_notes: str = ""
     attachments: list[str] = Field(default_factory=list)
     default_branch: str = "main"
     repo_url: Optional[str] = None

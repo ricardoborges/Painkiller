@@ -630,3 +630,11 @@ async def test_brainstorming_doc_generated_on_turns(tmp_path):
     await engine.send(session.id, "Um sistema de agendamento")
     updated = doc_file.read_text(encoding="utf-8")
     assert "Um sistema de agendamento" in updated
+
+
+def test_prompt_carries_implementation_notes_only_when_given(tmp_path):
+    assert "REGRAS DE NEGÓCIO" not in build_analysis_prompt(_project(tmp_path))
+    project = _project(tmp_path).model_copy(update={"implementation_notes": "Valores em centavos."})
+    prompt = build_analysis_prompt(project)
+    assert "=== DETALHES DE IMPLEMENTAÇÃO E REGRAS DE NEGÓCIO ===" in prompt
+    assert "Valores em centavos." in prompt

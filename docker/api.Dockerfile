@@ -2,8 +2,8 @@
 # Imagem da API do Painkiller: FastAPI + a SPA do SvelteKit ja construida.
 #
 # Estagio 1 constroi web/ com Node; estagio 2 e um runtime Python enxuto, sem
-# Node nenhum. O build da SPA acontece aqui dentro, entao a imagem nao depende
-# do conteudo commitado em painkiller/api/static/.
+# Node nenhum. O build da SPA acontece aqui dentro: painkiller/api/static/ nao
+# e versionado.
 # =============================================================================
 
 # ---------- estagio 1: SPA ----------
