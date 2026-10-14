@@ -27,10 +27,10 @@ Painkiller ties four core pieces together:
 
 ### 1. Agentic Harnesses
 Agents run inside ephemeral Docker sibling containers with filesystem isolation. Painkiller supports multiple CLI harnesses:
-- **`agy`** (Antigravity CLI powered by Gemini)
+- **`agy`** (Antigravity CLI)
 - **`dsh`** (DeepSeek Harness)
 - **`maki`** (Rust-based coding agent)
-- **`unreal`** (Go-based Unreal Agent powered by DeepSeek)
+- **`unreal`** (Go-based Unreal Agent)
 
 **Clean interruption protocol (Exit 42):** When an agent hits an ambiguous requirement, it doesn't guess or hallucinate. It runs `painkiller ask "<question>"`, commits its current work-in-progress, and exits with code `42`. The task pauses in the UI until you answer, then resumes on the exact same branch.
 
