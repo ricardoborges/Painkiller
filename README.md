@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/assets/painkiller-logo.jpg" alt="Painkiller" width="320" style="border-radius: 12px;" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/painkiller-logo-dark.png" />
+    <img src="docs/assets/painkiller-logo-light.png" alt="Painkiller" width="480" />
+  </picture>
 </p>
 
 # Painkiller
@@ -7,6 +10,14 @@
 Painkiller is a self-hosted platform that turns rough ideas into deployed applications through collaborative brainstorming, spec-driven development (SDD), and autonomous coding agents.
 
 Instead of pasting prompts back and forth in a chat window, Painkiller brainstorms specifications with you, decomposes tasks, runs agents inside isolated Docker containers, tracks code in Git, and deploys preview environments automatically.
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=KN6PPyYFisg">
+    <img src="https://img.youtube.com/vi/KN6PPyYFisg/maxresdefault.jpg" alt="Watch the Painkiller explainer video on YouTube" width="720" />
+  </a>
+  <br />
+  <sub>▶ Watch the explainer video on YouTube (~2 min)</sub>
+</p>
 
 ---
 
