@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Painkiller — from conversation to production</title>
+  <meta name="description" content="Painkiller is a self-hosted platform that turns a conversation into running software: spec-driven development with Superpowers, coding agents in isolated Docker sandboxes, Gitea and Coolify deploys." />
+  <meta property="og:title" content="Painkiller — from conversation to production" />
+  <meta property="og:description" content="Self-hosted orchestration of AI coding agents: interview, spec, atomic tasks, sandboxed agents, tests, and Coolify deploys." />
+  <meta property="og:image" content="https://ricardoborges.github.io/Painkiller/assets/og.jpg" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --paper: #F6F9FF;
+      --white: #FFFFFF;
+      --ink: #0A1B3D;
+      --ink-soft: #4A5B7D;
+      --muted: #8A9BBC;
+      --line: #D8E3F7;
+      --blue: #1F5EFF;
+      --blue-deep: #0B3BC2;
+      --sky: #5FA2FF;
+      --ice: #E6EEFF;
+      --frost: #F0F5FF;
+      --shadow: 0 24px 60px -24px rgba(16, 52, 140, 0.35), 0 2px 6px rgba(16, 52, 140, 0.08);
+      --sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+      --max: 1160px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans);
+      line-height: 1.6; -webkit-font-smoothing: antialiased; overflow-x: hidden;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background:
+        radial-gradient(800px 600px at -10% -10%, rgba(95,162,255,0.28), transparent 70%),
+        radial-gradient(900px 700px at 110% 110%, rgba(31,94,255,0.14), transparent 70%),
+        radial-gradient(circle at 2px 2px, #C6D6F5 1.5px, transparent 1.6px) 0 0 / 36px 36px;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: var(--mono); }
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+    /* nav */
+    nav {
+      position: sticky; top: 0; z-index: 10; backdrop-filter: blur(12px);
+      background: rgba(246, 249, 255, 0.8); border-bottom: 1px solid var(--line);
+    }
+    nav .wrap { display: flex; align-items: center; gap: 28px; height: 68px; }
+    nav .brand img { height: 34px; display: block; }
+    nav .links { display: flex; gap: 24px; margin-left: auto; align-items: center; }
+    nav .links a { color: var(--ink-soft); font-weight: 600; font-size: 15px; }
+    nav .links a:hover { color: var(--blue); text-decoration: none; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 10px; padding: 14px 24px; border-radius: 999px;
+      font-weight: 700; font-size: 16px; border: 1.5px solid var(--line); background: var(--white); color: var(--ink);
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .btn:hover { text-decoration: none; transform: translateY(-1px); }
+    .btn.primary { background: var(--blue); border-color: var(--blue); color: var(--white); box-shadow: 0 12px 30px -10px rgba(31,94,255,0.6); }
+    .btn.small { padding: 9px 18px; font-size: 14px; }
+    .btn svg { width: 20px; height: 20px; }
+
+    /* hero */
+    .hero { padding: 96px 0 40px; text-align: center; }
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 13px;
+      letter-spacing: 3px; text-transform: uppercase; color: var(--blue);
+    }
+    .eyebrow::before { content: ''; width: 28px; height: 2px; background: var(--blue); border-radius: 2px; }
+    .hero img.logo { width: min(520px, 90%); height: auto; margin: 0 auto 8px; display: block; }
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 68px); line-height: 1.05; letter-spacing: -0.03em; margin: 18px auto 20px; max-width: 900px; font-weight: 800;
+    }
+    .hero h1 span { color: var(--blue); }
+    .hero p.lead { font-size: clamp(17px, 2vw, 21px); color: var(--ink-soft); max-width: 720px; margin: 0 auto 36px; }
+    .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .pills { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 36px; }
+    .pill {
+      font-family: var(--mono); font-size: 13px; padding: 6px 14px; border-radius: 999px; background: var(--white);
+      border: 1px solid var(--line); color: var(--ink-soft);
+    }
+
+    /* video */
+    .video { margin: 56px auto 0; max-width: 980px; }
+    .frame {
+      position: relative; aspect-ratio: 16 / 9; border-radius: 22px; overflow: hidden; box-shadow: var(--shadow);
+      border: 1px solid var(--line); background: var(--ink);
+    }
+    .frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+    /* sections */
+    section { padding: 110px 0 0; }
+    .head { max-width: 720px; margin-bottom: 48px; }
+    .head h2 { font-size: clamp(30px, 4vw, 46px); line-height: 1.1; letter-spacing: -0.025em; margin: 14px 0 14px; font-weight: 800; }
+    .head p { color: var(--ink-soft); font-size: 18px; margin: 0; }
+
+    /* steps */
+    .steps { display: grid; gap: 96px; }
+    .step { display: grid; grid-template-columns: 1fr 1.25fr; gap: 56px; align-items: center; }
+    .step:nth-child(even) .copy { order: 2; }
+    .step .num {
+      width: 44px; height: 44px; border-radius: 14px; background: var(--blue); color: var(--white);
+      display: grid; place-items: center; font-weight: 800; font-size: 18px; box-shadow: 0 12px 24px -10px rgba(31,94,255,0.7);
+    }
+    .step h3 { font-size: 30px; line-height: 1.15; letter-spacing: -0.02em; margin: 18px 0 12px; font-weight: 800; }
+    .step p { color: var(--ink-soft); font-size: 17px; margin: 0 0 14px; }
+    .step ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+    .step li { display: flex; gap: 10px; align-items: baseline; color: var(--ink); font-size: 16px; }
+    .step li::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 3px; background: var(--sky); transform: translateY(-2px); }
+    .shot {
+      border-radius: 22px; overflow: hidden; box-shadow: var(--shadow); border: 1px solid var(--line); background: var(--paper);
+    }
+    .shot img { display: block; width: 100%; height: auto; }
+    code.inline { font-size: 0.9em; background: var(--ice); color: var(--blue-deep); padding: 2px 7px; border-radius: 6px; }
+
+    /* grid de recursos */
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .card {
+      background: var(--white); border: 1px solid var(--line); border-radius: 22px; padding: 28px; box-shadow: var(--shadow);
+    }
+    .card .ico {
+      width: 52px; height: 52px; border-radius: 16px; background: var(--ice); display: grid; place-items: center; margin-bottom: 18px;
+    }
+    .card .ico svg { width: 28px; height: 28px; stroke: var(--blue); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .card h4 { margin: 0 0 8px; font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
+    .card p { margin: 0; color: var(--ink-soft); font-size: 15.5px; }
+
+    /* harnesses */
+    .harnesses { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .harness {
+      background: var(--white); border: 1px solid var(--line); border-radius: 20px; padding: 22px; position: relative; overflow: hidden;
+    }
+    .harness::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 5px; background: linear-gradient(90deg, var(--blue), var(--sky)); }
+    .harness .cmd { font-family: var(--mono); font-size: 13px; color: var(--blue); font-weight: 600; }
+    .harness h4 { margin: 6px 0 6px; font-size: 20px; font-weight: 800; }
+    .harness p { margin: 0; color: var(--ink-soft); font-size: 14.5px; }
+    .note { margin-top: 18px; color: var(--ink-soft); font-size: 15px; }
+
+    /* quickstart */
+    .quick { display: grid; grid-template-columns: 1fr 1.2fr; gap: 40px; align-items: start; }
+    .term {
+      background: #0B1A3A; color: #C9D8FF; border-radius: 22px; box-shadow: var(--shadow); overflow: hidden;
+    }
+    .term .bar {
+      display: flex; align-items: center; gap: 8px; padding: 14px 18px; background: linear-gradient(90deg, var(--blue), var(--sky));
+    }
+    .term .bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(255,255,255,0.55); }
+    .term .bar span { margin-left: 8px; font-family: var(--mono); font-size: 13px; color: var(--white); font-weight: 600; }
+    .term .bar button {
+      margin-left: auto; font-family: var(--sans); font-weight: 700; font-size: 13px; border: 0; border-radius: 999px;
+      padding: 6px 14px; background: rgba(255,255,255,0.2); color: var(--white); cursor: pointer;
+    }
+    .term pre { margin: 0; padding: 22px 24px; font-size: 14.5px; line-height: 1.8; overflow-x: auto; }
+    .term .c { color: #7F93BF; }
+    .term .p { color: var(--sky); }
+    ol.checks { margin: 0; padding: 0; list-style: none; counter-reset: q; display: grid; gap: 18px; }
+    ol.checks li { counter-increment: q; display: grid; grid-template-columns: 36px 1fr; gap: 14px; }
+    ol.checks li::before {
+      content: counter(q); width: 36px; height: 36px; border-radius: 12px; background: var(--ice); color: var(--blue);
+      display: grid; place-items: center; font-weight: 800;
+    }
+    ol.checks b { display: block; }
+    ol.checks span { color: var(--ink-soft); font-size: 15.5px; }
+
+    /* final */
+    .final {
+      margin-top: 120px; padding: 72px 32px; text-align: center; border-radius: 28px; color: var(--white);
+      background: radial-gradient(600px 300px at 20% 0%, rgba(255,255,255,0.18), transparent 70%), linear-gradient(135deg, var(--blue), var(--blue-deep));
+      box-shadow: 0 30px 80px -30px rgba(11,59,194,0.6);
+    }
+    .final h2 { font-size: clamp(30px, 4vw, 48px); letter-spacing: -0.025em; margin: 0 0 14px; line-height: 1.1; }
+    .final p { margin: 0 auto 30px; max-width: 560px; color: rgba(255,255,255,0.85); font-size: 18px; }
+    .final .btn { border-color: transparent; }
+    .flow { display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 28px; font-family: var(--mono); font-size: 14px; }
+    .flow span { padding: 6px 14px; border-radius: 999px; background: rgba(255,255,255,0.14); }
+    .flow i { width: 22px; height: 2px; background: rgba(255,255,255,0.5); }
+
+    footer { padding: 48px 0 56px; color: var(--muted); font-size: 14px; }
+    footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: center; }
+    footer img { height: 26px; opacity: 0.85; }
+
+    /* entrada */
+    .reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1); }
+    .reveal.in { opacity: 1; transform: none; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .reveal { opacity: 1; transform: none; transition: none; }
+    }
+
+    @media (max-width: 900px) {
+      .step, .quick { grid-template-columns: 1fr; gap: 28px; }
+      .step:nth-child(even) .copy { order: 0; }
+      .grid { grid-template-columns: 1fr 1fr; }
+      .harnesses { grid-template-columns: 1fr 1fr; }
+      nav .links a.hide-sm { display: none; }
+    }
+    @media (max-width: 600px) {
+      .wrap { padding: 0 16px; }
+      .hero { padding-top: 56px; }
+      .grid, .harnesses { grid-template-columns: 1fr; }
+      section { padding-top: 80px; }
+      .steps { gap: 64px; }
+      nav .links { gap: 14px; }
+      nav .links a.hide-xs { display: none; }
+      .final { padding: 56px 20px; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="wrap">
+      <a class="brand" href="#top" aria-label="Painkiller"><img src="assets/painkiller-logo-light.png" alt="Painkiller" /></a>
+      <div class="links">
+        <a class="hide-sm" href="#how">How it works</a>
+        <a class="hide-sm" href="#features">Features</a>
+        <a class="hide-xs" href="#quickstart">Quickstart</a>
+        <a class="btn small primary" href="https://github.com/ricardoborges/Painkiller">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero" id="top">
+    <div class="wrap">
+      <img class="logo" src="assets/painkiller-logo-light.png" alt="Painkiller" width="1200" height="300" />
+      <h1>Turn a conversation into <span>running software</span>.</h1>
+      <p class="lead">
+        A self-hosted platform that interviews you, writes the spec, splits it into atomic tasks
+        and dispatches each one to a coding agent in its own Docker sandbox, then tests, merges and deploys.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="#quickstart">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></svg>
+          Get started
+        </a>
+        <a class="btn" href="https://github.com/ricardoborges/Painkiller">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.56 9.56 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+      <div class="pills">
+        <span class="pill">spec-driven</span>
+        <span class="pill">superpowers skills</span>
+        <span class="pill">docker sandboxes</span>
+        <span class="pill">exit 42</span>
+        <span class="pill">gitea</span>
+        <span class="pill">coolify</span>
+      </div>
+      <div class="video reveal">
+        <div class="frame">
+          <iframe src="https://www.youtube-nocookie.com/embed/KN6PPyYFisg?rel=0" title="Painkiller explainer video" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">How it works</span>
+        <h2>One pipeline, from idea to production.</h2>
+        <p>Every handoff between people loses context. Painkiller automates the whole path and keeps a human analyst in control.</p>
+      </div>
+
+      <div class="steps">
+        <div class="step reveal">
+          <div class="copy">
+            <div class="num">1</div>
+            <h3>An interview, not a form</h3>
+            <p>A containerized agent runs the <a href="https://github.com/obra/superpowers">Superpowers</a> <code class="inline">brainstorming</code> skill and asks you one question at a time, often as clickable choices, until the idea is clear.</p>
+            <ul>
+              <li>Streamed live to the browser</li>
+              <li>Drop in files, screenshots and docs as context</li>
+              <li>Pick up where you left off after a restart</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="assets/interview.jpg" alt="The analyst answering the brainstorming agent's questions" loading="lazy" width="1440" height="525" /></div>
+        </div>
+
+        <div class="step reveal">
+          <div class="copy">
+            <div class="num">2</div>
+            <h3>The spec drives everything</h3>
+            <p>The interview produces a written specification, versioned in the project's Git repository. It is then decomposed into small, atomic tasks, each with acceptance criteria, target files and dependencies.</p>
+            <ul>
+              <li>Specs and plans live in <code class="inline">docs/superpowers/</code></li>
+              <li>The backlog is imported in one click</li>
+              <li>Add manual tasks at any time</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="assets/spec.jpg" alt="A spec document being split into dependent tasks" loading="lazy" width="1440" height="525" /></div>
+        </div>
+
+        <div class="step reveal">
+          <div class="copy">
+            <div class="num">3</div>
+            <h3>One sandbox per task</h3>
+            <p>Each task runs in its own throwaway Docker container on its own <code class="inline">feature/*</code> branch. Pick a harness per project, and the agent still gets the same Superpowers skills: planning, test-driven development, systematic debugging.</p>
+            <ul>
+              <li>Tool calls stream live while the agent works</li>
+              <li>Per-project package caches for faster starts</li>
+              <li>Guided or direct mode, per session or per task</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="assets/harness.jpg" alt="Four sandboxed agents, one per task, each on a feature branch" loading="lazy" width="1440" height="480" /></div>
+        </div>
+
+        <div class="step reveal">
+          <div class="copy">
+            <div class="num">4</div>
+            <h3>Ask, don't guess</h3>
+            <p>When an agent hits ambiguity it runs <code class="inline">painkiller ask</code>, commits its work in progress and exits with code <b>42</b>. The task waits for you, and once you answer, the agent resumes on the same branch with the answer in hand.</p>
+            <ul>
+              <li>No hallucinated requirements</li>
+              <li>Answers are never asked twice</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="assets/ask.jpg" alt="A terminal showing painkiller ask and exit code 42" loading="lazy" width="1440" height="480" /></div>
+        </div>
+
+        <div class="step reveal">
+          <div class="copy">
+            <div class="num">5</div>
+            <h3>Green means merge</h3>
+            <p>When the agent finishes, the tests run in a fresh worker container. Passing tasks are committed and merged automatically. Every token is counted against the project's budget.</p>
+            <ul>
+              <li>Per-task time and tokens</li>
+              <li>Per-project budget, with admin and per-project prices</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="assets/tests.jpg" alt="Tests passing, a feature branch merged into main, and a token counter" loading="lazy" width="1440" height="450" /></div>
+        </div>
+
+        <div class="step reveal">
+          <div class="copy">
+            <div class="num">6</div>
+            <h3>Shipped with Coolify</h3>
+            <p>Painkiller pushes to its built-in Gitea and hands the branch to <a href="https://coolify.io">Coolify</a>. Any completed task can be tested on its own preview, and production is one click away. If a deploy fails, its log becomes a new task for the agent.</p>
+            <ul>
+              <li>Live deploy logs and status</li>
+              <li>"Fix with the agent" on failed deploys</li>
+            </ul>
+          </div>
+          <div class="shot"><img src="assets/deploy.jpg" alt="Painkiller to Gitea to Coolify, with preview and production environments" loading="lazy" width="1440" height="525" /></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="harnesses">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Harness-agnostic</span>
+        <h2>Bring the agent you prefer.</h2>
+        <p>Each project picks its harness, model and reasoning effort. Every harness emits the same event stream, so the rest of the platform can't tell them apart.</p>
+      </div>
+      <div class="harnesses reveal">
+        <div class="harness"><div class="cmd">agy</div><h4>Antigravity CLI</h4><p>Google's agent CLI, running Gemini.</p></div>
+        <div class="harness"><div class="cmd">dsh</div><h4>DeepSeek Harness</h4><p>The official DeepSeek harness, driven over the Agent Client Protocol.</p></div>
+        <div class="harness"><div class="cmd">maki</div><h4>Maki</h4><p>A Rust coding agent on DeepSeek V4.</p></div>
+        <div class="harness"><div class="cmd">unreal</div><h4>Unreal Agent</h4><p>A Go runner on the Responses API, served by DeepSeek.</p></div>
+      </div>
+      <p class="note reveal">Each project brings its own API key for its provider. There is no shared server key.</p>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Everything in the box</span>
+        <h2>Self-hosted, end to end.</h2>
+        <p>One <code class="inline">docker compose up</code> brings up the API, the UI, a Git forge and a deploy platform. No <code class="inline">.env</code> to fill in.</p>
+      </div>
+      <div class="grid">
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M7 8v12M11 8v12M15 8v12M5 8l2-4h10l2 4"/></svg></div>
+          <h4>Isolated sandboxes</h4>
+          <p>Agents run as sibling containers with only the project repo mounted. Nothing they install outlives the task.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/></svg></div>
+          <h4>Superpowers skills</h4>
+          <p>Brainstorming, writing plans, TDD and systematic debugging are baked into every harness image.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10M18 10c0 4-6 3-11.5 7.5"/></svg></div>
+          <h4>Built-in Gitea</h4>
+          <p>Each user gets a private Gitea account. Every task has a branch and a mirrored issue that shows its status.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18z"/></svg></div>
+          <h4>Coolify deploys</h4>
+          <p>Coolify is configured automatically. You get preview environments for each task and production on demand.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v10c0 1.7 3 3 7 3s7-1.3 7-3V7M5 12c0 1.7 3 3 7 3s7-1.3 7-3"/></svg></div>
+          <h4>Cost tracking</h4>
+          <p>Every token is recorded and priced when you read it, so changing a price reprices history. Each project has a budget.</p>
+        </div>
+        <div class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></div>
+          <h4>Multi-user</h4>
+          <p>One administrator plus Google sign-in, with projects isolated per owner. The UI is in English and Portuguese.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="quickstart">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Quickstart</span>
+        <h2>Running in one command.</h2>
+        <p>All you need is Docker and Docker Compose, plus an API key per project (Google Gemini or DeepSeek).</p>
+      </div>
+      <div class="quick">
+        <ol class="checks reveal">
+          <li><div><b>Clone and run the script</b><span>It checks Docker, builds every harness image and waits for the API.</span></div></li>
+          <li><div><b>Open localhost:8000</b><span>The first person to open it creates the administrator account.</span></div></li>
+          <li><div><b>Follow the setup wizard</b><span>Set the public URL, optionally Google sign-in, and Coolify, which can be configured automatically.</span></div></li>
+          <li><div><b>Create a project and start the analysis</b><span>Pick a harness, paste its key, and start talking.</span></div></li>
+        </ol>
+        <div class="term reveal">
+          <div class="bar"><i></i><i></i><i></i><span>terminal</span><button type="button" id="copy">Copy</button></div>
+<pre id="cmds"><span class="c"># clone</span>
+<span class="p">$</span> git clone https://github.com/ricardoborges/Painkiller.git
+<span class="p">$</span> cd Painkiller
+
+<span class="c"># Linux / macOS</span>
+<span class="p">$</span> ./linux-run.sh        <span class="c"># or ./mac-run.sh</span>
+
+<span class="c"># Windows</span>
+<span class="p">&gt;</span> powershell -ExecutionPolicy Bypass -File .\win-run.ps1
+
+<span class="c"># then open http://localhost:8000</span></pre>
+        </div>
+      </div>
+
+      <div class="final reveal">
+        <div class="flow"><span>conversation</span><i></i><span>spec</span><i></i><span>tasks</span><i></i><span>production</span></div>
+        <h2>Stop pasting prompts. Ship software.</h2>
+        <p>Painkiller is open source and self-hosted. Your code, your keys, your servers.</p>
+        <div class="cta">
+          <a class="btn" href="https://github.com/ricardoborges/Painkiller">Star on GitHub</a>
+          <a class="btn" href="https://www.youtube.com/watch?v=KN6PPyYFisg" style="background: rgba(255,255,255,0.14); color: #fff;">Watch the video</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <img src="assets/painkiller-logo-light.png" alt="Painkiller" />
+      <span>Built with <a href="https://github.com/obra/superpowers">Superpowers</a>, <a href="https://about.gitea.com">Gitea</a> and <a href="https://coolify.io">Coolify</a>.</span>
+    </div>
+  </footer>
+
+  <script>
+    // anima a entrada das seções ao rolar
+    const io = 'IntersectionObserver' in window
+      ? new IntersectionObserver((entries) => {
+          for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+        }, { rootMargin: '0px 0px -10% 0px' })
+      : null;
+    document.querySelectorAll('.reveal').forEach((el) => (io ? io.observe(el) : el.classList.add('in')));
+
+    // copia os comandos sem prompts nem comentários
+    document.getElementById('copy').addEventListener('click', async (ev) => {
+      const text = document.getElementById('cmds').innerText
+        .split('\n').filter((l) => /^\$ /.test(l)).map((l) => l.slice(2).replace(/\s+#.*$/, '')).join('\n');
+      try { await navigator.clipboard.writeText(text); ev.target.textContent = 'Copied'; }
+      catch { ev.target.textContent = 'Select & copy'; }
+      setTimeout(() => (ev.target.textContent = 'Copy'), 1600);
+    });
+  </script>
+</body>
+</html>
