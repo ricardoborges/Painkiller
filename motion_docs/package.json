@@ -1,0 +1,22 @@
+{
+  "name": "painkiller-motion-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "voiceover": "node scripts/voiceover.mjs",
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Painkiller out/painkiller-explainer.mp4",
+    "still": "remotion still src/index.ts Painkiller out/still.png"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.535",
+    "@remotion/google-fonts": "4.0.535",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.535"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.8",
+    "typescript": "5.8.3"
+  }
+}

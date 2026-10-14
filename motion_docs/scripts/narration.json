@@ -1,0 +1,11 @@
+[
+  {"id": "intro", "text": "This is Painkiller: a platform that turns a conversation into running software, by orchestrating AI coding agents inside isolated Docker containers."},
+  {"id": "goal", "text": "Building software means turning ideas into specs, specs into tasks, and tasks into code. Every handoff loses context. Painkiller automates the whole path, while keeping a human analyst in control."},
+  {"id": "interview", "text": "It starts with an interview. A containerized agent runs the Superpowers brainstorming skill, asking the analyst one question at a time, often as clickable choices, until the idea is crystal clear."},
+  {"id": "spec", "text": "The outcome is a written specification, versioned in the project's Git repository. That is spec-driven development: the spec is decomposed into small, atomic tasks, each with acceptance criteria and dependencies."},
+  {"id": "harness", "text": "Each task is dispatched to its own sandboxed container, on its own feature branch. Painkiller is harness-agnostic: choose Antigravity with Gemini, or DeepSeek through dsh, Maki, or Unreal Agent. Every harness carries the same Superpowers skills: planning, test-driven development, and systematic debugging."},
+  {"id": "ask", "text": "When an agent hits ambiguity, it does not guess. It asks, committing its work and exiting with code forty-two. The task pauses, the analyst answers, and the agent resumes right where it stopped."},
+  {"id": "tests", "text": "When the agent finishes, the tests run in a fresh worker. Green means commit, merge, and complete. Every step streams live, and every token is counted against the project's budget."},
+  {"id": "deploy", "text": "Then comes deployment. Painkiller pushes to its built-in Gitea and hands the branch to Coolify. Each completed task can be tested on its own preview, and production is one click away. If a deploy fails, the log becomes a new task, and the agent fixes it."},
+  {"id": "outro", "text": "Painkiller. From conversation, to spec, to production."}
+]
