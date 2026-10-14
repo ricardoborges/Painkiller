@@ -32,7 +32,7 @@ Agents run inside ephemeral Docker sibling containers with filesystem isolation.
 - **`maki`** (Rust-based coding agent)
 - **`unreal`** (Go-based Unreal Agent)
 
-**Clean interruption protocol (Exit 42):** When an agent hits an ambiguous requirement, it doesn't guess or hallucinate. It runs `painkiller ask "<question>"`, commits its current work-in-progress, and exits with code `42`. The task pauses in the UI until you answer, then resumes on the exact same branch.
+**Clean interruption protocol:** When an agent hits an ambiguous requirement, it doesn't guess or hallucinate. It runs `painkiller ask "<question>"`, and commits its current work-in-progress. The task pauses in the UI until you answer, then resumes on the exact same branch.
 
 ### 2. Superpowers
 Agents don't write code blindly. Painkiller equips them with [Superpowers](https://github.com/obra/superpowers) — structured skills for the development lifecycle:
@@ -77,7 +77,7 @@ flowchart TD
         Dispatch --> Harness
         Harness --- Skills
         Skills --> Ask
-        Ask -- "Exit 42 (WIP pause)" --> Human
+        Ask -- "WIP pause" --> Human
         Human -- "Clarification" --> Harness
         Ask -- "No questions" --> Tests
         Tests -- "Fail" --> Skills
@@ -107,7 +107,7 @@ flowchart TD
 1. **Interview:** You describe what you want to build. An agent interviews you to flesh out requirements and architecture.
 2. **Backlog:** Painkiller decomposes the approved spec into atomic backlog tasks.
 3. **Dispatch:** A containerized agent boots up on a clean branch, implements the task using TDD, and runs tests.
-4. **Clarification (if needed):** If the agent hits ambiguity, it pauses cleanly (`Exit 42`) and asks for human feedback.
+4. **Clarification (if needed):** If the agent hits ambiguity, it pauses cleanly and asks for human feedback.
 5. **Review & Deploy:** Code is committed to Gitea and automatically deployed to Coolify.
 
 ---
