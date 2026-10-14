@@ -127,8 +127,8 @@ class IssueTrackerPort(ABC):
         pass
 
     @abstractmethod
-    async def set_task_skip_tests(self, task_id: str, skip_tests: bool) -> Task:
-        """Record whether the analyst waived the agent's tests for this task."""
+    async def set_task_superpowers(self, task_id: str, enabled: bool) -> Task:
+        """Record whether the agent may use the superpowers skills on this task."""
         pass
 
     @abstractmethod
@@ -211,8 +211,14 @@ class IssueTrackerPort(ABC):
         self,
         project_id: str,
         title: Optional[str] = None,
+        guided: bool = True,
     ) -> IterationSession:
-        """Create the next incremental agile iteration session for the project."""
+        """Create the next incremental agile iteration session for the project.
+
+        ``guided=False`` makes a direct session (no superpowers); the first
+        session of a project is always guided. Tasks created in a session start
+        with ``use_superpowers`` equal to its ``guided``.
+        """
         pass
 
     @abstractmethod

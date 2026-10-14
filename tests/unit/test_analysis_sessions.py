@@ -144,3 +144,21 @@ def test_build_analysis_prompt_chat_mode_from_second_session():
     # O formato de opções e a entrega do backlog continuam valendo no chat.
     assert "painkiller-choices" in second
     assert ".painkiller/backlog" in second
+
+
+def test_build_analysis_prompt_direct_session_skips_skills_and_spec():
+    project = Project(id="p1", name="App", repo_path="/repo")
+
+    guided = build_analysis_prompt(project, session_number=2)
+    direct = build_analysis_prompt(project, session_number=2, guided=False)
+
+    assert "Use as skills do superpowers" in guided
+    assert "docs/superpowers/specs/" in guided
+    assert "sessão direta" in direct
+    assert "Use as skills do superpowers" not in direct
+    assert "docs/superpowers/specs/" not in direct
+    assert '"spec_path": null' in direct
+    assert ".painkiller/backlog" in direct
+    # A primeira sessão é sempre guiada, mesmo pedindo o contrário.
+    assert build_analysis_prompt(project, session_number=1, guided=False) == \
+        build_analysis_prompt(project, session_number=1)

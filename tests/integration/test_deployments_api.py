@@ -71,3 +71,40 @@ async def test_deployments_api_flow(deployment_client: AsyncClient):
     assert list_res.status_code == 200
     items = list_res.json()
     assert len(items) == 2
+
+    # 7. Só um deploy que falhou vira tarefa de correção
+    refused = await deployment_client.post(f"/api/deployments/{prod_data['id']}/fix")
+    assert refused.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_failed_deploy_becomes_fix_task(deployment_client: AsyncClient):
+    from painkiller.core.domain.models import DeploymentStatus
+
+    proj_res = await deployment_client.post(
+        "/api/projects",
+        json={"name": "Fix App", "repo_path": "/tmp/fix_app", "api_key": "k"},
+    )
+    proj_id = proj_res.json()["id"]
+    dep = (await deployment_client.post(
+        f"/api/projects/{proj_id}/deploy", json={"environment": "production"}
+    )).json()
+
+    tracker = deployment_client._transport.app.state.tracker
+    record = await tracker.get_deployment(dep["id"])
+    record.status = DeploymentStatus.FAILED
+    record.logs = "ERROR: failed to build"
+    await tracker.save_deployment(record)
+
+    first = await deployment_client.post(f"/api/deployments/{dep['id']}/fix")
+    assert first.status_code == 200
+    task = first.json()
+    assert task["session_id"]
+    assert "ERROR: failed to build" in task["description"]
+
+    # Segundo clique: a mesma tarefa, não uma duplicata.
+    again = await deployment_client.post(f"/api/deployments/{dep['id']}/fix")
+    assert again.json()["id"] == task["id"]
+
+    missing = await deployment_client.post("/api/deployments/nope/fix")
+    assert missing.status_code == 404

@@ -219,7 +219,7 @@ def test_skills_are_published_and_kept_out_of_git(tmp_path, monkeypatch):
 
 def test_unreal_model_drops_the_maki_provider_prefix(monkeypatch):
     monkeypatch.delenv("PAINKILLER_UNREAL_MODEL", raising=False)
-    assert unreal_model() == "deepseek-v4-pro"
+    assert unreal_model() == "deepseek-flash"
     assert unreal_model("deepseek/deepseek-flash") == "deepseek-flash"
     assert unreal_model("deepseek-flash") == "deepseek-flash"
 
@@ -313,7 +313,7 @@ async def test_runner_runs_unreal_bridge_one_shot(tmp_path, env):
     assert call_args[1]["command"] == ["painkiller", "unreal-run", "--prompt", "Execute tests"]
     environment = call_args[1]["environment"]
     assert environment["UNREAL_HARNESS_LLM_API_KEY"] == "sk-project"
-    assert environment["UNREAL_HARNESS_LLM_MODEL"] == "deepseek-v4-pro"
+    assert environment["UNREAL_HARNESS_LLM_MODEL"] == "deepseek-flash"
 
 
 def test_failed_turn_still_reports_its_usage(runner_output, capsys):
@@ -345,3 +345,18 @@ def test_tool_call_carries_arguments_as_ui_detail(capsys):
     event = parse_agent_line(line)
     assert event.type is AgentEventType.TOOL_USE
     assert _tool_detail(event.raw) == "npm install"
+
+
+def test_skills_are_withdrawn_for_a_run_without_superpowers(tmp_path, monkeypatch):
+    skills = tmp_path / "opt" / "skills" / "brainstorming"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text("---\nname: brainstorming\n---\n", encoding="utf-8")
+    workspace = tmp_path / "repo"
+    (workspace / ".git" / "info").mkdir(parents=True)
+    monkeypatch.setattr(bridge, "SKILLS_SOURCE", str(tmp_path / "opt" / "skills"))
+    bridge._setup_superpowers_skills(str(workspace))
+
+    bridge._withdraw_superpowers_skills(str(workspace))
+
+    assert not os.path.lexists(workspace / ".harness" / "skills")
+    assert (tmp_path / "opt" / "skills" / "brainstorming" / "SKILL.md").exists()

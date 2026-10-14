@@ -155,7 +155,7 @@ async def test_task_run_uses_the_project_model_and_effort(monkeypatch):
     await runner.run_task(task=task, repo_path="/fake/repo", task_instructions="x",
                           harness="deepseek_superpowers", api_key="k", effort="high")
     env = mock_client.containers.run.call_args[1]["environment"]
-    assert env["PAINKILLER_DEEPSEEK_MODEL"] == "deepseek-v4-pro"
+    assert env["PAINKILLER_DEEPSEEK_MODEL"] == "deepseek-flash"
     assert env["PAINKILLER_DEEPSEEK_EFFORT"] == "high"
 
 
@@ -229,3 +229,48 @@ async def test_run_tests_without_python_tests_starts_no_container(tmp_path):
 
     assert code == 5
     mock_client.containers.run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_task_without_superpowers_hides_the_skills():
+    mock_client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = [b'{"type": "result", "content": "done"}\n']
+    mock_container.wait.return_value = {"StatusCode": 0}
+    mock_client.containers.run.return_value = mock_container
+
+    runner = DockerSandboxRunner(client=mock_client)
+    task = Task(id="t3", project_id="p1", title="T", description="d", use_superpowers=False)
+
+    await runner.run_task(
+        task=task, repo_path="/fake/repo", task_instructions="Fix",
+        harness="maki_superpowers", api_key="k",
+    )
+
+    kwargs = mock_client.containers.run.call_args[1]
+    command = kwargs["command"]
+    assert command[:2] == ["sh", "-c"]
+    assert 'rm -f "$HOME/.agents/skills"' in command[2]
+    assert command[4] == "maki" and command[-1] == "Fix"
+    assert kwargs["environment"]["PAINKILLER_SUPERPOWERS"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_task_with_superpowers_runs_the_agent_directly():
+    mock_client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = [b'{"type": "result", "content": "done"}\n']
+    mock_container.wait.return_value = {"StatusCode": 0}
+    mock_client.containers.run.return_value = mock_container
+
+    runner = DockerSandboxRunner(client=mock_client)
+    task = Task(id="t4", project_id="p1", title="T", description="d")
+
+    await runner.run_task(
+        task=task, repo_path="/fake/repo", task_instructions="Fix",
+        harness="maki_superpowers", api_key="k",
+    )
+
+    kwargs = mock_client.containers.run.call_args[1]
+    assert kwargs["command"][0] == "maki"
+    assert "PAINKILLER_SUPERPOWERS" not in kwargs["environment"]

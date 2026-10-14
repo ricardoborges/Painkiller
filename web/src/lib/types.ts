@@ -194,6 +194,8 @@ export interface IterationSession {
   number: number;
   title: string;
   status: SessionStatus;
+  /** Falso numa sessão direta; a primeira é sempre guiada. */
+  guided?: boolean;
   analysis_session_id?: string | null;
   spec_path?: string | null;
   created_at: string;
@@ -216,8 +218,8 @@ export interface Task {
   /** Issue espelhada no Gitea; nula enquanto o espelho não a criou. */
   issue_number?: number | null;
   issue_url?: string | null;
-  /** "Abreviar testes": o analista assume o teste manual e os riscos. */
-  skip_tests?: boolean;
+  /** Desligado, o agente vai direto ao ponto, sem as skills do superpowers. */
+  use_superpowers?: boolean;
   /** Acumulado de todas as execuções: tempo de relógio e tokens do agente. */
   elapsed_seconds?: number;
   input_tokens?: number;

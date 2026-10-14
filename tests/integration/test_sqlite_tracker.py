@@ -21,18 +21,6 @@ async def tracker():
 
 
 @pytest.mark.asyncio
-async def test_skip_tests_flag_persists(tracker: SQLiteIssueTracker):
-    proj = await tracker.create_project(name="App", repo_path="/tmp/app")
-    task = await tracker.create_task(project_id=proj.id, title="T", description="D")
-    assert task.skip_tests is False
-
-    updated = await tracker.set_task_skip_tests(task.id, True)
-
-    assert updated.skip_tests is True
-    assert (await tracker.get_task(task.id)).skip_tests is True
-
-
-@pytest.mark.asyncio
 async def test_task_metrics_accumulate(tracker: SQLiteIssueTracker):
     proj = await tracker.create_project(name="App", repo_path="/tmp/app")
     task = await tracker.create_task(project_id=proj.id, title="T", description="D")
@@ -252,3 +240,32 @@ async def test_list_clarifications_keeps_history_in_order(tracker: SQLiteIssueTr
     assert history[0].answer == "Yes"
     assert history[1].status == ClarificationStatus.PENDING
     assert await tracker.list_clarifications("task-none") == []
+
+
+@pytest.mark.asyncio
+async def test_superpowers_flag_defaults_on_and_persists(tracker: SQLiteIssueTracker):
+    proj = await tracker.create_project(name="App", repo_path="/tmp/app")
+    task = await tracker.create_task(project_id=proj.id, title="T", description="D")
+    assert task.use_superpowers is True
+
+    updated = await tracker.set_task_superpowers(task.id, False)
+
+    assert updated.use_superpowers is False
+    assert (await tracker.get_task(task.id)).use_superpowers is False
+
+
+@pytest.mark.asyncio
+async def test_tasks_start_in_their_session_mode(tracker: SQLiteIssueTracker):
+    proj = await tracker.create_project(name="App", repo_path="/tmp/app")
+    # A primeira sessão monta a base do projeto: guiada mesmo pedindo direta.
+    first = await tracker.create_session(proj.id, guided=False)
+    direct = await tracker.create_session(proj.id, guided=False)
+    assert first.guided is True
+    assert direct.guided is False
+    assert (await tracker.get_session(direct.id)).guided is False
+
+    in_first = await tracker.create_task(project_id=proj.id, title="A", description="D", session_id=first.id)
+    in_direct = await tracker.create_task(project_id=proj.id, title="B", description="D", session_id=direct.id)
+
+    assert in_first.use_superpowers is True
+    assert in_direct.use_superpowers is False

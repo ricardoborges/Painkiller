@@ -6,7 +6,11 @@ from pydantic import BaseModel
 
 from painkiller.api.security import current_user, visible_project
 from painkiller.core.domain.models import User, EnvironmentType, DeploymentRecord
-from painkiller.engine.deployment_service import BranchPushError, BranchUnavailableError
+from painkiller.engine.deployment_service import (
+    BranchPushError,
+    BranchUnavailableError,
+    DeploymentNotFailedError,
+)
 
 router = APIRouter(tags=["deployments"])
 
@@ -86,3 +90,24 @@ async def get_deployment(
     # Garante que o usuário tem acesso ao projeto deste deploy
     await visible_project(request, record.project_id)
     return record
+
+
+@router.post("/api/deployments/{deployment_id}/fix")
+async def create_deployment_fix_task(
+    deployment_id: str,
+    request: Request,
+    user: User = Depends(current_user),
+):
+    """Create (or reuse) a task asking the agent to fix a failed deploy."""
+    deployment_service = request.app.state.deployment_service
+    record = await deployment_service.tracker.get_deployment(deployment_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Deploy não encontrado")
+    await visible_project(request, record.project_id)
+
+    try:
+        return await deployment_service.create_fix_task(deployment_id)
+    except DeploymentNotFailedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))

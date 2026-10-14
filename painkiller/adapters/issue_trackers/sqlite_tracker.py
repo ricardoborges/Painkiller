@@ -117,7 +117,8 @@ class TaskRecord(Base):
     error = Column(Text, nullable=True)
     issue_number = Column(Integer, nullable=True)
     issue_url = Column(String, nullable=True)
-    skip_tests = Column(Boolean, nullable=True, default=False)
+    #: NULL nas linhas anteriores à coluna: vale como ligado.
+    use_superpowers = Column(Boolean, nullable=True, default=True)
     elapsed_seconds = Column(Float, nullable=True, default=0.0)
     input_tokens = Column(Integer, nullable=True, default=0)
     output_tokens = Column(Integer, nullable=True, default=0)
@@ -143,6 +144,8 @@ class IterationSessionRecord(Base):
     number = Column(Integer, nullable=False)
     title = Column(String, nullable=False)
     status = Column(SQLEnum(SessionStatus), default=SessionStatus.PLANNING)
+    # Nulo nas sessões anteriores à coluna: eram todas guiadas.
+    guided = Column(Boolean, nullable=True, default=True)
     analysis_session_id = Column(String, nullable=True)
     spec_path = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -613,6 +616,15 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         session_id: Optional[str] = None,
     ) -> Task:
         task_id = f"task-{uuid.uuid4().hex[:8]}"
+        # A tarefa nasce no modo da sessão (guiada ou direta); depois o analista
+        # pode mudar tarefa a tarefa. Todo caminho de criação passa por aqui.
+        use_superpowers = True
+        if session_id:
+            async with self.session_factory() as session:
+                guided = (await session.execute(
+                    select(IterationSessionRecord.guided).where(IterationSessionRecord.id == session_id)
+                )).scalar_one_or_none()
+                use_superpowers = guided is not False
         record = TaskRecord(
             id=task_id,
             project_id=project_id,
@@ -623,6 +635,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             dependencies=json.dumps(list(dependencies or [])),
             status=TaskStatus.BACKLOG,
             session_id=session_id,
+            use_superpowers=use_superpowers,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -695,12 +708,12 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             res = await session.execute(select(TaskRecord).where(TaskRecord.id == task_id))
             return self._to_task_domain(res.scalar_one())
 
-    async def set_task_skip_tests(self, task_id: str, skip_tests: bool) -> Task:
+    async def set_task_superpowers(self, task_id: str, enabled: bool) -> Task:
         async with self.session_factory() as session:
             await session.execute(
                 update(TaskRecord)
                 .where(TaskRecord.id == task_id)
-                .values(skip_tests=skip_tests, updated_at=datetime.now(timezone.utc))
+                .values(use_superpowers=enabled, updated_at=datetime.now(timezone.utc))
             )
             await session.commit()
             res = await session.execute(select(TaskRecord).where(TaskRecord.id == task_id))
@@ -852,7 +865,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             error=record.error,
             issue_number=getattr(record, "issue_number", None),
             issue_url=getattr(record, "issue_url", None),
-            skip_tests=bool(getattr(record, "skip_tests", False)),
+            use_superpowers=getattr(record, "use_superpowers", None) is not False,
             elapsed_seconds=float(getattr(record, "elapsed_seconds", None) or 0.0),
             input_tokens=int(getattr(record, "input_tokens", None) or 0),
             output_tokens=int(getattr(record, "output_tokens", None) or 0),
@@ -1091,6 +1104,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             number=record.number,
             title=record.title,
             status=record.status,
+            guided=record.guided is not False,
             analysis_session_id=record.analysis_session_id,
             spec_path=record.spec_path,
             created_at=record.created_at,
@@ -1132,6 +1146,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         self,
         project_id: str,
         title: Optional[str] = None,
+        guided: bool = True,
     ) -> IterationSession:
         async with self.session_factory() as session:
             stmt = select(IterationSessionRecord.number).where(
@@ -1150,6 +1165,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
                 number=next_num,
                 title=sess_title,
                 status=SessionStatus.PLANNING,
+                # A primeira sessão monta a base do projeto: sempre guiada.
+                guided=guided or next_num == 1,
                 created_at=now,
                 updated_at=now,
             )

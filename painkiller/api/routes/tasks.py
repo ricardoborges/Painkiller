@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from painkiller.api.security import require_task
-from painkiller.core.domain.models import AgentEvent, AgentEventType
+from painkiller.core.domain.models import AgentEvent, AgentEventType, TaskStatus
 
 # Toda rota daqui tem {task_id}: a checagem de dono vale para o router inteiro.
 router = APIRouter(prefix="/api/tasks", tags=["tasks"], dependencies=[Depends(require_task)])
@@ -47,15 +47,23 @@ async def stop_task(task_id: str, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/{task_id}/abbreviate-tests")
-async def abbreviate_tests(task_id: str, request: Request):
-    """The analyst waives the agent's tests; a live run restarts without them."""
-    orchestrator = request.app.state.orchestrator
-    try:
-        restarting = await orchestrator.abbreviate_tests(task_id)
-        return {"task_id": task_id, "skip_tests": True, "restarting": restarting}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+class SuperpowersRequest(BaseModel):
+    enabled: bool
+
+
+@router.put("/{task_id}/superpowers")
+async def set_superpowers(task_id: str, body: SuperpowersRequest, request: Request):
+    """Turn the superpowers skills on or off for the task's next run."""
+    tracker = request.app.state.tracker
+    task = await tracker.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    # O agente é one-shot: mudar no meio da execução não chegaria a ele.
+    if task.status == TaskStatus.RUNNING:
+        raise HTTPException(
+            status_code=409, detail="Não é possível mudar o Superpowers de uma tarefa em execução"
+        )
+    return await tracker.set_task_superpowers(task_id, body.enabled)
 
 
 # Chaves onde o stream-json costuma pôr o alvo de uma ferramenta (comando,

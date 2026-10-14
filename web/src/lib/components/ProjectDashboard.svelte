@@ -55,8 +55,9 @@
     [...sessionStore.sessions].reverse().find((s) => s.status !== 'COMPLETED') ?? null
   );
 
-  async function startNextSession() {
-    if (await sessionStore.createNextSession()) await goto(`${base}/initial-analysis`);
+  // O layout do projeto pergunta guiada/direta, cria e leva ao Chat.
+  function startNextSession() {
+    sessionStore.requestNextSession();
   }
 
   /* Uma sessão ainda na análise abre no chat; as demais, no backlog. */

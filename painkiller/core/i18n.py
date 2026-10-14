@@ -150,6 +150,11 @@ EN_US: dict[str, str] = {
     "Projeto {id} não encontrado": "Project {id} not found",
     "Sessão não encontrada": "Session not found",
     "Tarefa não encontrada": "Task not found",
+    "Informe o título da tarefa.": "Enter the task title.",
+    "Sessão encerrada: abra uma nova sessão para adicionar tarefas.":
+        "Session closed: open a new session to add tasks.",
+    "Dependência inválida: {dep}": "Invalid dependency: {dep}",
+    "Não é possível mudar o Superpowers de uma tarefa em execução": "Superpowers cannot be changed while the task is running",
     "Nenhuma pendência de esclarecimento para esta tarefa": "No pending clarification for this task",
     "Sessão {id} não encontrada": "Session {id} not found",
     "Sessão {id} não está ativa": "Session {id} is not active",
@@ -199,7 +204,6 @@ EN_US: dict[str, str] = {
         "The agent image '{image}' was not found in Docker. "
         "Build the harness images with: docker compose --profile build build",
     # ---- tarefas ----
-    "A tarefa já foi concluída.": "The task is already completed.",
     "Falha ao realizar merge da branch {branch} na {base}: {output}":
         "Failed to merge branch {branch} into {base}: {output}",
     # ---- deploys ----
@@ -211,6 +215,27 @@ EN_US: dict[str, str] = {
     "Não foi possível enviar a branch {branch} ao Gitea antes do deploy: {output}":
         "Could not push branch {branch} to Gitea before the deploy: {output}",
     "Falha ao registrar chave SSH no Coolify: {error}": "Failed to register the SSH key in Coolify: {error}",
+    "Só um deploy que falhou pode virar tarefa de correção":
+        "Only a failed deploy can become a fix task",
+    # ---- tarefa de correção de deploy (no idioma do projeto) ----
+    "teste": "test",
+    "produção": "production",
+    "Corrigir o deploy de {env}": "Fix the {env} deploy",
+    "O deploy de {env} da branch {branch} falhou no Coolify. Descubra a causa no "
+    "log abaixo e corrija o código para que a imagem seja construída e a "
+    "aplicação suba.":
+        "The {env} deploy of branch {branch} failed on Coolify. Find the cause in the "
+        "log below and fix the code so the image builds and the application starts.",
+    "Não há Docker no seu ambiente: reproduza localmente os passos do Dockerfile "
+    "que falharam (por exemplo, a instalação de dependências e o build) e só "
+    "conclua quando eles passarem.":
+        "There is no Docker in your environment: reproduce the Dockerfile steps that "
+        "failed locally (for example, installing dependencies and the build) and only "
+        "finish when they pass.",
+    "Fim do log do deploy:": "End of the deploy log:",
+    "Os passos do Dockerfile que falharam no deploy executam sem erro localmente.":
+        "The Dockerfile steps that failed in the deploy run without errors locally.",
+    "Os testes existentes continuam passando.": "The existing tests still pass.",
     # ---- setup ----
     "A URL pública precisa começar com http:// ou https://.":
         "The public URL must start with http:// or https://.",
@@ -259,17 +284,12 @@ EN_US: dict[str, str] = {
     # ---- execução de tarefas (gravado na tarefa, no idioma do projeto) ----
     "Não foi possível enviar a branch {branch} ao Gitea: {output}":
         "Could not push branch {branch} to Gitea: {output}",
-    "Reiniciando o agente sem testes, a pedido do analista":
-        "Restarting the agent without tests, as the analyst asked",
     "Iniciando contêiner na branch {branch}": "Starting container on branch {branch}",
     "Agente encerrou com código {code}": "Agent exited with code {code}",
     "🤖 Pausada para esclarecimento: {question}": "🤖 Paused for clarification: {question}",
-    "Testes abreviados pelo analista: suíte não executada": "Tests skipped by the analyst: suite not run",
     "Executando a suíte de testes do repositório": "Running the repository's test suite",
     "Incorporando branch na {branch}": "Merging branch into {branch}",
     "✅ Tarefa concluída, testada e incorporada na {branch}.": "✅ Task completed, tested and merged into {branch}.",
-    "Testes abreviados pelo analista: o teste manual fica por conta dele.":
-        "Tests skipped by the analyst: manual testing is on them.",
     "(Sem testes coletados no repositório)": "(No tests collected in the repository)",
     "Falha ao realizar merge na {branch}:": "Failed to merge into {branch}:",
     "❌ Falha no auto-merge da branch {branch} na {base}:": "❌ Auto-merge of branch {branch} into {base} failed:",
@@ -277,10 +297,6 @@ EN_US: dict[str, str] = {
     "Final do log do agente:": "End of the agent log:",
     "💬 O analista respondeu: {answer}": "💬 The analyst answered: {answer}",
     "Interrompendo execução da tarefa a pedido do usuário": "Stopping the task run at the user's request",
-    "⏩ Testes abreviados: o analista assume o teste manual e os riscos.":
-        "⏩ Tests skipped: the analyst takes on manual testing and the risks.",
-    "Testes abreviados pelo analista: reiniciando o agente sem testes":
-        "Tests skipped by the analyst: restarting the agent without tests",
     "Execução interrompida pelo usuário. O trabalho parcial ficou na branch {branch}: "
     "use Repetir para continuar de onde parou.":
         "Run stopped by the user. The partial work is on branch {branch}: "

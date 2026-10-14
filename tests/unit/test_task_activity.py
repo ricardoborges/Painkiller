@@ -16,6 +16,7 @@ from painkiller.core.domain.models import (
     ExecutionResult,
     Project,
     Task,
+    TaskStatus,
 )
 from painkiller.engine.orchestrator import PainkillerOrchestrator
 from painkiller.engine.task_activity import TaskActivityHub
@@ -174,3 +175,25 @@ async def test_stop_task_route(tmp_path):
     assert data["task_id"] == "task-test-stop"
     app.state.orchestrator.stop_task.assert_awaited_once_with("task-test-stop")
 
+
+
+async def test_superpowers_route_toggles_and_refuses_running_task(tmp_path):
+    app = create_app(db_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+
+    async with app.router.lifespan_context(app):
+        tracker = app.state.tracker
+        project = await tracker.create_project(name="App", repo_path=str(tmp_path / "repo"))
+        task = await tracker.create_task(project_id=project.id, title="T", description="D")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", headers=admin_headers()) as client:
+            off = await client.put(f"/api/tasks/{task.id}/superpowers", json={"enabled": False})
+            await tracker.update_task_status(task.id, TaskStatus.RUNNING)
+            refused = await client.put(
+                f"/api/tasks/{task.id}/superpowers", json={"enabled": True},
+                headers={"Accept-Language": "en-US"},
+            )
+
+    assert off.status_code == 200
+    assert off.json()["use_superpowers"] is False
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "Superpowers cannot be changed while the task is running"

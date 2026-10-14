@@ -244,6 +244,30 @@ def _run_turn(
     return True
 
 
+def _withdraw_superpowers_skills(workspace: str) -> None:
+    """Undo `_setup_superpowers_skills` for a run without superpowers.
+
+    O link (ou a cópia) de uma tarefa anterior continua no workspace; só sai o
+    que o próprio bridge publicou — nunca skills versionadas no repositório.
+    """
+    target = os.path.join(workspace, SKILLS_RELATIVE)
+    try:
+        if os.path.islink(target):
+            os.unlink(target)
+            return
+        if not os.path.isdir(target):
+            return
+        tracked = subprocess.run(
+            ["git", "-C", workspace, "ls-files", "--", SKILLS_RELATIVE],
+            capture_output=True, text=True,
+        )
+        # Fora de um repositório git nada pode estar versionado.
+        if tracked.returncode != 0 or not tracked.stdout.strip():
+            shutil.rmtree(target)
+    except OSError as e:
+        _emit_system(f"não foi possível retirar as skills: {e}")
+
+
 @click.command()
 @click.option("--stdin-file", default=None, help="JSONL file polled for analyst messages (interactive mode).")
 @click.option("--prompt", default=None, help="Run a single turn with this text and exit (one-shot mode).")
@@ -272,7 +296,10 @@ def unreal_run(
     if not stdin_file and prompt is None:
         raise click.UsageError("informe --stdin-file ou --prompt")
 
-    _setup_superpowers_skills(workspace)
+    if os.environ.get("PAINKILLER_SUPERPOWERS") == "0":
+        _withdraw_superpowers_skills(workspace)
+    else:
+        _setup_superpowers_skills(workspace)
     os.makedirs(session_directory, exist_ok=True)
     model = os.environ.get("UNREAL_HARNESS_LLM_MODEL") or ""
     _emit({"event": "init", "init": {"conversation_id": session_id or "", "model": model}})

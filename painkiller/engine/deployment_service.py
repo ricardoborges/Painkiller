@@ -1,6 +1,7 @@
 """Deployment Service coordinating environment provisioning with Coolify."""
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 from painkiller.core.domain.models import (
     Project,
@@ -11,6 +12,7 @@ from painkiller.core.domain.models import (
     EnvironmentType,
     SessionStatus,
 )
+from painkiller.core.i18n import project_language, tr
 from painkiller.core.ports.deployment import DeploymentPort
 from painkiller.core.ports.git import GitPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
@@ -24,6 +26,34 @@ class BranchUnavailableError(Exception):
 
 class BranchPushError(Exception):
     """The branch to deploy could not be sent to Gitea, so Coolify cannot clone it."""
+
+
+class DeploymentNotFailedError(Exception):
+    """Only a failed deploy can become a fix task."""
+
+
+# O fim do log basta: é onde o Coolify e o BuildKit dizem o que quebrou.
+FIX_LOG_TAIL_CHARS = 12_000
+
+
+# O Coolify marca o deploy como encerrado um instante antes de gravar as
+# últimas linhas (o erro do build, o "Removing the new version"). Por este
+# tempo depois da última mudança, o log de um deploy encerrado ainda é relido.
+LOG_SETTLE_SECONDS = 60
+
+
+def _settling(record: DeploymentRecord) -> bool:
+    if record.status not in (DeploymentStatus.FAILED, DeploymentStatus.HEALTHY):
+        return False
+    changed = record.updated_at
+    if changed.tzinfo is None:
+        changed = changed.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - changed).total_seconds() < LOG_SETTLE_SECONDS
+
+
+def _fix_marker(deployment_id: str) -> str:
+    """Linha que liga a tarefa ao deploy: um segundo clique reusa a mesma tarefa."""
+    return f"deploy-fix: {deployment_id}"
 
 
 class DeploymentService:
@@ -145,12 +175,69 @@ class DeploymentService:
         if not record:
             return None
 
-        if record.status in (DeploymentStatus.PENDING, DeploymentStatus.BUILDING):
-            updated = await self.deployment.get_deployment_status(record)
+        if record.status in (DeploymentStatus.PENDING, DeploymentStatus.BUILDING) or _settling(record):
+            # O adapter altera o registro no lugar: compara com uma cópia, ou
+            # nada mudaria nunca e o banco ficaria parado.
+            updated = await self.deployment.get_deployment_status(record.model_copy())
             if updated.status != record.status or updated.logs != record.logs:
                 record = await self.tracker.save_deployment(updated)
 
         return record
+
+    async def create_fix_task(self, deployment_id: str) -> Task:
+        """Turn a failed deploy into a task the agent can run to fix the build.
+
+        A tarefa entra na sessão aberta mais recente; com todas encerradas (o
+        caso comum de um deploy de produção), abre uma nova. Chamar de novo
+        para o mesmo deploy devolve a tarefa já criada, se ainda não concluída.
+        """
+        record = await self.tracker.get_deployment(deployment_id)
+        if not record:
+            raise ValueError("Deploy não encontrado")
+        if record.status != DeploymentStatus.FAILED:
+            raise DeploymentNotFailedError("Só um deploy que falhou pode virar tarefa de correção")
+        project = await self.tracker.get_project(record.project_id)
+        if not project:
+            raise ValueError(f"Projeto {record.project_id} não encontrado")
+
+        sessions = await self.tracker.list_sessions(project.id)
+        open_sessions = [s for s in sessions if s.status != SessionStatus.COMPLETED]
+        session = open_sessions[-1] if open_sessions else await self.tracker.create_session(project.id)
+
+        marker = _fix_marker(record.id)
+        for existing in await self.tracker.list_tasks(project.id, session_id=session.id):
+            if existing.status != TaskStatus.COMPLETED and marker in existing.description:
+                return existing
+
+        lang = project_language(project)
+        env = tr("teste" if record.environment == EnvironmentType.TEST else "produção", lang)
+        tail = (record.logs or "")[-FIX_LOG_TAIL_CHARS:].replace("```", "'''")
+        description = "\n\n".join([
+            tr(
+                "O deploy de {env} da branch {branch} falhou no Coolify. Descubra a causa no "
+                "log abaixo e corrija o código para que a imagem seja construída e a "
+                "aplicação suba.",
+                lang, env=env, branch=record.branch,
+            ),
+            tr(
+                "Não há Docker no seu ambiente: reproduza localmente os passos do Dockerfile "
+                "que falharam (por exemplo, a instalação de dependências e o build) e só "
+                "conclua quando eles passarem.",
+                lang,
+            ),
+            tr("Fim do log do deploy:", lang) + f"\n\n```\n{tail}\n```",
+            marker,
+        ])
+        return await self.tracker.create_task(
+            project_id=project.id,
+            title=tr("Corrigir o deploy de {env}", lang, env=env),
+            description=description,
+            acceptance_criteria=[
+                tr("Os passos do Dockerfile que falharam no deploy executam sem erro localmente.", lang),
+                tr("Os testes existentes continuam passando.", lang),
+            ],
+            session_id=session.id,
+        )
 
     async def list_project_deployments(self, project_id: str, limit: int = 20) -> list[DeploymentRecord]:
         return await self.tracker.list_project_deployments(project_id, limit=limit)

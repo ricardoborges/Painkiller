@@ -14,7 +14,14 @@ from pydantic import BaseModel
 from painkiller.api.routes.auth import ensure_gitea_account
 from painkiller.api.security import current_user, require_project, visible_project
 from painkiller.core.attachment_reader import extract_attachment_text
-from painkiller.core.domain.models import EFFORT_HARNESSES, EFFORT_LEVELS, User, harness_effort, key_provider
+from painkiller.core.domain.models import (
+    EFFORT_HARNESSES,
+    EFFORT_LEVELS,
+    SessionStatus,
+    User,
+    harness_effort,
+    key_provider,
+)
 from painkiller.core.i18n import SUPPORTED_LOCALES, get_locale, translate
 from painkiller.core.naming import compose_project_identity
 from painkiller.core.scaffold import ScaffoldError, extract_scaffold
@@ -65,7 +72,7 @@ PROVIDER_LABELS = {"gemini": "Google Gemini", "deepseek": "DeepSeek"}
 
 class CreateTaskRequest(BaseModel):
     title: str
-    description: str
+    description: str = ""
     target_files: Optional[list[str]] = None
     acceptance_criteria: Optional[list[str]] = None
     dependencies: Optional[list[str]] = None
@@ -356,16 +363,50 @@ async def start_project_interrogation(project_id: str, request: Request):
 
 @router.post("/{project_id}/tasks", dependencies=[Depends(require_project)])
 async def create_task(project_id: str, req: CreateTaskRequest, request: Request):
+    """Add a task to the backlog by hand, before or after the others have run."""
     tracker = request.app.state.tracker
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Informe o título da tarefa.")
+
+    session = None
+    if req.session_id:
+        session = await tracker.get_session(req.session_id)
+        if not session or session.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Sessão não encontrada")
+        # Sessão encerrada já teve as branches apagadas e não tem mais "Testar".
+        if session.status == SessionStatus.COMPLETED:
+            raise HTTPException(
+                status_code=409,
+                detail="Sessão encerrada: abra uma nova sessão para adicionar tarefas.",
+            )
+
+    # Dependência de outro projeto (ou inexistente) travaria a tarefa para sempre.
+    dependencies = list(dict.fromkeys(d for d in (req.dependencies or []) if d))
+    if dependencies:
+        known = {t.id for t in await tracker.list_tasks(project_id=project_id)}
+        for dep in dependencies:
+            if dep not in known:
+                raise HTTPException(status_code=400, detail=f"Dependência inválida: {dep}")
+
+    def _clean(items: Optional[list[str]]) -> list[str]:
+        return [i.strip() for i in (items or []) if i and i.strip()]
+
     task = await tracker.create_task(
         project_id=project_id,
-        title=req.title,
-        description=req.description,
-        target_files=req.target_files,
-        acceptance_criteria=req.acceptance_criteria,
-        dependencies=req.dependencies,
+        title=title,
+        description=req.description.strip(),
+        target_files=_clean(req.target_files),
+        acceptance_criteria=_clean(req.acceptance_criteria),
+        dependencies=dependencies,
         session_id=req.session_id,
     )
+
+    # Uma tarefa manual numa sessão ainda sem backlog dá a análise por cumprida.
+    if session and session.status == SessionStatus.PLANNING:
+        session.status = SessionStatus.BACKLOG
+        session.updated_at = datetime.now(timezone.utc)
+        await tracker.update_session(session)
     return task
 
 

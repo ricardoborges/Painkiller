@@ -18,6 +18,8 @@ const POLL_MS = 3000;
 const GIVE_UP_MS = 30 * 60 * 1000;
 /** Erros de rede seguidos antes de desistir. */
 const MAX_ERRORS = 5;
+/** Releituras do log depois do status final (ver `settle`). */
+const SETTLE_READS = 3;
 
 const FINAL: DeploymentStatus[] = ['HEALTHY', 'FAILED', 'STOPPED'];
 
@@ -132,6 +134,16 @@ class DeployTracker {
     }
   }
 
+  /** Relê um deploy já acompanhado (o log pode ter crescido desde o fim). */
+  async refresh(deploymentId: string) {
+    if (!this.records[deploymentId] || this.polling.has(deploymentId)) return;
+    try {
+      this.records[deploymentId] = await api.getDeployment(deploymentId);
+    } catch {
+      // Fica com o que já tinha.
+    }
+  }
+
   reset() {
     this.records = {};
     this.polling.clear();
@@ -170,6 +182,7 @@ class DeployTracker {
           this.records[id] = fresh;
           if (!isDeployActive(fresh)) {
             this.finish(fresh);
+            void this.settle(id);
             return;
           }
         } catch {
@@ -187,6 +200,22 @@ class DeployTracker {
     } finally {
       this.polling.delete(id);
       if (!this.polling.size) this.stopClock();
+    }
+  }
+
+  /**
+   * O Coolify dá o deploy por encerrado antes de gravar as últimas linhas do
+   * log (justamente o erro do build): relê algumas vezes, sem novo aviso.
+   */
+  private async settle(id: string) {
+    for (let i = 0; i < SETTLE_READS; i++) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      if (!this.records[id]) return;
+      try {
+        this.records[id] = await api.getDeployment(id);
+      } catch {
+        return;
+      }
     }
   }
 

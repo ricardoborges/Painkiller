@@ -4,14 +4,15 @@
   import { page } from '$app/state';
   import Icon from '$lib/components/Icon.svelte';
   import SessionPicker from '$lib/components/SessionPicker.svelte';
+  import NewSessionDialog from '$lib/components/NewSessionDialog.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
   import type { HarnessType } from '$lib/types';
 
   const HARNESS_LABELS: Record<HarnessType, string> = {
-    agy_superpowers: 'agy + superpowers',
-    deepseek_superpowers: 'deepseek + superpowers',
-    maki_superpowers: 'maki + superpowers',
-    unreal_superpowers: 'unreal agent + superpowers'
+    agy_superpowers: 'agy',
+    deepseek_superpowers: 'deepseek',
+    maki_superpowers: 'maki',
+    unreal_superpowers: 'unreal agent'
   };
 
   let { data, children } = $props();
@@ -59,9 +60,13 @@
     { href: `${base}/costs`, label: t('projectNav.costs'), exact: false }
   ]);
 
-  /* Uma sessão nova começa pelo primeiro passo do ciclo, o Chat. */
-  async function startNextSession() {
-    if (await sessionStore.createNextSession()) await goto(`${base}/initial-analysis`);
+  /* Uma sessão nova começa pela escolha guiada/direta (aqui, para valer em
+     qualquer página do projeto) e depois pelo primeiro passo do ciclo, o Chat. */
+  async function createSession(guided: boolean) {
+    if (await sessionStore.createNextSession(undefined, guided)) {
+      sessionStore.choosingNext = false;
+      await goto(`${base}/initial-analysis`);
+    }
   }
 
   /* Painel, Contexto e Custos são visões do projeto, não de uma sessão: nelas o
@@ -122,7 +127,7 @@
             active={sessionStore.activeSession}
             creating={sessionStore.creating}
             onselect={(s) => sessionStore.selectSession(s.id)}
-            oncreate={startNextSession}
+            oncreate={() => sessionStore.requestNextSession()}
           />
           <span class="rule" aria-hidden="true"></span>
         {/if}
@@ -161,6 +166,12 @@
     {@render children()}
   </div>
 </div>
+
+<NewSessionDialog
+  bind:open={sessionStore.choosingNext}
+  creating={sessionStore.creating}
+  oncreate={createSession}
+/>
 
 <style>
   .project-main {

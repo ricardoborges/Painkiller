@@ -188,6 +188,9 @@ class DockerSandboxRunner(SandboxPort):
                 task_instructions,
             ]
 
+        if not task.use_superpowers:
+            command = self._without_superpowers(command, env_vars)
+
         # Uma pergunta já respondida deixa o clarification.json no workspace.
         # A existência do arquivo conta como pausa (o `painkiller ask` sai com
         # 42 dentro da ferramenta do agente, não do contêiner), então um arquivo
@@ -264,6 +267,19 @@ class DockerSandboxRunner(SandboxPort):
             )
         finally:
             self._cleanup_container(task.id)
+
+    @staticmethod
+    def _without_superpowers(command: list[str], env_vars: dict[str, str]) -> list[str]:
+        """Run the agent with the superpowers skills out of its catalog.
+
+        O prompt já proíbe as skills, mas um catálogo visível tenta o agente.
+        O contêiner é descartável, então tirar o link do dsh/maki
+        (~/.agents/skills) não toca a imagem; a ponte do unreal lê a variável
+        e não publica as skills no workspace. O plugin do agy fica: removê-lo
+        por fora do `agy plugin` pode quebrar a inicialização.
+        """
+        env_vars["PAINKILLER_SUPERPOWERS"] = "0"
+        return ["sh", "-c", 'rm -f "$HOME/.agents/skills"; exec "$@"', "sh", *command]
 
     def _worker_image(self, harness_type: str) -> str:
         if harness_type == "maki_superpowers":

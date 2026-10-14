@@ -281,69 +281,6 @@ async def test_stop_during_dispatch_reports_interruption_not_exit_code(mock_trac
 
 
 @pytest.mark.asyncio
-async def test_abbreviate_tests_restarts_live_run_without_tests(mock_tracker, mock_sandbox, mock_git):
-    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
-    task = Task(id="t1", project_id="p1", title="T", description="D")
-    mock_tracker.get_task.return_value = task
-    mock_tracker.get_project.return_value = project
-
-    async def set_skip(task_id, skip):
-        task.skip_tests = skip
-        return task
-
-    mock_tracker.set_task_skip_tests.side_effect = set_skip
-
-    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
-    runs = []
-
-    async def run(*args, **kwargs):
-        runs.append(args[2])
-        if len(runs) == 1:
-            assert await orchestrator.abbreviate_tests("t1") is True
-            return ExecutionResult(exit_code=137, logs="killed")
-        return ExecutionResult(exit_code=0, logs="ok")
-
-    mock_sandbox.run_task.side_effect = run
-    await orchestrator.dispatch_task("t1")
-
-    assert len(runs) == 2
-    assert "PRIORIDADE MÁXIMA" not in runs[0]
-    # No topo: a spec e o plano que o agente lê depois não podem se sobrepor.
-    assert runs[1].index("PRIORIDADE MÁXIMA") < runs[1].index("## Descrição")
-    assert "prevalece sobre" in runs[1]
-    assert "Execução anterior interrompida" in runs[1]
-    mock_sandbox.stop_task.assert_awaited_once_with("t1")
-    mock_sandbox.run_tests.assert_not_called()
-    statuses = [c.args[1] for c in mock_tracker.update_task_status.call_args_list]
-    assert TaskStatus.FAILED not in statuses  # o reinício não registra falha
-    assert statuses[-1] == TaskStatus.COMPLETED
-
-
-@pytest.mark.asyncio
-async def test_abbreviate_tests_on_orphaned_task_frees_it_for_redispatch(mock_tracker, mock_sandbox, mock_git):
-    task = Task(id="t1", project_id="p1", title="T", description="D", status=TaskStatus.RUNNING)
-    mock_tracker.get_task.return_value = task
-
-    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
-    assert await orchestrator.abbreviate_tests("t1") is False
-
-    mock_tracker.set_task_skip_tests.assert_awaited_once_with("t1", True)
-    assert mock_tracker.update_task_status.call_args.args == ("t1", TaskStatus.FAILED)
-
-
-@pytest.mark.asyncio
-async def test_abbreviate_tests_refuses_completed_task(mock_tracker, mock_sandbox, mock_git):
-    mock_tracker.get_task.return_value = Task(
-        id="t1", project_id="p1", title="T", description="D", status=TaskStatus.COMPLETED
-    )
-    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
-
-    with pytest.raises(RuntimeError):
-        await orchestrator.abbreviate_tests("t1")
-    mock_tracker.set_task_skip_tests.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_answered_clarifications_reach_the_agent_prompt(mock_tracker, mock_sandbox, mock_git):
     """Sem isto a reexecução após a resposta refaz a mesma pergunta (exit 42 em loop)."""
     project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
@@ -398,3 +335,35 @@ async def test_tracker_without_history_does_not_block_dispatch(mock_tracker, moc
     await orchestrator.dispatch_task("t1")
 
     mock_sandbox.run_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_prompt_without_superpowers_goes_straight_to_the_point(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    task = Task(id="t1", project_id="p1", title="Fix typo", description="Desc", use_superpowers=False)
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_tracker.list_clarifications.return_value = []
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    instructions = mock_sandbox.run_task.call_args.args[2]
+    assert "1. NÃO use as skills do Superpowers" in instructions
+    assert "Utilize as skills" not in instructions
+    assert "4. Faça commit" in instructions
+    # O protocolo de dúvidas (exit 42) não depende do superpowers.
+    assert "painkiller ask" in instructions
+
+
+def test_prompt_with_superpowers_keeps_the_skills(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    task = Task(id="t1", project_id="p1", title="Build", description="Desc")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    instructions = orchestrator._build_task_instructions(task, project)
+
+    assert "1. Utilize as skills e boas práticas do plugin Superpowers" in instructions
+    assert "NÃO use as skills" not in instructions
+    assert "3. Faça commit" in instructions

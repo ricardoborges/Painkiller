@@ -9,8 +9,10 @@ from painkiller.core.domain.models import (
     DeploymentRecord,
     DeploymentStatus,
     EnvironmentType,
+    IterationSession,
+    SessionStatus,
 )
-from painkiller.engine.deployment_service import DeploymentService
+from painkiller.engine.deployment_service import DeploymentNotFailedError, DeploymentService
 
 
 @pytest.mark.asyncio
@@ -231,3 +233,105 @@ async def test_deploy_pushes_branch_to_gitea_before_coolify():
     with pytest.raises(BranchPushError):
         await service.trigger_deploy(project_id="proj-1", environment=EnvironmentType.TEST, task_id="t1")
     deployment.deploy_environment.assert_not_called()
+
+
+def _failed_record(**kw) -> DeploymentRecord:
+    base = dict(
+        id="dep-9",
+        project_id="proj-1",
+        environment=EnvironmentType.PRODUCTION,
+        branch="main",
+        status=DeploymentStatus.FAILED,
+        logs="#24 ERROR: Files prefixed with + are reserved\n```oops```",
+    )
+    base.update(kw)
+    return DeploymentRecord(**base)
+
+
+def _fix_tracker(record: DeploymentRecord, sessions: list, tasks: list | None = None) -> AsyncMock:
+    tracker = AsyncMock()
+    tracker.get_deployment.return_value = record
+    tracker.get_project.return_value = Project(id="proj-1", name="App", repo_path="/tmp")
+    tracker.list_sessions.return_value = sessions
+    tracker.list_tasks.return_value = tasks or []
+    tracker.create_session.return_value = IterationSession(
+        id="sess-new", project_id="proj-1", number=len(sessions) + 1, title="S"
+    )
+    tracker.create_task.side_effect = lambda **kw: Task(id="task-fix", **kw)
+    return tracker
+
+
+@pytest.mark.asyncio
+async def test_fix_task_opens_a_session_when_all_are_closed():
+    closed = IterationSession(id="sess-1", project_id="proj-1", number=1, title="S1",
+                              status=SessionStatus.COMPLETED)
+    tracker = _fix_tracker(_failed_record(), [closed])
+
+    task = await DeploymentService(tracker=tracker, deployment=AsyncMock()).create_fix_task("dep-9")
+
+    tracker.create_session.assert_awaited_once_with("proj-1")
+    assert task.session_id == "sess-new"
+    assert "Files prefixed with + are reserved" in task.description
+    # O log não pode fechar o bloco de código da descrição.
+    assert "```oops```" not in task.description
+    assert "deploy-fix: dep-9" in task.description
+
+
+@pytest.mark.asyncio
+async def test_fix_task_reuses_open_session_and_pending_task():
+    open_session = IterationSession(id="sess-2", project_id="proj-1", number=2, title="S2",
+                                    status=SessionStatus.IN_SPRINT)
+    existing = Task(id="task-old", project_id="proj-1", title="Fix", session_id="sess-2",
+                    description="...\n\ndeploy-fix: dep-9", status=TaskStatus.FAILED)
+    tracker = _fix_tracker(_failed_record(), [open_session], [existing])
+
+    task = await DeploymentService(tracker=tracker, deployment=AsyncMock()).create_fix_task("dep-9")
+
+    assert task.id == "task-old"
+    tracker.create_session.assert_not_awaited()
+    tracker.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fix_task_refuses_a_deploy_that_did_not_fail():
+    tracker = _fix_tracker(_failed_record(status=DeploymentStatus.HEALTHY), [])
+    with pytest.raises(DeploymentNotFailedError):
+        await DeploymentService(tracker=tracker, deployment=AsyncMock()).create_fix_task("dep-9")
+
+
+@pytest.mark.asyncio
+async def test_get_deployment_persists_changes_made_in_place():
+    """O adapter do Coolify altera o registro recebido; mesmo assim o banco é atualizado."""
+    record = _failed_record(status=DeploymentStatus.BUILDING, logs="start")
+    tracker = AsyncMock()
+    tracker.get_deployment.return_value = record
+    tracker.save_deployment.side_effect = lambda rec: rec
+
+    async def mutate(rec):
+        rec.status = DeploymentStatus.FAILED
+        rec.logs = "start\nERROR: build"
+        return rec
+
+    deployment = AsyncMock()
+    deployment.get_deployment_status.side_effect = mutate
+
+    result = await DeploymentService(tracker=tracker, deployment=deployment).get_deployment("dep-9")
+
+    tracker.save_deployment.assert_awaited_once()
+    assert result.logs.endswith("ERROR: build")
+
+
+@pytest.mark.asyncio
+async def test_get_deployment_rereads_logs_right_after_it_ended():
+    """O Coolify grava o fim do log depois do status final: relê por um tempo."""
+    from datetime import datetime, timedelta, timezone
+
+    fresh = _failed_record(logs="partial")
+    old = _failed_record(logs="partial", updated_at=datetime.now(timezone.utc) - timedelta(hours=1))
+    for record, expected_calls in ((fresh, 1), (old, 0)):
+        tracker = AsyncMock()
+        tracker.get_deployment.return_value = record
+        deployment = AsyncMock()
+        deployment.get_deployment_status.side_effect = lambda rec: rec
+        await DeploymentService(tracker=tracker, deployment=deployment).get_deployment("dep-9")
+        assert deployment.get_deployment_status.await_count == expected_calls

@@ -19,6 +19,8 @@ router = APIRouter(
 
 class CreateSessionRequest(BaseModel):
     title: Optional[str] = None
+    #: False abre uma sessão direta (sem superpowers). Ignorado na primeira.
+    guided: bool = True
 
 
 class UpdateSessionRequest(BaseModel):
@@ -68,7 +70,8 @@ async def create_session(project_id: str, request: Request, req: Optional[Create
             await orchestrator.finalize_session(previous.id)
 
     title = req.title if req else None
-    session = await tracker.create_session(project_id=project_id, title=title)
+    guided = req.guided if req else True
+    session = await tracker.create_session(project_id=project_id, title=title, guided=guided)
     return session
 
 

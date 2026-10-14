@@ -275,6 +275,7 @@ class AnalysisOrchestrator:
             pass
 
         session_number = 1
+        guided = True
         previous_sessions: list[IterationSession] = []
         previous_completed_tasks: list[Task] = []
         if iteration_session_id:
@@ -283,6 +284,7 @@ class AnalysisOrchestrator:
                 if iter_sess:
                     num = getattr(iter_sess, "number", 1)
                     session_number = num if isinstance(num, int) else 1
+                    guided = getattr(iter_sess, "guided", True) is not False
                     iter_sess.analysis_session_id = session.id
                     await self.tracker.update_session(iter_sess)
                     all_sessions = await self.tracker.list_sessions(project.id)
@@ -306,6 +308,7 @@ class AnalysisOrchestrator:
                     iteration_session_id = getattr(iter_sess, "id", None)
                     num = getattr(iter_sess, "number", 1)
                     session_number = num if isinstance(num, int) else 1
+                    guided = getattr(iter_sess, "guided", True) is not False
                     if hasattr(iter_sess, "analysis_session_id"):
                         iter_sess.analysis_session_id = session.id
                         await self.tracker.update_session(iter_sess)
@@ -321,6 +324,7 @@ class AnalysisOrchestrator:
             session_number=session_number,
             previous_sessions=previous_sessions,
             previous_completed_tasks=previous_completed_tasks,
+            guided=guided,
         )
         try:
             session.container_name = await self.agent.start(
@@ -941,12 +945,15 @@ def build_analysis_prompt(
     session_number: int = 1,
     previous_sessions: Optional[list[IterationSession]] = None,
     previous_completed_tasks: Optional[list[Task]] = None,
+    guided: bool = True,
 ) -> str:
     """Compose the kickoff prompt handed to the containerized agent, in the project's language.
 
     Session 1 is a guided elicitation (superpowers:brainstorming from the first
     message). From session 2 on the agent starts in chat mode: it greets and
-    follows the analyst, reaching for superpowers skills only when they fit.
+    follows the analyst, reaching for superpowers skills only when they fit —
+    or, in a direct session (``guided=False``), never: no skills, no spec, the
+    agreed changes go straight into the backlog.
     """
     english = getattr(project, "language", DEFAULT_LOCALE) == "en-US"
 
@@ -954,6 +961,26 @@ def build_analysis_prompt(
         return en if english else pt
 
     chat_mode = isinstance(session_number, int) and session_number > 1
+    # A primeira sessão monta a base do projeto: é sempre guiada.
+    direct = chat_mode and not guided
+    if direct:
+        skills_rule = L(
+            "- Esta é uma sessão direta: NÃO use as skills do superpowers (nem brainstorming, "
+            "nem planos) e não escreva especificação. Entenda o pedido com o mínimo de "
+            "perguntas necessárias e vá direto ao ponto.",
+            "- This is a direct session: do NOT use the superpowers skills (no brainstorming, "
+            "no plans) and do not write a specification. Understand the request with as few "
+            "questions as needed and go straight to the point.",
+        )
+    else:
+        skills_rule = L(
+            "- Use as skills do superpowers quando fizerem sentido (por exemplo, "
+            "superpowers:brainstorming quando ele quiser especificar algo novo). "
+            "Ao conduzir as perguntas de uma skill, faça UMA pergunta por vez.",
+            "- Use the superpowers skills when they fit (for example, "
+            "superpowers:brainstorming when they want to specify something new). "
+            "When running a skill's questions, ask ONE question at a time.",
+        )
     if chat_mode:
         parts = [
             L("Você é o agente do Painkiller, em modo conversa com o analista.",
@@ -967,12 +994,7 @@ def build_analysis_prompt(
             L("- Escreva sempre em português do Brasil.", "- Always write in US English."),
             L("- Responda diretamente ao que o analista pedir, de forma objetiva.",
               "- Answer exactly what the analyst asks, objectively."),
-            L("- Use as skills do superpowers quando fizerem sentido (por exemplo, "
-              "superpowers:brainstorming quando ele quiser especificar algo novo). "
-              "Ao conduzir as perguntas de uma skill, faça UMA pergunta por vez.",
-              "- Use the superpowers skills when they fit (for example, "
-              "superpowers:brainstorming when they want to specify something new). "
-              "When running a skill's questions, ask ONE question at a time."),
+            skills_rule,
             L("- Não escreva código de produção nem implemente nada nesta sessão: "
               "o que for construído vira tarefa no backlog.",
               "- Do not write production code or implement anything in this session: "
@@ -1036,16 +1058,31 @@ def build_analysis_prompt(
           "Do not include an \"Other\" option: the platform always adds one so the "
           "analyst can answer freely."),
         "",
-        L("Quando o analista aprovar uma especificação, faça as seguintes coisas:",
-          "When the analyst approves a specification, do the following:"),
-        L("1. Grave a especificação em docs/superpowers/specs/AAAA-MM-DD-<tema>-design.md.",
-          "1. Write the specification to docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md."),
-        L(f"2. Grave o backlog decomposto em {backlog_path} (arquivo exclusivo desta sessão; "
-          "não leia nem reaproveite backlogs de outras sessões), exatamente neste formato:",
-          f"2. Write the decomposed backlog to {backlog_path} (a file owned by this session; "
-          "do not read or reuse backlogs from other sessions), exactly in this format:"),
-        L('   {"spec_path": "<caminho do spec>", "tasks": [',
-          '   {"spec_path": "<spec path>", "tasks": ['),
+    ]
+    if direct:
+        parts += [
+            L("Quando o analista aprovar o que deve ser feito, faça as seguintes coisas:",
+              "When the analyst approves what must be done, do the following:"),
+            L(f"1. Grave as tarefas em {backlog_path} (arquivo exclusivo desta sessão; "
+              "não leia nem reaproveite backlogs de outras sessões), exatamente neste formato:",
+              f"1. Write the tasks to {backlog_path} (a file owned by this session; "
+              "do not read or reuse backlogs from other sessions), exactly in this format:"),
+            '   {"spec_path": null, "tasks": [',
+        ]
+    else:
+        parts += [
+            L("Quando o analista aprovar uma especificação, faça as seguintes coisas:",
+              "When the analyst approves a specification, do the following:"),
+            L("1. Grave a especificação em docs/superpowers/specs/AAAA-MM-DD-<tema>-design.md.",
+              "1. Write the specification to docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md."),
+            L(f"2. Grave o backlog decomposto em {backlog_path} (arquivo exclusivo desta sessão; "
+              "não leia nem reaproveite backlogs de outras sessões), exatamente neste formato:",
+              f"2. Write the decomposed backlog to {backlog_path} (a file owned by this session; "
+              "do not read or reuse backlogs from other sessions), exactly in this format:"),
+            L('   {"spec_path": "<caminho do spec>", "tasks": [',
+              '   {"spec_path": "<spec path>", "tasks": ['),
+        ]
+    parts += [
         '     {"title": "...", "description": "...", "target_files": ["..."],',
         L('      "acceptance_criteria": ["..."], "dependencies": ["<title de outra task>"]}',
           '      "acceptance_criteria": ["..."], "dependencies": ["<title of another task>"]}'),
@@ -1064,10 +1101,11 @@ def build_analysis_prompt(
           "the first task include the project skeleton ready to run in production (a Dockerfile "
           "at the root or a project Nixpacks can detect, a single port, configuration through "
           "environment variables with safe defaults)."),
-        L("3. Na mensagem final confirmando a gravação do backlog, liste resumidamente as tarefas "
-          "e termine OBRIGATORIAMENTE com o bloco de alternativas para o analista seguir:",
-          "3. In the final message confirming the backlog was written, briefly list the tasks "
-          "and you MUST end with the alternatives block for the analyst to proceed:"),
+        L(f"{2 if direct else 3}. Na mensagem final confirmando a gravação do backlog, liste "
+          "resumidamente as tarefas e termine OBRIGATORIAMENTE com o bloco de alternativas para "
+          "o analista seguir:",
+          f"{2 if direct else 3}. In the final message confirming the backlog was written, briefly "
+          "list the tasks and you MUST end with the alternatives block for the analyst to proceed:"),
         f"```{CHOICES_FENCE}",
         '{"multiple": false, "options": [',
         L('  {"label": "Seguir para backlog", "description": "Importar as tarefas decompostas e abrir o painel de backlog"}',

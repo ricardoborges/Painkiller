@@ -107,3 +107,65 @@ async def test_sessions_crud_and_auto_creation(app_client: AsyncClient):
     resp = await app_client.get(f"/api/projects/{proj_id}/sessions/{s2_id}/tasks")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+async def _project_with_session(client: AsyncClient) -> tuple[str, str]:
+    resp = await client.post(
+        "/api/projects",
+        json={
+            "name": "Manual",
+            "repo_path": "/tmp/test-manual",
+            "description": "App",
+            "purpose": "Teste",
+            "solution_description": "Sol",
+            "api_key": "k",
+        },
+    )
+    proj_id = resp.json()["id"]
+    sessions = (await client.get(f"/api/projects/{proj_id}/sessions")).json()
+    return proj_id, sessions[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_manual_task_moves_planning_session_to_backlog(app_client: AsyncClient):
+    proj_id, s1_id = await _project_with_session(app_client)
+
+    resp = await app_client.post(
+        f"/api/projects/{proj_id}/tasks",
+        json={
+            "title": "  Página de contato  ",
+            "session_id": s1_id,
+            "acceptance_criteria": ["Formulário envia e-mail", "  ", ""],
+        },
+    )
+    assert resp.status_code == 200
+    task = resp.json()
+    assert task["title"] == "Página de contato"
+    assert task["description"] == ""
+    assert task["acceptance_criteria"] == ["Formulário envia e-mail"]
+    assert task["status"] == "BACKLOG"
+
+    session = (await app_client.get(f"/api/projects/{proj_id}/sessions/{s1_id}")).json()
+    assert session["status"] == "BACKLOG"
+
+
+@pytest.mark.asyncio
+async def test_manual_task_validation(app_client: AsyncClient):
+    proj_id, s1_id = await _project_with_session(app_client)
+    url = f"/api/projects/{proj_id}/tasks"
+
+    assert (await app_client.post(url, json={"title": "   ", "session_id": s1_id})).status_code == 400
+    assert (await app_client.post(url, json={"title": "X", "session_id": "nope"})).status_code == 404
+
+    resp = await app_client.post(url, json={"title": "X", "session_id": s1_id, "dependencies": ["task-ghost"]})
+    assert resp.status_code == 400
+
+    first = (await app_client.post(url, json={"title": "A", "session_id": s1_id})).json()
+    resp = await app_client.post(url, json={"title": "B", "session_id": s1_id, "dependencies": [first["id"]]})
+    assert resp.status_code == 200
+    assert resp.json()["dependencies"] == [first["id"]]
+
+    # Sessão encerrada não recebe tarefas: as branches dela já foram apagadas.
+    await app_client.post(f"/api/projects/{proj_id}/sessions")
+    resp = await app_client.post(url, json={"title": "C", "session_id": s1_id})
+    assert resp.status_code == 409

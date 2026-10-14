@@ -56,14 +56,16 @@
       { id: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
       { id: 'gemini-2.5-pro', label: 'gemini-2.5-pro' }
     ],
+    // `deepseek-flash` é o DeepSeek-V4.1-Flash; o catálogo do dsh não anuncia
+    // `deepseek-v4-flash`, então ele cairia no padrão do próprio dsh.
     deepseek_superpowers: [
-      { id: 'deepseek-v4-pro', label: `deepseek-v4-pro (${t('form.recommended')})` },
-      { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash' }
+      { id: 'deepseek-flash', label: `deepseek-flash · V4.1-Flash (${t('form.default')})` },
+      { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro' }
     ],
     // A Responses API da DeepSeek recebe o id sem o prefixo `provider/` do maki.
     unreal_superpowers: [
-      { id: 'deepseek-v4-pro', label: `deepseek-v4-pro (${t('form.defaultRecommended')})` },
-      { id: 'deepseek-flash', label: 'deepseek-flash' }
+      { id: 'deepseek-flash', label: `deepseek-flash · V4.1-Flash (${t('form.default')})` },
+      { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro' }
     ]
   });
 
@@ -392,7 +394,7 @@
           bind:group={harness}
         />
         <div class="radio-info">
-          <span class="radio-title">Antigravity CLI (agy) + Superpowers</span>
+          <span class="radio-title">Antigravity CLI (agy)</span>
           <span class="radio-desc">{t('form.harness.agy')}</span>
         </div>
       </label>
@@ -404,7 +406,7 @@
           bind:group={harness}
         />
         <div class="radio-info">
-          <span class="radio-title">DeepSeek Harness (dsh) + Superpowers</span>
+          <span class="radio-title">DeepSeek Harness (dsh)</span>
           <span class="radio-desc">{t('form.harness.dsh')}</span>
         </div>
       </label>
@@ -416,7 +418,7 @@
           bind:group={harness}
         />
         <div class="radio-info">
-          <span class="radio-title">Maki + Superpowers</span>
+          <span class="radio-title">Maki</span>
           <span class="radio-desc">{t('form.harness.maki')}</span>
         </div>
       </label>
@@ -428,7 +430,7 @@
           bind:group={harness}
         />
         <div class="radio-info">
-          <span class="radio-title">Unreal Agent + Superpowers</span>
+          <span class="radio-title">Unreal Agent</span>
           <span class="radio-desc">{t('form.harness.unreal')}</span>
         </div>
       </label>
@@ -466,7 +468,7 @@
         <input
           type="text"
           class="input mono custom-model-input"
-          placeholder={harness === 'maki_superpowers' ? 'deepseek/deepseek-v4-pro' : harness === 'unreal_superpowers' ? 'deepseek-v4-pro' : t('form.modelNamePlaceholder')}
+          placeholder={harness === 'maki_superpowers' ? 'deepseek/deepseek-v4-pro' : harness === 'unreal_superpowers' ? 'deepseek-flash' : t('form.modelNamePlaceholder')}
           bind:value={customModelText}
         />
       {/if}

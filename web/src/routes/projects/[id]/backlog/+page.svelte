@@ -19,7 +19,9 @@
   import TaskChanges from '$lib/components/TaskChanges.svelte';
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
   import Modal from '$lib/components/Modal.svelte';
+  import AddTaskDialog from '$lib/components/AddTaskDialog.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
+  import DeployTerminal from '$lib/components/DeployTerminal.svelte';
   import { deploys, isDeployActive, deployStage, lastLogLine } from '$lib/stores/deploys.svelte';
   import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
   import { onDestroy, tick } from 'svelte';
@@ -44,13 +46,14 @@
   let syncingIssues = $state(false);
   let finalizing = $state(false);
   let issuesNote = $state<string | null>(null);
+  let addTaskOpen = $state(false);
 
   // Execução individual
   let dispatching = $state<string | null>(null);
   let dispatchError = $state<{ id: string; message: string } | null>(null);
   let merging = $state<string | null>(null);
   let stoppingTaskId = $state<string | null>(null);
-  let abbreviatingTaskId = $state<string | null>(null);
+  let togglingSuperpowers = $state(false);
 
   // Fila sequencial (Executar Todas)
   let isQueueRunning = $state(false);
@@ -61,6 +64,7 @@
   let deployingEnv = $state<'test' | 'production' | null>(null);
   let deployingTaskId = $state<string | null>(null);
   let deploymentModalOpen = $state(false);
+  let fixingDeploy = $state(false);
   // O registro vive no rastreador (que consulta o Coolify até terminar); aqui
   // só se guarda qual deploy o modal mostra.
   let shownDeploymentId = $state<string | null>(null);
@@ -69,7 +73,6 @@
   );
   const runningDeploy = $derived(deploys.active(data.project.id));
   const productionDeploy = $derived(deploys.active(data.project.id, 'production'));
-  let logBox = $state<HTMLPreElement | null>(null);
 
   const justCreated = $derived(Number(page.url.searchParams.get('new') ?? 0));
   const byId = $derived(new Map(tasks.map((t) => [t.id, t])));
@@ -305,10 +308,20 @@
     }
   }
 
-  async function startNextSession() {
-    if (await sessionStore.createNextSession()) {
-      await goto(`/projects/${data.project.id}/initial-analysis`);
+  // O layout do projeto pergunta guiada/direta, cria e leva ao Chat.
+  function startNextSession() {
+    sessionStore.requestNextSession();
+  }
+
+  /* Tarefa escrita à mão: entra no fim da fila. Se a sessão ainda estava em
+     PLANNING o backend a passou para BACKLOG, então o passo da análise muda. */
+  async function onTaskCreated(task: Task) {
+    queueMessage = null;
+    if (activeSession?.status === 'PLANNING') {
+      await sessionStore.loadSessions(activeSession.id);
     }
+    await load();
+    await reveal(task.id);
   }
 
   async function migratePendingTasks() {
@@ -343,20 +356,38 @@
     }
   }
 
+  /**
+   * Deploy falhou: vira uma tarefa (na sessão aberta, ou numa nova se todas
+   * estão encerradas) com o log, e o agente começa já. O card fica à vista.
+   */
+  async function fixWithAgent(record: DeploymentRecord) {
+    fixingDeploy = true;
+    try {
+      const task = await api.createDeployFixTask(record.id);
+      deploymentModalOpen = false;
+      await sessionStore.loadSessions(task.session_id ?? undefined);
+      await load();
+      const current = byId.get(task.id) ?? task;
+      if (current.status === 'BACKLOG' || current.status === 'READY' || current.status === 'FAILED') {
+        void dispatch(current);
+      }
+      await reveal(task.id);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : t('backlog.fixWithAgentFailed'));
+    } finally {
+      fixingDeploy = false;
+    }
+  }
+
   function showDeployment(id: string) {
     shownDeploymentId = id;
     deploymentModalOpen = true;
+    void deploys.refresh(id);
   }
 
   // Deploy encerrado: as URLs e os pontos de status da barra de ambientes mudam.
   $effect(() => {
     if (deploys.settled) loadEnvStatus();
-  });
-
-  // O log acompanha o fim enquanto chega, como um terminal.
-  $effect(() => {
-    void currentDeployment?.logs;
-    if (logBox && deploymentModalOpen) logBox.scrollTop = logBox.scrollHeight;
   });
 
   async function deployTest(taskId: string) {
@@ -480,26 +511,34 @@
     }
   }
 
-  async function abbreviateTests(task: Task) {
-    if (abbreviatingTaskId === task.id) return;
-    const ok = confirm(t('backlog.confirmAbbreviate'));
-    if (!ok) return;
-    abbreviatingTaskId = task.id;
+  /* Superpowers vale para a próxima execução: só tarefas que ainda vão rodar
+     podem mudar. O agente é one-shot, então mudar no meio não o alcançaria. */
+  function superpowersEditable(task: Task): boolean {
+    return (
+      dispatching !== task.id &&
+      task.status !== 'RUNNING' &&
+      task.status !== 'COMPLETED' &&
+      task.status !== 'IN_REVIEW'
+    );
+  }
+
+  const superpowersPending = $derived(tasks.filter(superpowersEditable));
+  const superpowersOn = $derived(superpowersPending.filter((t) => t.use_superpowers !== false).length);
+
+  async function setSuperpowers(targets: Task[], enabled: boolean) {
+    if (togglingSuperpowers) return;
+    togglingSuperpowers = true;
     try {
-      const res = await api.abbreviateTests(task.id);
-      replace({ ...task, skip_tests: true });
-      // Sem execução viva neste servidor (ex.: após um restart), a tarefa foi
-      // liberada e é despachada de novo daqui, já sem testes.
-      if (!res.restarting) {
-        await load();
-        const fresh = tasks.find((t) => t.id === task.id);
-        if (fresh && fresh.status !== 'RUNNING' && fresh.status !== 'COMPLETED') await dispatch(fresh);
+      for (const task of targets) {
+        if ((task.use_superpowers !== false) === enabled) continue;
+        replace(await api.setTaskSuperpowers(task.id, enabled));
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : t('backlog.abbreviateFailed');
-      dispatchError = { id: task.id, message: msg };
+      const msg = e instanceof Error ? e.message : t('backlog.superpowersFailed');
+      dispatchError = { id: targets[0]?.id ?? '', message: msg };
+      await load();
     } finally {
-      abbreviatingTaskId = null;
+      togglingSuperpowers = false;
     }
   }
 
@@ -647,6 +686,11 @@
       <a class="btn btn-solid" href="/projects/{data.project.id}/initial-analysis">
         <Icon name="play" size={11} /> {t('backlog.goToAnalysis')}
       </a>
+      {#if !sessionClosed}
+        <button type="button" class="btn btn-line" onclick={() => (addTaskOpen = true)}>
+          <Icon name="plus" size={11} /> {t('backlog.addTask')}
+        </button>
+      {/if}
     {/snippet}
   </Placeholder>
 {:else}
@@ -716,6 +760,18 @@
             {finalizing ? t('analysis.closing') : t('analysis.close')}
           </button>
         {:else}
+          {#if superpowersPending.length}
+            <label class="sp-toggle label" title={t('backlog.superpowersAllTitle')}>
+              <input
+                type="checkbox"
+                checked={superpowersOn === superpowersPending.length}
+                indeterminate={superpowersOn > 0 && superpowersOn < superpowersPending.length}
+                disabled={togglingSuperpowers || isQueueRunning || !!dispatching}
+                onchange={(e) => setSuperpowers(superpowersPending, e.currentTarget.checked)}
+              />
+              <span>{t('backlog.superpowers')}</span>
+            </label>
+          {/if}
           <button
             type="button"
             class="btn {isQueueRunning ? 'btn-line' : 'btn-solid'} btn-sm"
@@ -912,6 +968,16 @@
       {/each}
     </div>
     <div class="list-tools-actions">
+      {#if !sessionClosed}
+        <button
+          type="button"
+          class="btn btn-line btn-sm"
+          onclick={() => (addTaskOpen = true)}
+          title={t('backlog.addTaskTitle')}
+        >
+          <Icon name="plus" size={11} /> {t('backlog.addTask')}
+        </button>
+      {/if}
       <button type="button" class="btn-link label" onclick={() => setAll(true)}>{t('backlog.expandAll')}</button>
       <span class="sep" aria-hidden="true">·</span>
       <button type="button" class="btn-link label" onclick={() => setAll(false)}>{t('backlog.collapseAll')}</button>
@@ -1029,9 +1095,9 @@
                     {formatDuration(task.elapsed_seconds ?? 0)} · {t('backlog.inOut', { input: formatTokens(task.input_tokens ?? 0), output: formatTokens(task.output_tokens ?? 0) })}
                   </span>
                 {/if}
-                {#if task.skip_tests}
+                {#if task.use_superpowers === false}
                   <span class="sep" aria-hidden="true">·</span>
-                  <span class="skip-tests" title={t('backlog.skipTestsTitle')}>{t('backlog.skipTests')}</span>
+                  <span class="no-superpowers" title={t('backlog.noSuperpowersTitle')}>{t('backlog.noSuperpowers')}</span>
                 {/if}
               </div>
 
@@ -1174,17 +1240,6 @@
               <Icon name="square" size={10} />
               <span>{stoppingTaskId === task.id ? t('activity.stopping') : t('activity.stop')}</span>
             </button>
-            {#if !task.skip_tests}
-              <button
-                type="button"
-                class="btn btn-line btn-sm"
-                onclick={() => abbreviateTests(task)}
-                disabled={abbreviatingTaskId === task.id || stoppingTaskId === task.id}
-                title={t('backlog.abbreviateTitle')}
-              >
-                <span>{abbreviatingTaskId === task.id ? t('backlog.abbreviating') : t('backlog.abbreviate')}</span>
-              </button>
-            {/if}
           {:else}
             <button
               type="button"
@@ -1199,12 +1254,31 @@
                 <Icon name="play" size={11} /> {t('backlog.run')}
               {/if}
             </button>
+            {#if superpowersEditable(task)}
+              <label class="sp-toggle label" title={t('backlog.superpowersTitle')}>
+                <input
+                  type="checkbox"
+                  checked={task.use_superpowers !== false}
+                  disabled={togglingSuperpowers || isQueueRunning}
+                  onchange={(e) => setSuperpowers([task], e.currentTarget.checked)}
+                />
+                <span>{t('backlog.superpowers')}</span>
+              </label>
+            {/if}
           {/if}
         </div>
       </li>
     {/each}
   </ol>
 {/if}
+
+<AddTaskDialog
+  bind:open={addTaskOpen}
+  projectId={data.project.id}
+  sessionId={activeSession?.id}
+  {tasks}
+  oncreated={onTaskCreated}
+/>
 
 <!-- Modal de Deploy Coolify -->
 <Modal bind:open={deploymentModalOpen} title={t('backlog.deployModal')}>
@@ -1245,10 +1319,12 @@
         </div>
 
         {#if currentDeployment.logs}
-          <div class="deploy-logs">
-            <span class="label mono">{t('backlog.deployLogs')}</span>
-            <pre class="log-pre mono" bind:this={logBox}>{currentDeployment.logs}</pre>
-          </div>
+          <DeployTerminal
+            logs={currentDeployment.logs}
+            active={isDeployActive(currentDeployment)}
+            failed={currentDeployment.status === 'FAILED'}
+            branch={currentDeployment.branch}
+          />
         {/if}
       </div>
     {:else}
@@ -1257,7 +1333,21 @@
   {/snippet}
   {#snippet footer()}
     <div class="spread modal-foot">
-      <div></div>
+      {#if currentDeployment?.status === 'FAILED'}
+        <div class="fix-action">
+          <button
+            type="button"
+            class="btn btn-solid btn-sm"
+            disabled={fixingDeploy}
+            onclick={() => currentDeployment && fixWithAgent(currentDeployment)}
+          >
+            {fixingDeploy ? t('backlog.fixingWithAgent') : t('backlog.fixWithAgent')}
+          </button>
+          <span class="faint fix-hint">{t('backlog.fixWithAgentHint')}</span>
+        </div>
+      {:else}
+        <div></div>
+      {/if}
       <button type="button" class="btn btn-line btn-sm" onclick={() => (deploymentModalOpen = false)}>
         {t('common.close')}
       </button>
@@ -1567,6 +1657,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--s4);
+    min-width: 0;
   }
 
   .deploy-meta {
@@ -1650,6 +1741,17 @@
     }
   }
 
+  .fix-action {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-width: 0;
+  }
+
+  .fix-hint {
+    font-size: var(--t-micro);
+  }
+
   .deploy-url-line {
     display: flex;
     align-items: center;
@@ -1663,22 +1765,6 @@
     font-weight: 500;
   }
 
-  .deploy-logs {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s2);
-  }
-
-  .log-pre {
-    max-height: 20rem;
-    overflow: auto;
-    font-size: var(--t-micro);
-    background: var(--paper-sunk);
-    padding: var(--s3);
-    border: 1px solid var(--rule);
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
 
 
 
@@ -1718,6 +1804,10 @@
   .list-tools-actions {
     display: flex;
     align-items: center;
+  }
+
+  .list-tools-actions > .btn {
+    margin-right: var(--s4);
   }
 
   .btn-link {
@@ -2055,8 +2145,28 @@
     align-items: flex-end;
   }
 
+  .sp-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  /* Nada de azul do navegador: o acento é reservado ao exit 42. */
+  .sp-toggle input {
+    margin: 0;
+    accent-color: var(--ink);
+    cursor: pointer;
+  }
+
+  .sp-toggle:has(input:disabled) {
+    cursor: default;
+    color: var(--ink-3);
+  }
+
   /* Peso, não cor: o acento é reservado ao agente parado à espera do analista. */
-  .skip-tests {
+  .no-superpowers {
     font-weight: 600;
     color: var(--ink);
   }

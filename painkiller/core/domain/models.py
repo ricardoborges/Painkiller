@@ -57,9 +57,9 @@ class Task(BaseModel):
     #: Issue espelhada no Gitea (número no repositório do projeto e link web).
     issue_number: Optional[int] = None
     issue_url: Optional[str] = None
-    #: "Abreviar testes": o analista assume o teste manual; o agente não escreve
-    #: nem roda testes e o orquestrador não executa a suíte ao final.
-    skip_tests: bool = False
+    #: Desligado, o agente vai direto ao ponto: sem as skills do superpowers
+    #: (brainstorming, planos, TDD), para tarefas que o analista julga simples.
+    use_superpowers: bool = True
     #: Acumulado de todas as execuções da tarefa (pausas e novas tentativas
     #: somam): tempo de relógio do despacho e tokens que o agente reportou.
     elapsed_seconds: float = 0.0
@@ -149,12 +149,13 @@ DEEPSEEK_KEY_HARNESSES = frozenset({"deepseek_superpowers", "maki_superpowers", 
 
 
 #: Modelo de cada harness quando o projeto não escolheu outro (a primeira
-#: opção que o formulário de projeto oferece).
+#: opção que o formulário de projeto oferece). `deepseek-flash` é o id que a
+#: API da DeepSeek (e o catálogo do dsh) dá ao DeepSeek-V4.1-Flash.
 HARNESS_DEFAULT_MODELS = {
     "agy_superpowers": "gemini-3.8-flash",
-    "deepseek_superpowers": "deepseek-v4-pro",
+    "deepseek_superpowers": "deepseek-flash",
     "maki_superpowers": "deepseek/deepseek-v4-pro",
-    "unreal_superpowers": "deepseek-v4-pro",
+    "unreal_superpowers": "deepseek-flash",
 }
 
 #: Níveis de esforço de raciocínio que o projeto pode escolher.
@@ -396,6 +397,10 @@ class IterationSession(BaseModel):
     number: int
     title: str
     status: SessionStatus = SessionStatus.PLANNING
+    #: Guiada: a análise usa as skills do superpowers (spec, plano, TDD) e as
+    #: tarefas nascem com elas ligadas. Direta: o agente vai direto ao ponto.
+    #: Só a partir da segunda sessão se escolhe; a primeira é sempre guiada.
+    guided: bool = True
     analysis_session_id: Optional[str] = None
     spec_path: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

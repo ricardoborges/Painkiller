@@ -265,10 +265,11 @@ export const api = {
   listSessions: (projectId: string) =>
     request<IterationSession[]>(`/projects/${projectId}/sessions`),
 
-  createSession: (projectId: string, title?: string) =>
+  /** `guided: false` abre uma sessão direta (sem spec nem TDD). */
+  createSession: (projectId: string, title?: string, guided = true) =>
     request<IterationSession>(`/projects/${projectId}/sessions`, {
       method: 'POST',
-      ...json({ title })
+      ...json({ title, guided })
     }),
 
   getSession: (projectId: string, sessionId: string) =>
@@ -357,6 +358,19 @@ export const api = {
   listTasks: (projectId: string, sessionId?: string) =>
     request<Task[]>(`/projects/${projectId}/tasks${sessionId ? `?session_id=${sessionId}` : ''}`),
 
+  /** Tarefa escrita à mão pelo analista, antes ou depois de rodar as outras. */
+  createTask: (
+    projectId: string,
+    data: {
+      title: string;
+      description?: string;
+      acceptance_criteria?: string[];
+      target_files?: string[];
+      dependencies?: string[];
+      session_id?: string;
+    }
+  ) => request<Task>(`/projects/${projectId}/tasks`, { method: 'POST', ...json(data) }),
+
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
 
   /**
@@ -368,16 +382,9 @@ export const api = {
   stopTask: (id: string) =>
     request<{ status: string; task_id: string }>(`/tasks/${id}/stop`, { method: 'POST' }),
 
-  /**
-   * O analista dispensa os testes do agente. Com a execução viva, o servidor
-   * reinicia o agente sem testes e a requisição de dispatch já aberta recebe o
-   * desfecho; `restarting: false` significa que cabe à UI despachar de novo.
-   */
-  abbreviateTests: (id: string) =>
-    request<{ task_id: string; skip_tests: boolean; restarting: boolean }>(
-      `/tasks/${id}/abbreviate-tests`,
-      { method: 'POST' }
-    ),
+  /** Vale para a próxima execução; recusado (409) com a tarefa rodando. */
+  setTaskSuperpowers: (id: string, enabled: boolean) =>
+    request<Task>(`/tasks/${id}/superpowers`, { method: 'PUT', ...json({ enabled }) }),
 
   getClarification: (taskId: string) =>
     request<Clarification | { status: 'none' }>(`/tasks/${taskId}/clarification`),
@@ -447,6 +454,10 @@ export const api = {
 
   getDeployment: (deploymentId: string) =>
     request<DeploymentRecord>(`/deployments/${deploymentId}`),
+
+  /** Tarefa que pede ao agente para corrigir um deploy que falhou (reusa a pendente). */
+  createDeployFixTask: (deploymentId: string) =>
+    request<Task>(`/deployments/${deploymentId}/fix`, { method: 'POST' }),
 
   /* ---- templates (admin & public) ---- */
   listAdminTemplates: () => request<ProjectTemplate[]>('/admin/templates'),

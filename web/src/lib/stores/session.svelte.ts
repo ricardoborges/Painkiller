@@ -15,6 +15,8 @@ export class ProjectSessionStore {
   /** A lista já veio do servidor ao menos uma vez (vazia ainda é resposta). */
   loaded = $state(false);
   creating = $state(false);
+  /** A escolha do tipo da próxima sessão está aberta. */
+  choosingNext = $state(false);
   error = $state<string | null>(null);
 
   readonly activeSession = $derived(
@@ -88,11 +90,19 @@ export class ProjectSessionStore {
     return this.sessions.some((s) => s.status === 'COMPLETED');
   }
 
-  async createNextSession(title?: string): Promise<IterationSession | null> {
+  /**
+   * Pede a próxima sessão: o layout do projeto abre a escolha entre guiada e
+   * direta e só então chama `createNextSession`.
+   */
+  requestNextSession() {
+    this.choosingNext = true;
+  }
+
+  async createNextSession(title?: string, guided = true): Promise<IterationSession | null> {
     this.creating = true;
     this.error = null;
     try {
-      const created = await api.createSession(this.projectId, title);
+      const created = await api.createSession(this.projectId, title, guided);
       await this.loadSessions(created.id);
       return created;
     } catch (e) {
