@@ -18,11 +18,35 @@ from painkiller.core.domain.models import (
     harness_effort,
     harness_model,
 )
+from painkiller.core.i18n import tr
+from painkiller.core.test_plan import NO_TESTS_COLLECTED, build_test_script
 from painkiller.core.ports.sandbox import AgentEventCallback, SandboxPort
 from painkiller.adapters.sandbox.docker_agent_session import parse_agent_line, unreal_env
 from painkiller.adapters.sandbox.paths import daemon_path
 
 logger = logging.getLogger(__name__)
+
+#: Onde o volume de cache de pacotes entra no worker.
+PACKAGE_CACHE_MOUNT = "/cache"
+
+#: Gerenciadores apontados para o volume: sem isto cada contêiner one-shot
+#: baixava tudo de novo a cada tarefa.
+PACKAGE_CACHE_ENV = {
+    "NPM_CONFIG_CACHE": f"{PACKAGE_CACHE_MOUNT}/npm",
+    "PIP_CACHE_DIR": f"{PACKAGE_CACHE_MOUNT}/pip",
+    "UV_CACHE_DIR": f"{PACKAGE_CACHE_MOUNT}/uv",
+    "PNPM_STORE_DIR": f"{PACKAGE_CACHE_MOUNT}/pnpm",
+    "YARN_CACHE_FOLDER": f"{PACKAGE_CACHE_MOUNT}/yarn",
+}
+
+
+def package_cache_volume(project_id: str) -> str:
+    """Named volume holding a project's package caches.
+
+    Um por projeto, nunca compartilhado: o agente roda comandos à vontade, e um
+    cache comum deixaria um projeto envenenar os pacotes de outro dono.
+    """
+    return f"painkiller-cache-{project_id}"
 
 
 class DockerSandboxRunner(SandboxPort):
@@ -42,6 +66,13 @@ class DockerSandboxRunner(SandboxPort):
         if self._client is None:
             self._client = docker.from_env()
         return self._client
+
+    def remove_package_cache(self, project_id: str) -> None:
+        """Drop a deleted project's package cache volume; best effort."""
+        try:
+            self.client.volumes.get(package_cache_volume(project_id)).remove(force=True)
+        except Exception as e:  # noqa: BLE001 — volume ausente ou daemon fora
+            logger.debug("package cache of %s not removed: %s", project_id, e)
 
     # Mantido como staticmethod para nao quebrar chamadas existentes; a
     # implementacao real vive em paths.py, compartilhada com a sessao interativa.
@@ -94,11 +125,11 @@ class DockerSandboxRunner(SandboxPort):
         container_name = f"pk-task-{task.id}-{uuid.uuid4().hex[:6]}"
 
         # Chave, modelo e esforço vêm só do projeto; nada do ambiente da API.
-        env_vars = {"PAINKILLER_WORKSPACE": "/workspace"}
+        env_vars = {"PAINKILLER_WORKSPACE": "/workspace", **PACKAGE_CACHE_ENV}
 
         harness_type = getattr(harness, "value", harness) or "agy_superpowers"
+        image = self._worker_image(harness_type)
         if harness_type == "maki_superpowers":
-            image = os.environ.get("PAINKILLER_WORKER_MAKI_IMAGE") or "painkiller-worker-maki:latest"
             env_vars["DEEPSEEK_API_KEY"] = api_key or ""
             chosen_model = harness_model(harness_type, model)
             # Um turno só, como o `agy --print`; saída no stream-json do Claude Code.
@@ -115,7 +146,6 @@ class DockerSandboxRunner(SandboxPort):
                 task_instructions,
             ]
         elif harness_type == "deepseek_superpowers":
-            image = os.environ.get("PAINKILLER_WORKER_DEEPSEEK_IMAGE") or "painkiller-worker-deepseek:latest"
             env_vars["DEEPSEEK_API_KEY"] = api_key or ""
             # A ponte aplica os dois via session/set_config_option.
             env_vars["PAINKILLER_DEEPSEEK_MODEL"] = harness_model(harness_type, model)
@@ -128,7 +158,6 @@ class DockerSandboxRunner(SandboxPort):
                 task_instructions,
             ]
         elif harness_type == "unreal_superpowers":
-            image = os.environ.get("PAINKILLER_WORKER_UNREAL_IMAGE") or "painkiller-worker-unreal:latest"
             env_vars["DEEPSEEK_API_KEY"] = api_key or ""
             unreal_env(env_vars, model)
             # Um turno só, como o `agy --print`; a ponte publica as skills e
@@ -140,7 +169,6 @@ class DockerSandboxRunner(SandboxPort):
                 task_instructions,
             ]
         else:
-            image = self.image_name
             env_vars["GEMINI_API_KEY"] = api_key or ""
             env_vars["GOOGLE_API_KEY"] = api_key or ""
 
@@ -171,7 +199,11 @@ class DockerSandboxRunner(SandboxPort):
                 image,
                 command=command,
                 name=container_name,
-                volumes={self._daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"}},
+                volumes={
+                    self._daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
+                    # Volume nomeado: o daemon cria na primeira vez, sem caminho do host.
+                    package_cache_volume(task.project_id): {"bind": PACKAGE_CACHE_MOUNT, "mode": "rw"},
+                },
                 environment=env_vars,
                 detach=True,
                 working_dir="/workspace",
@@ -212,11 +244,98 @@ class DockerSandboxRunner(SandboxPort):
                 timed_out=timed_out.is_set() and exit_code != 42,
                 summary=None if exit_code in (0, 42) else self._failure_summary(logs),
             )
+        except docker.errors.ImageNotFound as e:
+            # Sem a imagem local, o docker-py tenta um pull do Docker Hub, que
+            # falha com um 404 cru ("pull access denied"). Diz o que fazer.
+            message = tr(
+                "A imagem do agente '{image}' não foi encontrada no Docker. "
+                "Construa as imagens dos harnesses com: docker compose --profile build build",
+                image=image,
+            )
+            return ExecutionResult(
+                exit_code=1,
+                logs=f"Container execution error: {e}",
+                summary=message,
+            )
         except Exception as e:
             return ExecutionResult(
                 exit_code=1,
                 logs=f"Container execution error: {e}",
             )
+        finally:
+            self._cleanup_container(task.id)
+
+    def _worker_image(self, harness_type: str) -> str:
+        if harness_type == "maki_superpowers":
+            return os.environ.get("PAINKILLER_WORKER_MAKI_IMAGE") or "painkiller-worker-maki:latest"
+        if harness_type == "deepseek_superpowers":
+            return os.environ.get("PAINKILLER_WORKER_DEEPSEEK_IMAGE") or "painkiller-worker-deepseek:latest"
+        if harness_type == "unreal_superpowers":
+            return os.environ.get("PAINKILLER_WORKER_UNREAL_IMAGE") or "painkiller-worker-unreal:latest"
+        return self.image_name
+
+    async def run_tests(
+        self,
+        task: Task,
+        repo_path: str,
+        harness: Optional[str] = None,
+        timeout_seconds: int = 900,
+    ) -> tuple[int, str]:
+        """Run the repo's tests in a worker container, never in the API process."""
+        script = build_test_script(repo_path)
+        if script is None:
+            return (NO_TESTS_COLLECTED, tr("(Sem testes coletados no repositório)"))
+        loop = asyncio.get_running_loop()
+        context = contextvars.copy_context()
+        return await loop.run_in_executor(
+            None, context.run, self._run_tests_sync, task, repo_path, script, harness, timeout_seconds
+        )
+
+    def _run_tests_sync(
+        self,
+        task: Task,
+        repo_path: str,
+        script: str,
+        harness: Optional[str],
+        timeout_seconds: int,
+    ) -> tuple[int, str]:
+        harness_type = getattr(harness, "value", harness) or "agy_superpowers"
+        image = self._worker_image(harness_type)
+        # Prefixo pk-task-{id}: o stop_task acha este contêiner pelo nome também.
+        container_name = f"pk-task-{task.id}-tests-{uuid.uuid4().hex[:6]}"
+        try:
+            # Sem chave de API: a suíte não precisa de LLM.
+            container = self.client.containers.run(
+                image,
+                command=["sh", "-c", script],
+                name=container_name,
+                volumes={
+                    self._daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
+                    package_cache_volume(task.project_id): {"bind": PACKAGE_CACHE_MOUNT, "mode": "rw"},
+                },
+                environment={"PAINKILLER_WORKSPACE": "/workspace", **PACKAGE_CACHE_ENV},
+                detach=True,
+                working_dir="/workspace",
+                remove=False,
+            )
+            self._running_containers[task.id] = container
+            timer = threading.Timer(timeout_seconds, self._kill_on_timeout, (container, task.id))
+            timer.daemon = True
+            timer.start()
+            try:
+                logs = self._follow_logs(container, None)
+                res = container.wait()
+            finally:
+                timer.cancel()
+            return (res.get("StatusCode", 1), logs)
+        except docker.errors.ImageNotFound:
+            return (1, tr(
+                "A imagem do agente '{image}' não foi encontrada no Docker. "
+                "Construa as imagens dos harnesses com: docker compose --profile build build",
+                image=image,
+            ))
+        except Exception as e:
+            return (1, f"Container execution error: {e}")
         finally:
             self._cleanup_container(task.id)
 

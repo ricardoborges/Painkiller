@@ -1,2 +1,4 @@
 # Shell scripts must keep LF: with CRLF, bash on Linux/macOS fails on the carriage return.
 *.sh text eol=lf
+# Patches go through `git apply` inside Linux builds: CRLF breaks them.
+*.patch text eol=lf

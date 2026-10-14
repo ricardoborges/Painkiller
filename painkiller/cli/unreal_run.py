@@ -112,7 +112,14 @@ class TurnTranslator:
             elif item_type == "tool_call":
                 name = item_data.get("Name") or ""
                 self._tools[item_data.get("CallID") or ""] = name
-                _emit_step({"step_type": "tool", "state": "RUNNING", "tool_name": name})
+                # Os argumentos (JSON em texto) viram o detalhe da linha na UI:
+                # o comando do Bash, o arquivo editado, a skill carregada.
+                _emit_step({
+                    "step_type": "tool",
+                    "state": "RUNNING",
+                    "tool_name": name,
+                    "tool_info": {"args": item_data.get("Arguments") or ""},
+                })
             elif item_type == "reasoning":
                 summary = item_data.get("Summary") or []
                 text = "\n".join(summary) if isinstance(summary, list) else str(summary)

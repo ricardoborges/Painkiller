@@ -113,6 +113,7 @@ async def test_users_only_see_their_own_projects(app, client):
         f"/api/projects/{project_id}/analysis/current",
         f"/api/tasks/{task_id}",
         f"/api/tasks/{task_id}/diff",
+        f"/api/tasks/{task_id}/changes",
     ):
         assert (await client.get(path, headers=bob_h)).status_code == 404, path
     assert (await client.delete(f"/api/projects/{project_id}", headers=bob_h)).status_code == 404

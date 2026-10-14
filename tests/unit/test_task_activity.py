@@ -100,9 +100,9 @@ async def test_dispatch_publishes_and_finishes_activity():
     tracker.get_task.return_value = task
     tracker.get_project.return_value = project
     git = AsyncMock()
-    git.run_tests.return_value = (0, "ok")
     git.merge_branch.return_value = (0, "ok")
     sandbox = AsyncMock()
+    sandbox.run_tests.return_value = (0, "ok")
 
     async def run_task(task, repo_path, instructions, on_event=None, **kwargs):
         on_event(_event(AgentEventType.TOOL_USE, "write_file"))

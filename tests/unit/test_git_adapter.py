@@ -189,3 +189,116 @@ async def test_push_retries_transient_failures_but_not_rejections():
         code, _ = await adapter.push("/repo", "main")
     assert code == 1
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_branch_changes_live_includes_uncommitted_and_untracked():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = GitCliAdapter()
+        await adapter.init_repo(tmpdir, default_branch="main", initial_commit=True)
+        await adapter.create_branch(tmpdir, "feature/t1", base_branch="main")
+
+        with open(os.path.join(tmpdir, "committed.py"), "w") as f:
+            f.write("a = 1\n")
+        await adapter.commit_wip(tmpdir, "wip")
+        # Alterado sem commit, e um arquivo novo que nem entrou no índice.
+        with open(os.path.join(tmpdir, "committed.py"), "a") as f:
+            f.write("b = 2\n")
+        os.makedirs(os.path.join(tmpdir, "src"))
+        with open(os.path.join(tmpdir, "src", "novo arquivo.ts"), "w") as f:
+            f.write("export const x = 1;\n+++ não é cabeçalho\n")
+        with open(os.path.join(tmpdir, "logo.png"), "wb") as f:
+            f.write(b"\x89PNG\x00\x00binary")
+
+        changes = await adapter.branch_changes(tmpdir, "feature/t1", base_branch="main")
+
+        assert changes.available and changes.live
+        files = {c.path: c for c in changes.files}
+        assert files["committed.py"].status == "A"
+        assert files["committed.py"].additions == 2
+        assert "+b = 2" in files["committed.py"].patch
+        assert files["src/novo arquivo.ts"].additions == 2
+        assert files["src/novo arquivo.ts"].patch.startswith("@@ -0,0 +1,2 @@")
+        assert files["logo.png"].binary and files["logo.png"].patch is None
+        # A leitura não pode deixar lock para trás nem mexer no índice.
+        assert not os.path.exists(os.path.join(tmpdir, ".git", "index.lock"))
+        assert "src/novo arquivo.ts" not in (await adapter._run_git(tmpdir, "diff", "--cached", "--name-only"))[1]
+
+
+@pytest.mark.asyncio
+async def test_branch_changes_of_branch_not_checked_out():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = GitCliAdapter()
+        await adapter.init_repo(tmpdir, default_branch="main", initial_commit=True)
+        await adapter.create_branch(tmpdir, "feature/t2", base_branch="main")
+        os.remove(os.path.join(tmpdir, "README.md"))
+        with open(os.path.join(tmpdir, ".gitignore"), "a") as f:
+            f.write("dist/\n")
+        await adapter.commit_wip(tmpdir, "wip")
+        await adapter.switch_branch(tmpdir, "main")
+        # Sujeira no checkout atual não pertence à tarefa.
+        with open(os.path.join(tmpdir, "stray.txt"), "w") as f:
+            f.write("x")
+
+        changes = await adapter.branch_changes(tmpdir, "feature/t2", base_branch="main")
+
+        assert changes.available and not changes.live
+        files = {c.path: c for c in changes.files}
+        assert set(files) == {"README.md", ".gitignore"}
+        assert files["README.md"].status == "D"
+        assert files[".gitignore"].status == "M" and files[".gitignore"].additions == 1
+
+
+@pytest.mark.asyncio
+async def test_branch_changes_after_merge_and_after_branch_deleted():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = GitCliAdapter()
+        await adapter.init_repo(tmpdir, default_branch="main", initial_commit=True)
+        await adapter.create_branch(tmpdir, "feature/t3", base_branch="main")
+        with open(os.path.join(tmpdir, "task.py"), "w") as f:
+            f.write("x = 1\n")
+        await adapter.commit_wip(tmpdir, "wip")
+        code, _ = await adapter.merge_branch(tmpdir, "feature/t3", "main")
+        assert code == 0
+
+        # Incorporada, o merge-base é a própria ponta: o diff vem do merge.
+        changes = await adapter.branch_changes(tmpdir, "feature/t3", base_branch="main")
+        assert changes.available and changes.merged and changes.merge_commit
+        assert [c.path for c in changes.files] == ["task.py"]
+
+        # Fechada a sessão, a branch some, mas o diff continua legível.
+        await adapter._run_git(tmpdir, "branch", "-D", "feature/t3")
+        changes = await adapter.branch_changes(tmpdir, "feature/t3", base_branch="main")
+        assert changes.available and changes.merged
+        assert [c.path for c in changes.files] == ["task.py"]
+
+
+@pytest.mark.asyncio
+async def test_branch_changes_missing_branch():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = GitCliAdapter()
+        await adapter.init_repo(tmpdir, default_branch="main", initial_commit=True)
+        changes = await adapter.branch_changes(tmpdir, "feature/never", base_branch="main")
+        assert changes.available is False and changes.files == []
+
+
+def test_split_patch_caps_and_paths():
+    from painkiller.adapters.git.git_adapter import split_patch
+
+    patch = (
+        "diff --git a/x y.txt b/x y.txt\n"
+        "index 1..2 100644\n"
+        "--- a/x y.txt\t\n"
+        "+++ b/x y.txt\t\n"
+        "@@ -1 +1,2 @@\n"
+        "-old\n"
+        "+new\n"
+        "+++plus\n"
+        "diff --git a/img.bin b/img.bin\n"
+        "Binary files a/img.bin and b/img.bin differ\n"
+    )
+    files = split_patch(patch)
+    assert [f.path for f in files] == ["x y.txt", "img.bin"]
+    assert (files[0].additions, files[0].deletions) == (2, 1)
+    assert files[0].patch.startswith("@@")
+    assert files[1].binary and files[1].patch is None

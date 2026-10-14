@@ -392,6 +392,36 @@ export type AgentEventType =
   | 'ERROR'
   | 'EXIT';
 
+/** Um arquivo que a branch da tarefa mudou (GET /tasks/{id}/changes). */
+export interface FileChange {
+  path: string;
+  /** A (novo), M (alterado), D (removido). */
+  status: 'A' | 'M' | 'D';
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  /** Só os hunks; null para binário ou quando a resposta passou do teto. */
+  patch: string | null;
+  truncated: boolean;
+}
+
+export interface BranchChanges {
+  branch: string;
+  base_branch: string;
+  /** false: a branch ainda não existe ou já foi apagada. */
+  available: boolean;
+  /** A branch está em checkout: inclui o que o agente ainda não commitou. */
+  live: boolean;
+  files: FileChange[];
+  /** Arquivos além do teto do servidor, só contados. */
+  omitted: number;
+  /** Já incorporada: o diff vem do commit de merge, mesmo com a branch apagada. */
+  merged: boolean;
+  merge_commit: string | null;
+  /** O mesmo diff no Gitea (commit de merge ou comparação), quando há repositório. */
+  web_url: string | null;
+}
+
 export interface AgentEvent {
   type: AgentEventType;
   text: string;

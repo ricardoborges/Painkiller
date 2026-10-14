@@ -255,9 +255,10 @@
         body.api_key = apiKey.trim();
       }
 
+      // O arcabouço do template só entra na criação: depois o repositório já é do agente.
       let saved = editing
         ? await api.updateProject(project!.id, body)
-        : await api.createProject(body);
+        : await api.createProject({ ...body, template_id: selectedTemplate?.id });
 
       for (const file of files) {
         const res = await api.uploadAttachment(saved.id, file);
@@ -329,6 +330,7 @@
               <span class="radio-desc">
                 {PROJECT_TYPE_META[tpl.project_type]?.label || tpl.project_type}
                 {#if tpl.coolify_compatible}· {t('form.coolifyCompatible')}{/if}
+                {#if tpl.scaffold_filename && !editing}· {t('form.withScaffold')}{/if}
                 {#if tpl.description}· {tpl.description}{/if}
               </span>
             </div>

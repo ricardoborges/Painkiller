@@ -1,0 +1,147 @@
+diff --git a/harness/llm/responsesapi/request.go b/harness/llm/responsesapi/request.go
+index d132e2c..3d5873c 100644
+--- a/harness/llm/responsesapi/request.go
++++ b/harness/llm/responsesapi/request.go
+@@ -87,8 +87,18 @@ func extendRequestBody(body []byte, extensions map[string]jsontext.Value) ([]byt
+ 
+ func requestInput(items []llm.Item) (openaiapi.InputParam, error) {
+ 	converted := make(openaiapi.InputParam1, 0, len(items))
++	answered := make(map[string]bool)
+ 	for index, item := range items {
+-		input, err := requestInputItem(item)
++		var input openaiapi.InputItem
++		var err error
++		if result, ok := item.Data.(llm.ToolResult); ok && item.Type == llm.ItemToolResult && answered[result.CallID] {
++			input, err = lateToolResultMessage(result)
++		} else {
++			if ok {
++				answered[result.CallID] = true
++			}
++			input, err = requestInputItem(item)
++		}
+ 		if err != nil {
+ 			return openaiapi.InputParam{}, fmt.Errorf("input item %d: %w", index, err)
+ 		}
+@@ -344,3 +354,55 @@ func setUnion(destination json.Unmarshaler, source any) error {
+ 	}
+ 	return destination.UnmarshalJSON(body)
+ }
++
++// lateToolResultMessage encodes a repeated result for an already answered call.
++//
++// A call that is still running when its turn ends is answered with a
++// placeholder, and its final result arrives in a later turn as a second result
++// for the same call. The committed history is never rewritten, so the
++// placeholder stays. Providers that require one output per call_id (DeepSeek
++// answers "Duplicate tool output for call_id") reject a second
++// function_call_output, so the final result is sent as a user message instead.
++func lateToolResultMessage(result llm.ToolResult) (openaiapi.InputItem, error) {
++	var item openaiapi.InputItem
++	contents := make([]openaiapi.InputContent, 0, len(result.Output)+1)
++	header := "Result of tool call " + result.CallID + ", which was still running earlier:"
++	parts := []llm.ToolResultOutput{{Kind: llm.ToolResultText, Value: header}}
++	for _, part := range append(parts, result.Output...) {
++		var content any
++		switch part.Kind {
++		case llm.ToolResultText:
++			content = openaiapi.InputTextContent{
++				Text: part.Value,
++				Type: openaiapi.InputTextContentTypeInputText,
++			}
++		case llm.ToolResultImage:
++			content = openaiapi.InputImageContent{
++				Detail:   openaiapi.ImageDetailAuto,
++				ImageUrl: &part.Value,
++				Type:     openaiapi.InputImageContentTypeInputImage,
++			}
++		default:
++			return item, fmt.Errorf("unsupported tool result kind %q", part.Kind)
++		}
++		var converted openaiapi.InputContent
++		if err := setUnion(&converted, content); err != nil {
++			return item, err
++		}
++		contents = append(contents, converted)
++	}
++	messageType := openaiapi.InputMessageTypeMessage
++	message := openaiapi.InputMessage{
++		Content: contents,
++		Role:    openaiapi.InputMessageRoleUser,
++		Type:    &messageType,
++	}
++	var converted openaiapi.Item
++	if err := setUnion(&converted, message); err != nil {
++		return item, err
++	}
++	if err := setUnion(&item, converted); err != nil {
++		return item, err
++	}
++	return item, nil
++}
+diff --git a/harness/llm/responsesapi/request_test.go b/harness/llm/responsesapi/request_test.go
+index e286388..4bbc075 100644
+--- a/harness/llm/responsesapi/request_test.go
++++ b/harness/llm/responsesapi/request_test.go
+@@ -461,3 +461,46 @@ func TestRequestBodyRejectsExtensionsOverridingStandardFields(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestRequestBodySendsLateToolResultAsUserMessage(t *testing.T) {
++	body, err := requestBody(llm.Request{
++		Model: llm.Model{ID: "gpt-test"},
++		Input: []llm.Item{
++			{Type: llm.ItemToolCall, Data: llm.ToolCall{CallID: "call-1", Name: "Bash", Arguments: "{}"}},
++			{Type: llm.ItemToolResult, Data: llm.ToolResult{CallID: "call-1", Output: []llm.ToolResultOutput{{Kind: llm.ToolResultText, Value: "still running"}}}},
++			{Type: llm.ItemMessage, Data: llm.Message{Role: llm.RoleUser, Text: "Heartbeat"}},
++			{Type: llm.ItemToolResult, Data: llm.ToolResult{CallID: "call-1", Output: []llm.ToolResultOutput{
++				{Kind: llm.ToolResultText, Value: "done"},
++				{Kind: llm.ToolResultImage, Value: "https://example.com/image.png"},
++			}}},
++		},
++	}, "", nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var request struct {
++		Input []map[string]any `json:"input"`
++	}
++	if err := json.Unmarshal(body, &request); err != nil {
++		t.Fatal(err)
++	}
++	outputs := 0
++	for _, item := range request.Input {
++		if item["type"] == "function_call_output" {
++			outputs++
++		}
++	}
++	if outputs != 1 {
++		t.Fatalf("function_call_output items = %d, want 1: %s", outputs, body)
++	}
++	var want map[string]any
++	if err := json.Unmarshal([]byte(`{"type":"message","role":"user","content":[
++		{"type":"input_text","text":"Result of tool call call-1, which was still running earlier:"},
++		{"type":"input_text","text":"done"},
++		{"type":"input_image","detail":"auto","image_url":"https://example.com/image.png"}]}`), &want); err != nil {
++		t.Fatal(err)
++	}
++	if got := request.Input[len(request.Input)-1]; !reflect.DeepEqual(got, want) {
++		t.Fatalf("late result = %#v, want %#v", got, want)
++	}
++}
+diff --git a/harness/llm/responsesapi/submission_test.go b/harness/llm/responsesapi/submission_test.go
+index 6a1654b..6ff047a 100644
+--- a/harness/llm/responsesapi/submission_test.go
++++ b/harness/llm/responsesapi/submission_test.go
+@@ -77,7 +77,10 @@ func TestSubmittedPrefixAndLateResultOrderOnWire(t *testing.T) {
+ 			if err := json.Unmarshal([]byte(test.want), &wantResponse); err != nil {
+ 				t.Fatal(err)
+ 			}
+-			wantTail := append(wantResponse, map[string]any{"type": "function_call_output", "call_id": "A", "output": []any{map[string]any{"type": "input_text", "text": "done A"}}})
++			wantTail := append(wantResponse, map[string]any{"type": "message", "role": "user", "content": []any{
++				map[string]any{"type": "input_text", "text": "Result of tool call A, which was still running earlier:"},
++				map[string]any{"type": "input_text", "text": "done A"},
++			}})
+ 			tail := make([]map[string]any, len(next.Input)-len(sent.Input))
+ 			for i, item := range next.Input[len(sent.Input):] {
+ 				if err := json.Unmarshal(item, &tail[i]); err != nil {

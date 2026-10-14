@@ -10,10 +10,17 @@ ARG UNREAL_AGENT_REPO=https://github.com/unreallabsai/unreal-agent.git
 # `painkiller unreal-run` traduz. Atualize junto com os testes da ponte.
 ARG UNREAL_AGENT_COMMIT=1b9f778453f411c029b39b85102aaefb95e7e48d
 
+# O DeepSeek recusa dois function_call_output com o mesmo call_id ("Duplicate
+# tool output"), que o runner manda quando uma ferramenta ainda rodava ao fim
+# de um turno. O patch manda o resultado tardio como mensagem do usuário;
+# ao atualizar o commit, confira se ele ainda se aplica.
+COPY docker/unreal-agent-late-tool-result.patch /tmp/late-tool-result.patch
+
 RUN git init -q /src/unreal-agent \
     && cd /src/unreal-agent \
     && git fetch -q --depth 1 "${UNREAL_AGENT_REPO}" "${UNREAL_AGENT_COMMIT}" \
     && git checkout -q FETCH_HEAD \
+    && git apply /tmp/late-tool-result.patch \
     && CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" \
        -o /usr/local/bin/unreal-agent-runner ./cmd/unreal-agent-runner
 

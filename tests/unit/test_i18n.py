@@ -196,3 +196,12 @@ def test_task_instructions_carry_implementation_notes():
         task, Project(id="p", name="x", repo_path=".", language="en-US", implementation_notes="Use PostgreSQL.")
     )
     assert "Project implementation details and business rules" in en
+
+
+def test_task_instructions_say_environment_is_ready():
+    orch = PainkillerOrchestrator(tracker=None, sandbox=None, git=None)
+    task = Task(id="t1", project_id="p", title="Login", description="Build it")
+    pt = orch._build_task_instructions(task, Project(id="p", name="x", repo_path="."))
+    assert "Ambiente (já pronto" in pt and "NÃO rode geradores" in pt
+    en = orch._build_task_instructions(task, Project(id="p", name="x", repo_path=".", language="en-US"))
+    assert "Environment (already set up" in en and "do NOT run generators" in en

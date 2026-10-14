@@ -3,6 +3,8 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from painkiller.core.domain.models import BranchChanges
+
 
 class GitPort(ABC):
     """Abstract port for repository and VCS operations."""
@@ -25,11 +27,6 @@ class GitPort(ABC):
     @abstractmethod
     async def has_changes(self, repo_path: str) -> bool:
         """Check whether there are uncommitted or committed changes compared to base."""
-        pass
-
-    @abstractmethod
-    async def run_tests(self, repo_path: str, test_command: Optional[str] = None) -> tuple[int, str]:
-        """Execute project acceptance tests in the repository."""
         pass
 
     @abstractmethod
@@ -72,6 +69,16 @@ class GitPort(ABC):
         self, repo_path: str, branch_name: str, merged_into: str = "main", remote_name: str = "origin"
     ) -> tuple[int, str]:
         """Delete a branch locally and on the remote, only if it is already merged into ``merged_into``."""
+        pass
+
+    @abstractmethod
+    async def branch_changes(self, repo_path: str, branch: str, base_branch: str = "main") -> BranchChanges:
+        """Files ``branch`` changed since it left ``base_branch``, with per-file patches.
+
+        When ``branch`` is checked out, uncommitted and untracked files count too,
+        so this shows an agent's work while it is still running. Read-only: must
+        not take git's index lock, since the agent may be committing.
+        """
         pass
 
     @abstractmethod

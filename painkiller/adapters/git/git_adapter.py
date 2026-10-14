@@ -5,7 +5,14 @@ import base64
 import os
 import urllib.parse
 from typing import Optional
+from painkiller.core.domain.models import BranchChanges, FileChange
 from painkiller.core.ports.git import GitPort
+
+#: Tetos de `branch_changes`: um package-lock.json ou uma pasta gerada sem
+#: .gitignore não podem virar megabytes na tela.
+CHANGES_MAX_FILES = 300
+CHANGES_MAX_FILE_BYTES = 64 * 1024
+CHANGES_MAX_TOTAL_BYTES = 1024 * 1024
 
 
 def strip_userinfo(url: str) -> str:
@@ -14,6 +21,93 @@ def strip_userinfo(url: str) -> str:
     if parsed.scheme not in ("http", "https") or "@" not in parsed.netloc:
         return url
     return urllib.parse.urlunsplit(parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1]))
+
+
+def _patch_path(raw: str) -> str:
+    """Path of a ``---``/``+++`` line, without the ``a/``/``b/`` prefix."""
+    # O git acrescenta um TAB depois de nomes com espaço.
+    raw = raw.rstrip("\n").rstrip("\t")
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        raw = raw[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return raw[2:] if raw[:2] in ("a/", "b/") else raw
+
+
+def _header_path(line: str) -> str:
+    """Path of a ``diff --git a/X b/X`` line (binary and mode-only changes have no ---/+++)."""
+    rest = line[len("diff --git "):].rstrip("\n")
+    half = (len(rest) - 1) // 2
+    if rest[half:half + 1] == " " and rest[2:half] == rest[half + 3:]:
+        return rest[2:half]
+    cut = rest.rfind(" b/")
+    return _patch_path(rest[cut + 1:] if cut > 0 else rest)
+
+
+def split_patch(text: str) -> list[FileChange]:
+    """Split a ``git diff`` into one FileChange per file; the patch keeps only the hunks."""
+    files: list[FileChange] = []
+    current: Optional[FileChange] = None
+    hunks: list[str] = []
+    in_hunk = False
+
+    def flush() -> None:
+        if current is not None:
+            current.patch = "".join(hunks) or None
+            files.append(current)
+
+    for line in text.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            flush()
+            current, hunks, in_hunk = FileChange(path=_header_path(line)), [], False
+            continue
+        if current is None:
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            hunks.append(line)
+        elif in_hunk:
+            # Dentro do hunk, "+++" ou "---" é conteúdo, não cabeçalho.
+            hunks.append(line)
+            if line.startswith("+"):
+                current.additions += 1
+            elif line.startswith("-"):
+                current.deletions += 1
+        elif line.startswith("new file mode"):
+            current.status = "A"
+        elif line.startswith("deleted file mode"):
+            current.status = "D"
+        elif line.startswith("+++ ") and line[4:].strip() != "/dev/null":
+            current.path = _patch_path(line[4:])
+        elif line.startswith("--- ") and line[4:].strip() != "/dev/null" and current.status == "D":
+            current.path = _patch_path(line[4:])
+        elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+            current.binary = True
+    flush()
+    return files
+
+
+def _untracked_change(repo_path: str, path: str) -> FileChange:
+    """A file the agent created and has not committed yet, as an all-added patch."""
+    change = FileChange(path=path, status="A")
+    full = os.path.join(repo_path, path)
+    if os.path.isdir(full):
+        # Repositório aninhado: o ls-files mostra só a pasta.
+        return change
+    try:
+        with open(full, "rb") as f:
+            data = f.read(CHANGES_MAX_FILE_BYTES + 1)
+    except OSError:
+        return change
+    if b"\0" in data[:8000]:
+        change.binary = True
+        return change
+    if len(data) > CHANGES_MAX_FILE_BYTES:
+        data = data[:CHANGES_MAX_FILE_BYTES]
+        change.truncated = True
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    change.additions = len(lines)
+    if lines:
+        change.patch = f"@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
+    return change
 
 
 def _is_permanent_push_error(output: str) -> bool:
@@ -112,22 +206,6 @@ class GitCliAdapter(GitPort):
     async def has_changes(self, repo_path: str) -> bool:
         code, out, _ = await self._run_git(repo_path, "status", "--porcelain")
         return bool(out.strip())
-
-    async def run_tests(self, repo_path: str, test_command: Optional[str] = None) -> tuple[int, str]:
-        cmd = test_command or "pytest"
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            cwd=repo_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        output = stdout.decode("utf-8", errors="replace") + "\n" + stderr.decode("utf-8", errors="replace")
-        code = proc.returncode if proc.returncode is not None else 1
-        # Pytest exit code 5: No tests were collected (e.g. web/HTML/JS repos)
-        if code == 5 and ("collected 0 items" in output or "no tests ran" in output or not test_command):
-            return (0, output + "\n(Sem testes coletados no repositório — aprovado por padrão)")
-        return (code, output)
 
     async def init_repo(self, repo_path: str, default_branch: str = "main", initial_commit: bool = True) -> None:
         os.makedirs(repo_path, exist_ok=True)
@@ -347,3 +425,73 @@ class GitCliAdapter(GitPort):
                 f"git archive {ref} failed: {stderr.decode('utf-8', errors='replace').strip()}"
             )
         return stdout
+
+    async def _find_merge(self, repo_path: str, branch: str, base_branch: str) -> Optional[tuple[str, str, str]]:
+        """The `merge_branch` commit of `branch` on `base_branch`: (sha, first parent, second parent)."""
+        code, out, _ = await self._run_git(
+            repo_path, "--no-optional-locks", "log", base_branch, "--merges", "--first-parent",
+            "--fixed-strings", f"--grep=Merge branch '{branch}' into", "--format=%H %P", "-n", "1",
+        )
+        parts = out.split() if code == 0 else []
+        return (parts[0], parts[1], parts[2]) if len(parts) >= 3 else None
+
+    async def branch_changes(self, repo_path: str, branch: str, base_branch: str = "main") -> BranchChanges:
+        result = BranchChanges(branch=branch, base_branch=base_branch)
+
+        async def git(*args: str) -> tuple[int, str, str]:
+            # Sem locks opcionais: o agente pode estar commitando neste repo agora.
+            return await self._run_git(repo_path, "--no-optional-locks", "-c", "core.quotepath=off", *args)
+
+        code, out, _ = await git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
+        tip = out.strip() if code == 0 else None
+
+        # Depois do merge (--no-ff) o merge-base com a principal é a própria
+        # ponta da branch e o diff sairia vazio: usa os pais do commit de merge.
+        merge = await self._find_merge(repo_path, branch, base_branch)
+        if merge and (tip is None or tip == merge[2]):
+            sha, first, second = merge
+            code, out, _ = await git("merge-base", first, second)
+            base = out.strip() if code == 0 and out.strip() else first
+            target = [base, second]
+            result.merged = True
+            result.merge_commit = sha
+        elif tip is None:
+            result.available = False
+            return result
+        else:
+            code, out, _ = await git("merge-base", base_branch, branch)
+            base = out.strip() if code == 0 and out.strip() else base_branch
+            result.live = (await self.current_branch(repo_path)) == branch
+            # Em checkout, compara com a árvore de trabalho: entra o que o agente
+            # ainda não commitou.
+            target = [base] if result.live else [base, branch]
+
+        _, patch, _ = await git("diff", "--no-color", "--no-renames", "--no-ext-diff", *target, "--")
+        changes = split_patch(patch)
+        untracked: list[str] = []
+        if result.live:
+            _, out, _ = await git("ls-files", "--others", "--exclude-standard", "-z")
+            untracked = [p for p in out.split("\0") if p]
+
+        room = max(0, CHANGES_MAX_FILES - len(changes))
+        changes.extend(
+            await asyncio.to_thread(lambda: [_untracked_change(repo_path, p) for p in untracked[:room]])
+        )
+        result.omitted = max(0, len(changes) - CHANGES_MAX_FILES) + max(0, len(untracked) - room)
+        changes = changes[:CHANGES_MAX_FILES]
+
+        total = 0
+        for change in changes:
+            if not change.patch:
+                continue
+            if len(change.patch) > CHANGES_MAX_FILE_BYTES:
+                cut = change.patch.rfind("\n", 0, CHANGES_MAX_FILE_BYTES)
+                change.patch = change.patch[: cut + 1 if cut > 0 else CHANGES_MAX_FILE_BYTES]
+                change.truncated = True
+            if total + len(change.patch) > CHANGES_MAX_TOTAL_BYTES:
+                change.patch = None
+                change.truncated = True
+                continue
+            total += len(change.patch)
+        result.files = sorted(changes, key=lambda c: c.path)
+        return result

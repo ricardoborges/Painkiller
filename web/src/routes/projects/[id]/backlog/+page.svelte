@@ -16,12 +16,13 @@
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
   import TaskActivity from '$lib/components/TaskActivity.svelte';
+  import TaskChanges from '$lib/components/TaskChanges.svelte';
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
   import { deploys, isDeployActive, deployStage, lastLogLine } from '$lib/stores/deploys.svelte';
   import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
 
   let { data } = $props();
 
@@ -54,11 +55,6 @@
   // Fila sequencial (Executar Todas)
   let isQueueRunning = $state(false);
   let queueMessage = $state<string | null>(null);
-
-  // Modal de Diff
-  let diffOpen = $state(false);
-  let diffLoading = $state(false);
-  let diffData = $state<{ task_id: string; branch: string; base_branch: string; diff: string; gitea_url: string | null } | null>(null);
 
   // Deploys (Coolify)
   let envStatus = $state<EnvironmentStatusResponse | null>(null);
@@ -123,6 +119,53 @@
       label: STATUS_META[s].label,
       n: map.get(s)!
     }));
+  });
+
+  // Posição de cada tarefa na fila: o número do card não muda com o filtro.
+  const orderIndex = $derived(new Map(ordered.map((t, i) => [t.id, i])));
+
+  let filter = $state<'ALL' | Task['status']>('ALL');
+  const visible = $derived(filter === 'ALL' ? ordered : ordered.filter((t) => t.status === filter));
+
+  // O filtro de um estado que esvaziou volta para "Todas".
+  $effect(() => {
+    if (filter !== 'ALL' && !tasks.some((t) => t.status === filter)) filter = 'ALL';
+  });
+
+  // O que depende do analista, e pode estar fora da tela.
+  const awaiting = $derived(ordered.filter((t) => t.status === 'AWAITING_ANALYST'));
+  const failed = $derived(ordered.filter((t) => t.status === 'FAILED'));
+
+  /** Abre o card e rola até ele, limpando o filtro se ele o esconderia. */
+  async function reveal(id: string) {
+    const task = byId.get(id);
+    if (task && filter !== 'ALL' && task.status !== filter) filter = 'ALL';
+    expandOverride[id] = true;
+    await tick();
+    document.getElementById(`task-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Descrição longa: durante a execução o que importa é o log, então ela fica
+  // em poucas linhas até o analista pedir o resto.
+  let descOpen = $state<Record<string, boolean>>({});
+
+  let menuOpen = $state(false);
+
+  /* Menu sem biblioteca: fecha no clique fora e no Esc, como na análise. */
+  $effect(() => {
+    if (!menuOpen) return;
+    const away = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement)?.closest('.menu')) menuOpen = false;
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') menuOpen = false;
+    };
+    window.addEventListener('click', away, true);
+    window.addEventListener('keydown', esc);
+    return () => {
+      window.removeEventListener('click', away, true);
+      window.removeEventListener('keydown', esc);
+    };
   });
 
   /** Dependências que ainda não concluíram — orquestrador exige que estejam COMPLETED. */
@@ -391,6 +434,9 @@
   async function dispatch(task: Task): Promise<Task | null> {
     dispatching = task.id;
     dispatchError = null;
+    // A requisição só volta no fim da execução: até lá a lista ainda diria
+    // FAILED e mostraria o erro da tentativa anterior.
+    replace({ ...task, status: 'RUNNING', error: null });
 
     // Se sessão ainda estava em BACKLOG, avança status para IN_SPRINT
     if (activeSession && activeSession.status === 'BACKLOG') {
@@ -532,7 +578,10 @@
 
         // Despacha a tarefa no contêiner
         queueMessage = t('backlog.queue.running', { title: candidate.title });
-        const updated = await dispatch(candidate);
+        // A fila avança sozinha: leva o leitor até a tarefa que começou.
+        const started = dispatch(candidate);
+        void reveal(candidate.id);
+        const updated = await started;
 
         if (!isQueueRunning) break; // Usuário pausou durante a execução
 
@@ -566,20 +615,6 @@
         queueMessage = t('backlog.queue.allTasksDone');
         isQueueRunning = false;
       }
-    }
-  }
-
-  async function openDiff(taskId: string) {
-    diffLoading = true;
-    diffOpen = true;
-    diffData = null;
-    try {
-      diffData = await api.getTaskDiff(taskId);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : t('backlog.diffFailed'));
-      diffOpen = false;
-    } finally {
-      diffLoading = false;
     }
   }
 
@@ -632,35 +667,32 @@
     </div>
   {/if}
 
-  <!-- Barra de Progresso da Sessão Ativa -->
-  <div class="progress-bar-card">
-    <div class="spread progress-meta">
-      <div class="meta-left">
-        <span class="session-badge mono bold">
-          {activeSession ? `#${activeSession.number} ${activeSession.title}` : t('backlog.activeSession')}
-        </span>
-        <span class="sep" aria-hidden="true">·</span>
-        <span class="label mono">
-          {t('backlog.progress', { done: completedCount, total: tasks.length })}
-        </span>
-        <span class="sep" aria-hidden="true">·</span>
-        <span
-          class="label mono"
-          title={t('backlog.sessionTotalsTitle', { input: formatNumber(sessionTotals.input), output: formatNumber(sessionTotals.output) })}
-        >
-          {formatDuration(sessionTotals.seconds)} · {t('backlog.inOut', { input: formatTokens(sessionTotals.input), output: formatTokens(sessionTotals.output) })}
-        </span>
-      </div>
-      <span class="mono bold">{progressPercent}%</span>
-    </div>
-    <div class="progress-track">
-      <div class="progress-fill" style:width="{progressPercent}%"></div>
-    </div>
+  <!-- Barra da sessão: progresso, a ação que avança a etapa e o resto num
+       menu. Fica presa no topo para que pausar a fila não exija rolar. -->
+  <div class="runbar">
+    <div class="runbar-main">
+      <span class="session-badge mono bold">
+        {activeSession ? `#${activeSession.number} ${activeSession.title}` : t('backlog.activeSession')}
+      </span>
 
-    {#if activeSession && (sessionClosed || (allDone && branchesAlive))}
-      <div class="session-close spread">
-        {#if sessionClosed}
-          <span class="mono">{t('backlog.sessionClosed')}</span>
+      <div class="progress" title={t('backlog.progress', { done: completedCount, total: tasks.length })}>
+        <span class="mono tabular">{completedCount}/{tasks.length}</span>
+        <div class="progress-track" aria-hidden="true">
+          <div class="progress-fill" style:width="{progressPercent}%"></div>
+        </div>
+        <span class="mono tabular bold">{progressPercent}%</span>
+      </div>
+
+      <span
+        class="totals label mono"
+        title={t('backlog.sessionTotalsTitle', { input: formatNumber(sessionTotals.input), output: formatNumber(sessionTotals.output) })}
+      >
+        {formatDuration(sessionTotals.seconds)} · {t('backlog.inOut', { input: formatTokens(sessionTotals.input), output: formatTokens(sessionTotals.output) })}
+      </span>
+
+      <div class="runbar-actions">
+        <!-- Um só botão sólido: o que leva a etapa adiante agora. -->
+        {#if activeSession && sessionClosed}
           {#if activeSession.id === sessionStore.sessions[sessionStore.sessions.length - 1]?.id}
             <button
               type="button"
@@ -672,8 +704,7 @@
               {sessionStore.creating ? t('sessionPicker.creating') : t('sessionPicker.new')}
             </button>
           {/if}
-        {:else}
-          <span class="mono">{t('backlog.allDoneClose')}</span>
+        {:else if activeSession && allDone && branchesAlive}
           <button
             type="button"
             class="btn btn-solid btn-sm"
@@ -684,187 +715,202 @@
             <Icon name="check" size={11} />
             {finalizing ? t('analysis.closing') : t('analysis.close')}
           </button>
-        {/if}
-      </div>
-    {/if}
-  </div>
-
-  <!-- Painel de Controle de Execução e Status -->
-  <div class="control-panel">
-    <div class="spread control-top">
-      <div class="tally">
-        {#each counts as c (c.status)}
-          <div class="count" class:accent={STATUS_META[c.status].accent}>
-            <span class="n mono">{String(c.n).padStart(2, '0')}</span>
-            <span class="label">{c.label}</span>
-          </div>
-        {/each}
-      </div>
-
-      <div class="runner-controls">
-        <button
-          type="button"
-          class="btn btn-solid btn-sm"
-          onclick={deployProduction}
-          disabled={deployingEnv === 'production' ||
-            (!productionDeploy && (isQueueRunning || (tasks.length > 0 && completedCount < tasks.length)))}
-          title={productionDeploy
-            ? t('backlog.prodInProgress')
-            : completedCount < tasks.length
-              ? t('backlog.prodLocked')
-              : t('backlog.prodTrigger')}
-        >
-          {#if deployingEnv === 'production'}
-            <span class="spinner-inline" aria-hidden="true"></span> {t('backlog.preparing')}
-          {:else if productionDeploy}
-            <span class="spinner-inline" aria-hidden="true"></span> {t('dashboard.deploy.BUILDING')}
-            <span class="mono tabular">{deploys.elapsed(productionDeploy)}</span>
-          {:else}
-            <Icon name="upload" size={11} /> Deploy
-          {/if}
-        </button>
-
-        {#if data.project.repo_url}
-          <a
-            class="btn btn-line btn-sm"
-            href="{data.project.repo_url}/issues?labels=&state=all"
-            target="_blank"
-            rel="noopener noreferrer"
-            title={t('backlog.issuesTitle')}
-          >
-            <Icon name="external" size={11} /> Issues
-          </a>
+        {:else}
           <button
             type="button"
-            class="btn btn-line btn-sm"
-            onclick={syncIssues}
-            disabled={syncingIssues}
-            title={t('backlog.syncTitle')}
+            class="btn {isQueueRunning ? 'btn-line' : 'btn-solid'} btn-sm"
+            onclick={toggleRunAll}
+            disabled={tasks.length === 0 || (allDone && !isQueueRunning)}
+            title={isQueueRunning ? t('backlog.pauseQueueTitle') : t('backlog.runAllTitle')}
           >
-            {syncingIssues ? t('backlog.syncing') : t('backlog.sync')}
+            {#if isQueueRunning}
+              <Icon name="square" size={10} /> {t('backlog.pauseQueue')}
+            {:else}
+              <Icon name="play" size={11} /> {t('backlog.runAll')}
+            {/if}
           </button>
         {/if}
 
-        <span class="ctrl-sep" aria-hidden="true">|</span>
+        <div class="menu">
+          <button
+            type="button"
+            class="btn btn-line btn-sm more"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onclick={() => (menuOpen = !menuOpen)}
+            title={t('analysis.moreActions')}
+          >
+            <span aria-hidden="true">···</span>
+            <span class="sr">{t('analysis.moreActions')}</span>
+          </button>
+          {#if menuOpen}
+            <div class="sheet" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                onclick={() => {
+                  menuOpen = false;
+                  deployProduction();
+                }}
+                disabled={deployingEnv === 'production' ||
+                  (!productionDeploy && (isQueueRunning || completedCount < tasks.length))}
+                title={productionDeploy
+                  ? t('backlog.prodInProgress')
+                  : completedCount < tasks.length
+                    ? t('backlog.prodLocked')
+                    : t('backlog.prodTrigger')}
+              >
+                <Icon name="upload" size={12} />
+                <span>{t('backlog.deployProduction')}</span>
+                {#if productionDeploy}<span class="mono faint tabular">{deploys.elapsed(productionDeploy)}</span>{/if}
+              </button>
 
-        <button
-          type="button"
-          class="btn {isQueueRunning ? 'btn-line active-pulse' : 'btn-line'} btn-sm"
-          onclick={toggleRunAll}
-          disabled={tasks.length === 0 || (completedCount === tasks.length && !isQueueRunning)}
-          title={isQueueRunning ? t('backlog.pauseQueueTitle') : t('backlog.runAllTitle')}
-        >
-          {#if isQueueRunning}
-            <Icon name="close" size={11} /> {t('backlog.pauseQueue')}
-          {:else}
-            <Icon name="play" size={11} /> {t('backlog.runAll')}
-          {/if}
-        </button>
-      </div>
-    </div>
+              {#each [{ name: t('dashboard.test'), env: envStatus?.test }, { name: t('deploys.env.production'), env: envStatus?.production }] as e (e.name)}
+                {#if e.env?.url}
+                  <a role="menuitem" href={e.env.url} target="_blank" rel="noopener noreferrer">
+                    <Icon name="external" size={12} />
+                    <span class="env-text">
+                      <span>{e.name}{#if e.env.status && e.env.status !== 'HEALTHY'}<span class="faint"> · {deployStage(e.env.status)}</span>{/if}</span>
+                      <span class="mono faint env-url">{e.env.url}</span>
+                    </span>
+                  </a>
+                {:else}
+                  <span role="menuitem" aria-disabled="true" class="faint">
+                    <Icon name="globe" size={12} />
+                    <span>{e.name} · {t('backlog.notProvisioned')}</span>
+                  </span>
+                {/if}
+              {/each}
 
-    {#if issuesNote}
-      <p class="issues-note mono" role="status">{issuesNote}</p>
-    {/if}
+              {#if currentDeployment}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onclick={() => {
+                    menuOpen = false;
+                    if (currentDeployment) showDeployment(currentDeployment.id);
+                  }}
+                >
+                  <Icon name="file-text" size={12} />
+                  <span>{t('backlog.lastDeploy')}</span>
+                </button>
+              {/if}
 
-    <!-- Barra de Ambientes Coolify -->
-    <div class="env-bar spread">
-      <div class="env-group">
-        <span class="label mono">{t('backlog.environments')}:</span>
-
-        <div class="env-item">
-          <span class="env-name mono">{t('dashboard.test')}:</span>
-          {#if envStatus?.test?.url}
-            <a
-              href={envStatus.test.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="env-url mono"
-              title={t('backlog.openTestEnv')}
-            >
-              <span class="dot {envStatus.test.status === 'HEALTHY' ? 'dot-green' : 'dot-amber'}" aria-hidden="true"></span>
-              {envStatus.test.url}
-              <Icon name="external" size={9} />
-            </a>
-          {:else}
-            <span class="env-url mono dim">{t('backlog.notProvisioned')}</span>
+              {#if data.project.repo_url}
+                <a
+                  role="menuitem"
+                  href="{data.project.repo_url}/issues?labels=&state=all"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={t('backlog.issuesTitle')}
+                >
+                  <Icon name="external" size={12} />
+                  <span>Issues</span>
+                </a>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onclick={() => {
+                    menuOpen = false;
+                    syncIssues();
+                  }}
+                  disabled={syncingIssues}
+                  title={t('backlog.syncTitle')}
+                >
+                  <Icon name="copy" size={12} />
+                  <span>{syncingIssues ? t('backlog.syncing') : t('backlog.sync')}</span>
+                </button>
+              {/if}
+            </div>
           {/if}
         </div>
-
-        <span class="sep" aria-hidden="true">·</span>
-
-        <div class="env-item">
-          <span class="env-name mono">{t('deploys.env.production')}:</span>
-          {#if envStatus?.production?.url}
-            <a
-              href={envStatus.production.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="env-url mono"
-              title={t('backlog.openProdEnv')}
-            >
-              <span class="dot {envStatus.production.status === 'HEALTHY' ? 'dot-green' : 'dot-amber'}" aria-hidden="true"></span>
-              {envStatus.production.url}
-              <Icon name="external" size={9} />
-            </a>
-          {:else}
-            <span class="env-url mono dim">{t('backlog.notProvisioned')}</span>
-          {/if}
-        </div>
       </div>
-
-      {#if currentDeployment && !runningDeploy}
-        <button
-          type="button"
-          class="btn btn-ghost btn-xs mono"
-          onclick={() => showDeployment(currentDeployment.id)}
-        >
-          {t('backlog.lastDeploy')}
-        </button>
-      {/if}
     </div>
 
     {#if runningDeploy}
       {@const tail = lastLogLine(runningDeploy.logs)}
       <!-- Deploy em andamento: fica visível até o Coolify responder que terminou -->
-      <div class="deploy-progress" role="status" aria-live="polite">
-        <div class="deploy-progress-row">
-          <span class="spinner-inline" aria-hidden="true"></span>
-          <span class="mono deploy-progress-title">
-            {runningDeploy.environment === 'test' ? t('dashboard.test') : t('deploys.env.production')} · {deployStage(runningDeploy.status)}
-            <span class="faint">· {runningDeploy.branch}</span>
-          </span>
-          <span class="mono tabular deploy-progress-clock">{deploys.elapsed(runningDeploy)}</span>
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs mono"
-            onclick={() => showDeployment(runningDeploy.id)}
-          >
-            {t('backlog.seeLog')}
-          </button>
-        </div>
-        {#if tail}
-          <p class="deploy-progress-tail mono faint" title={tail}>{tail}</p>
-        {/if}
+      <div class="runbar-line deploy-progress" role="status" aria-live="polite">
+        <span class="spinner-inline" aria-hidden="true"></span>
+        <span class="mono deploy-progress-title">
+          {runningDeploy.environment === 'test' ? t('dashboard.test') : t('deploys.env.production')} · {deployStage(runningDeploy.status)}
+          <span class="faint">· {runningDeploy.branch}</span>
+        </span>
+        <span class="mono tabular deploy-progress-clock">{deploys.elapsed(runningDeploy)}</span>
+        {#if tail}<span class="deploy-progress-tail mono faint" title={tail}>{tail}</span>{/if}
+        <button type="button" class="btn-link label" onclick={() => showDeployment(runningDeploy.id)}>
+          {t('backlog.seeLog')}
+        </button>
         <span class="indeterminate" aria-hidden="true"></span>
       </div>
     {/if}
 
-    {#if queueMessage}
-      <div class="queue-status-banner" class:running={isQueueRunning}>
+    {#if queueMessage || issuesNote}
+      <div class="runbar-line" role="status">
         {#if isQueueRunning}
           <span class="spinner-inline" aria-hidden="true"></span>
         {:else}
           <Icon name="info" size={12} />
         {/if}
-        <span class="mono">{queueMessage}</span>
+        <span class="mono">{queueMessage ?? issuesNote}</span>
+      </div>
+    {:else if activeSession && (sessionClosed || (allDone && branchesAlive))}
+      <div class="runbar-line">
+        <Icon name="info" size={12} />
+        <span class="mono">{sessionClosed ? t('backlog.sessionClosed') : t('backlog.allDoneClose')}</span>
       </div>
     {/if}
   </div>
 
-  <!-- Lista de Tarefas em Ordem de Execução Sequencial -->
+  <!-- O que depende do analista sobe para cá: a tarefa pode estar fora da tela.
+       Esperar resposta é o único uso do acento; falha é peso e hachura. -->
+  {#if awaiting.length || failed.length}
+    <div class="attention">
+      {#if awaiting.length}
+        <button type="button" class="attn attn-await" onclick={() => reveal(awaiting[0].id)}>
+          <span class="attn-mark" aria-hidden="true"></span>
+          <span>{tp('backlog.awaitingYou', awaiting.length)}</span>
+          <span class="mono">{awaiting.map((x) => stepLabel(x.id)).join(' ')}</span>
+          <Icon name="arrow-right" size={11} />
+        </button>
+      {/if}
+      {#if failed.length}
+        <button type="button" class="attn attn-failed" onclick={() => reveal(failed[0].id)}>
+          <Icon name="alert" size={12} />
+          <span>{tp('backlog.failedCount', failed.length)}</span>
+          <span class="mono">{failed.map((x) => stepLabel(x.id)).join(' ')}</span>
+          <Icon name="arrow-right" size={11} />
+        </button>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Filtro por estado: no lugar da antiga contagem, que só repetia o progresso. -->
   <div class="list-tools">
-    <span class="label mono">{tp('backlog.inOrder', ordered.length)}</span>
+    <div class="filters" role="group" aria-label={t('backlog.filterTitle')}>
+      <button
+        type="button"
+        class="chip label"
+        class:on={filter === 'ALL'}
+        aria-pressed={filter === 'ALL'}
+        onclick={() => (filter = 'ALL')}
+      >
+        {t('backlog.filterAll')} <span class="mono">{tasks.length}</span>
+      </button>
+      {#each counts as c (c.status)}
+        <button
+          type="button"
+          class="chip label"
+          class:on={filter === c.status}
+          class:accent={STATUS_META[c.status].accent}
+          aria-pressed={filter === c.status}
+          title={t('backlog.filterTitle')}
+          onclick={() => (filter = filter === c.status ? 'ALL' : c.status)}
+        >
+          {c.label} <span class="mono">{c.n}</span>
+        </button>
+      {/each}
+    </div>
     <div class="list-tools-actions">
       <button type="button" class="btn-link label" onclick={() => setAll(true)}>{t('backlog.expandAll')}</button>
       <span class="sep" aria-hidden="true">·</span>
@@ -872,8 +918,13 @@
     </div>
   </div>
 
+  {#if visible.length === 0}
+    <p class="filter-empty muted">{t('backlog.filterEmpty')}</p>
+  {/if}
+
   <ol class="list divide">
-    {#each ordered as task, i (task.id)}
+    {#each visible as task (task.id)}
+      {@const i = orderIndex.get(task.id) ?? 0}
       {@const stuck = blockers(task)}
       {@const isRunning = dispatching === task.id || task.status === 'RUNNING'}
       {@const isAwaiting = task.status === 'AWAITING_ANALYST'}
@@ -882,6 +933,7 @@
       {@const hasError = dispatchError?.id === task.id || (task.status === 'FAILED' && !!(task.error || task.last_comment))}
       {@const open = isOpen(task)}
       <li
+        id="task-{task.id}"
         class="task rise"
         class:is-running={isRunning}
         class:open
@@ -890,7 +942,7 @@
       >
         <!-- Número de Ordem de Execução Sequencial -->
         <div class="step-col">
-          <span class="step-num mono" class:done={isCompleted} title={t('backlog.orderTitle')}>
+          <span class="step-num mono" class:done={isCompleted} title="{t('backlog.orderTitle')} · {task.id}">
             {#if isCompleted}
               <Icon name="check" size={12} />
             {:else}
@@ -909,7 +961,7 @@
           >
             <span class="chev" class:rot={open} aria-hidden="true"><Icon name="arrow-right" size={11} /></span>
             <span class="title">{task.title}</span>
-            <StatusTag status={task.status} size="sm" />
+            <StatusTag status={isRunning ? 'RUNNING' : task.status} size="sm" />
             {#if !open}
               <span class="row-hint mono">
                 {#if isRunning}
@@ -927,12 +979,20 @@
 
           {#if open}
             <div class="detail" id="task-detail-{task.id}">
-              <p class="desc muted">{task.description}</p>
+              <p class="desc muted" class:clamp={isRunning && !descOpen[task.id]} lang={data.project.language || undefined}>{task.description}</p>
+              {#if isRunning && task.description.length > 280}
+                <button
+                  type="button"
+                  class="btn-link label read-more"
+                  onclick={() => (descOpen[task.id] = !descOpen[task.id])}
+                >
+                  {descOpen[task.id] ? t('backlog.readLess') : t('backlog.readMore')}
+                </button>
+              {/if}
 
+              <!-- O id da tarefa fica no título do número: aqui era só ruído. -->
               <div class="facts mono">
-                <span title={t('backlog.taskId')}>{task.id}</span>
                 {#if task.issue_url}
-                  <span class="sep" aria-hidden="true">·</span>
                   <a
                     href={task.issue_url}
                     target="_blank"
@@ -1037,6 +1097,12 @@
             </div>
           {/if}
 
+          {#if open && (task.assigned_branch || isRunning)}
+            <!-- Rodando, relê a branch a cada poucos segundos: é onde se vê o que
+                 o agente já escreveu, inclusive sem commit. -->
+            <TaskChanges taskId={task.id} title={`${stepLabel(task.id)} ${task.title}`} live={isRunning} />
+          {/if}
+
           {#if open}
             {#if isMerging}
               <div class="merging-banner">
@@ -1045,7 +1111,7 @@
               </div>
             {/if}
 
-            {#if dispatchError?.id === task.id || (task.status === 'FAILED' && (task.error || task.last_comment))}
+            {#if !isRunning && (dispatchError?.id === task.id || (task.status === 'FAILED' && (task.error || task.last_comment)))}
               {@const full = dispatchError?.id === task.id ? dispatchError.message : (task.error || task.last_comment || '')}
               {@const err = splitError(full)}
               <div class="error-box" role="alert">
@@ -1100,7 +1166,7 @@
           {:else if isRunning}
             <button
               type="button"
-              class="btn btn-line btn-sm danger"
+              class="btn btn-line btn-sm"
               onclick={() => stopTask(task.id)}
               disabled={stoppingTaskId === task.id}
               title={t('backlog.stopTitle')}
@@ -1139,35 +1205,6 @@
     {/each}
   </ol>
 {/if}
-
-<!-- Modal de Diff -->
-<Modal bind:open={diffOpen} title={t('backlog.diffTitle')}>
-  {#snippet body()}
-    {#if diffLoading}
-      <Skeleton variant="lines" rows={8} />
-    {:else if diffData}
-      <div class="diff-container">
-        <div class="diff-meta spread mono faint">
-          <span>{t('deploys.branch', { branch: `${diffData.branch} → ${diffData.base_branch}` })}</span>
-          {#if diffData.gitea_url}
-            <a href={diffData.gitea_url} target="_blank" rel="noopener noreferrer" class="link-ext">
-              {t('backlog.openInRepo')} <Icon name="external" size={10} />
-            </a>
-          {/if}
-        </div>
-        <pre class="diff-code mono">{diffData.diff || t('backlog.noChanges')}</pre>
-      </div>
-    {/if}
-  {/snippet}
-  {#snippet footer()}
-    <div class="spread modal-foot">
-      <div></div>
-      <button type="button" class="btn btn-line btn-sm" onclick={() => (diffOpen = false)}>
-        {t('common.close')}
-      </button>
-    </div>
-  {/snippet}
-</Modal>
 
 <!-- Modal de Deploy Coolify -->
 <Modal bind:open={deploymentModalOpen} title={t('backlog.deployModal')}>
@@ -1243,6 +1280,251 @@
     color: var(--ink);
   }
 
+  /* Barra da sessão: presa sob o cabeçalho global (3.25rem + filete). */
+  .runbar {
+    position: sticky;
+    top: calc(3.25rem + 1px);
+    z-index: 10;
+    margin-top: var(--s5);
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule-ink);
+  }
+
+  .runbar-main {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s3) var(--s5);
+    padding: var(--s3) 0;
+  }
+
+  .session-badge {
+    color: var(--ink);
+    font-size: var(--t-small);
+  }
+
+  .progress {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex: 1 1 10rem;
+    min-width: 8rem;
+    font-size: var(--t-small);
+  }
+
+  .progress-track {
+    flex: 1;
+    height: 4px;
+    background: var(--rule-2);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--ink);
+    transition: width 0.3s ease-out;
+  }
+
+  .totals {
+    color: var(--ink-3);
+  }
+
+  .runbar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-left: auto;
+  }
+
+  .runbar-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s2) var(--s3);
+    padding: var(--s2) 0;
+    border-top: 1px solid var(--rule);
+    font-size: var(--t-small);
+    color: var(--ink-2);
+  }
+
+  .menu {
+    position: relative;
+  }
+
+  .more {
+    letter-spacing: 0.1em;
+  }
+
+  .sheet {
+    position: absolute;
+    right: 0;
+    top: calc(100% + var(--s2));
+    z-index: 30;
+    min-width: 16rem;
+    max-width: min(24rem, calc(100vw - 2rem));
+    background: var(--paper);
+    border: 1px solid var(--rule-ink);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 36px -12px var(--shadow);
+  }
+
+  .sheet > :global(*) {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s2) var(--s3);
+    text-align: left;
+    font-size: var(--t-small);
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .sheet > :global(* + *) {
+    border-top: 1px solid var(--rule);
+  }
+
+  .sheet > :global(*:hover:not(:disabled):not([aria-disabled='true'])) {
+    background: var(--paper-sunk);
+  }
+
+  .sheet > :global(:disabled),
+  .sheet > :global([aria-disabled='true']) {
+    color: var(--ink-4);
+    cursor: default;
+  }
+
+  .env-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .env-url {
+    font-size: var(--t-micro);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .attention {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+    margin-top: var(--s4);
+  }
+
+  .attn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s2) var(--s3);
+    font-size: var(--t-small);
+    color: var(--ink);
+    background: transparent;
+    border: 1px solid var(--rule-ink);
+    cursor: pointer;
+  }
+
+  /* Agente parado à espera do analista: o único lugar do acento. */
+  .attn-await {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .attn-await:hover {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .attn-mark {
+    width: 6px;
+    height: 6px;
+    background: currentColor;
+  }
+
+  .attn-failed {
+    background: repeating-linear-gradient(-45deg, transparent 0 6px, var(--rule) 6px 7px);
+  }
+
+  .attn-failed:hover {
+    border-color: var(--ink);
+  }
+
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.2rem 0.5rem;
+    color: var(--ink-3);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+
+  .chip:hover {
+    color: var(--ink);
+  }
+
+  .chip.on {
+    color: var(--ink);
+    border-color: var(--rule-ink);
+  }
+
+  .chip.accent {
+    color: var(--accent);
+  }
+
+  .filter-empty {
+    padding: var(--s5) 0;
+    font-size: var(--t-small);
+  }
+
+  .desc.clamp {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .read-more {
+    margin-top: var(--s1);
+  }
+
+  /* Sem issue, o primeiro item visível começava por um separador. */
+  .facts > .sep:first-child {
+    display: none;
+  }
+
+  @media (max-width: 760px) {
+    .runbar {
+      position: static;
+    }
+
+    .runbar-actions {
+      margin-left: 0;
+    }
+  }
+
   .migration-banner {
     align-items: center;
     padding: var(--s3) var(--s4);
@@ -1251,168 +1533,30 @@
     margin-top: var(--s5);
   }
 
-  /* Barra de Progresso */
-  .progress-bar-card {
-    margin-top: var(--s5);
-    padding: var(--s4);
-    background: var(--paper-2);
-    border: 1px solid var(--rule-2);
-  }
 
-  .progress-meta {
-    font-size: var(--t-small);
-    margin-bottom: var(--s2);
-  }
 
-  .meta-left {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-  }
 
-  .session-badge {
-    color: var(--ink);
-  }
 
-  .progress-track {
-    height: 6px;
-    background: var(--rule-2);
-    overflow: hidden;
-  }
 
-  .session-close {
-    align-items: center;
-    gap: var(--s3);
-    flex-wrap: wrap;
-    margin-top: var(--s4);
-    padding-top: var(--s3);
-    border-top: 1px solid var(--rule-2);
-    font-size: var(--t-small);
-    color: var(--ink-2);
-  }
 
-  .progress-fill {
-    height: 100%;
-    background: var(--progress);
-    transition: width 0.3s ease-out;
-  }
 
-  /* Painel de Controle de Execução */
-  .control-panel {
-    margin-top: var(--s4);
-    border-bottom: 1px solid var(--rule-ink);
-    padding-bottom: var(--s4);
-  }
 
-  .control-top {
-    align-items: flex-end;
-    gap: var(--s4);
-    flex-wrap: wrap;
-  }
 
-  .tally {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s6);
-    padding: var(--s3) 0;
-  }
 
-  .count {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
 
-  .n {
-    font-size: 1.375rem;
-    font-weight: 500;
-    line-height: 1;
-    letter-spacing: -0.03em;
-  }
 
-  .count.accent .n,
-  .count.accent :global(.label) {
-    color: var(--accent);
-  }
 
-  .runner-controls {
-    display: flex;
-    align-items: center;
-    gap: var(--s3);
-    padding-bottom: var(--s2);
-    flex-wrap: wrap;
-  }
 
-  .ctrl-sep {
-    color: var(--rule-ink);
-    margin: 0 var(--s1);
-  }
 
-  /* Barra de Ambientes */
-  .env-bar {
-    align-items: center;
-    margin-top: var(--s3);
-    padding: var(--s2) var(--s3);
-    background: var(--paper-sunk);
-    border: 1px solid var(--rule-2);
-    font-size: var(--t-small);
-    flex-wrap: wrap;
-    gap: var(--s3);
-  }
 
-  .env-group {
-    display: flex;
-    align-items: center;
-    gap: var(--s3);
-    flex-wrap: wrap;
-  }
 
-  .env-item {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-  }
 
-  .env-name {
-    color: var(--ink-3);
-  }
 
-  .env-url {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    color: var(--ink);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
 
-  .env-url.dim {
-    color: var(--ink-4);
-    text-decoration: none;
-  }
 
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    display: inline-block;
-  }
 
-  .dot-green {
-    background: #10b981;
-  }
 
-  .dot-amber {
-    background: #f59e0b;
-  }
 
-  .btn-ghost {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    color: var(--ink-2);
-    text-decoration: underline;
-  }
 
   .test-task-btn {
     font-size: var(--t-micro);
@@ -1460,22 +1604,22 @@
   /* Faixa de deploy em andamento, sob a barra de ambientes */
   .deploy-progress {
     position: relative;
-    margin-top: var(--s3);
-    padding: var(--s2) var(--s4) calc(var(--s2) + 2px);
-    border: 1px solid var(--rule-2);
-    background: var(--paper-sunk);
+    padding-bottom: calc(var(--s2) + 2px);
     overflow: hidden;
   }
 
-  .deploy-progress-row {
-    display: flex;
-    align-items: center;
-    gap: var(--s3);
+  .deploy-progress-tail {
+    flex: 1 1 12rem;
+    min-width: 0;
+    font-size: var(--t-micro);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
+
 
   .deploy-progress-title {
     font-size: var(--t-small);
-    flex: 1;
     min-width: 0;
   }
 
@@ -1484,14 +1628,6 @@
     color: var(--ink-2);
   }
 
-  .deploy-progress-tail {
-    margin: var(--s1) 0 0;
-    padding-left: calc(12px + var(--s3));
-    font-size: var(--t-micro);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
 
   /* Barra indeterminada: o Coolify não informa porcentagem de progresso */
   .indeterminate {
@@ -1544,39 +1680,15 @@
     word-break: break-all;
   }
 
-  .active-pulse {
-    border-color: var(--accent);
-    color: var(--accent);
-    animation: pulse-border 1.5s infinite ease-in-out;
-  }
 
-  @keyframes pulse-border {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-  }
 
-  .queue-status-banner {
-    display: flex;
-    align-items: center;
-    gap: var(--s3);
-    margin-top: var(--s3);
-    padding: var(--s3) var(--s4);
-    background: var(--paper-sunk);
-    border-left: 3px solid var(--rule-2);
-    font-size: var(--t-small);
-    color: var(--ink-2);
-  }
 
-  .queue-status-banner.running {
-    border-left-color: var(--accent);
-    color: var(--ink);
-  }
 
   .spinner-inline {
     width: 12px;
     height: 12px;
     border: 2px solid var(--rule-2);
-    border-top-color: var(--accent);
+    border-top-color: var(--ink);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -1623,6 +1735,9 @@
   }
 
   .task {
+    /* Tudo o que o card abre ocupa a largura toda da coluna: descrição,
+       atividade, alterações e erros alinham pela mesma borda direita. */
+    --task-col: none;
     display: grid;
     grid-template-columns: 2.75rem 1fr auto;
     gap: var(--s4);
@@ -1731,9 +1846,10 @@
     color: var(--ink-3);
   }
 
-  .detail,
-  .activity {
-    padding-left: calc(11px + var(--s3));
+  /* Recuo único sob o título (depois da seta), para todos os blocos — inclusive
+     os componentes filhos, que o seletor com escopo não alcançaria. */
+  .body > :global(:not(.row-toggle)) {
+    margin-left: calc(11px + var(--s3));
   }
 
   .body {
@@ -1743,13 +1859,36 @@
   .desc {
     margin-top: var(--s2);
     font-size: var(--t-small);
-    max-width: var(--measure);
+    line-height: 1.6;
+    max-width: var(--task-col);
+    text-align: justify;
+    hyphens: auto;
+    overflow-wrap: break-word;
   }
 
+  /* Faixa entre réguas: separa a descrição do que vem abaixo dela. */
   .facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: var(--s1);
     margin-top: var(--s3);
+    padding: var(--s2) 0;
+    border-block: 1px solid var(--rule);
     font-size: var(--t-micro);
     color: var(--ink-3);
+  }
+
+  .facts > .sep {
+    align-self: stretch;
+    width: 1px;
+    margin-inline: var(--s3);
+    background: var(--rule-2);
+    font-size: 0;
+  }
+
+  .facts > .sep:first-child {
+    display: none;
   }
 
   .sep {
@@ -1831,12 +1970,12 @@
     border-left: 2px solid var(--rule-2);
     font-size: var(--t-small);
     color: var(--ink-2);
-    max-width: var(--measure);
+    max-width: var(--task-col);
   }
 
   .clar {
     margin-top: var(--s4);
-    max-width: 44rem;
+    max-width: var(--task-col);
   }
 
   .merging-banner {
@@ -1846,49 +1985,17 @@
     margin-top: var(--s4);
     padding: var(--s3) var(--s4);
     background: var(--paper-2);
-    border-left: 2px solid var(--accent);
+    border-left: 2px solid var(--ink);
     font-size: var(--t-small);
     color: var(--ink);
-    max-width: 44rem;
+    max-width: var(--task-col);
   }
 
-  .review-banner {
-    margin-top: var(--s4);
-    padding: var(--s3) var(--s4);
-    background: var(--paper-2);
-    border: 1px solid var(--rule-2);
-    border-left: 3px solid var(--ink);
-    max-width: 44rem;
-  }
 
-  .review-info {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--s2);
-  }
 
-  .check-icon {
-    display: inline-flex;
-    margin-top: 0.15rem;
-    color: var(--ink);
-  }
 
-  .review-text {
-    font-size: var(--t-small);
-    line-height: 1.45;
-    color: var(--ink-2);
-  }
 
-  .review-text strong {
-    color: var(--ink);
-  }
 
-  .review-text code {
-    font-family: var(--font-mono);
-    font-size: var(--t-micro);
-    background: var(--paper-sunk);
-    padding: 0.1rem 0.3rem;
-  }
 
   .completed-note {
     margin-top: var(--s2);
@@ -1898,7 +2005,7 @@
 
   .error-box {
     margin-top: var(--s3);
-    max-width: 44rem;
+    max-width: var(--task-col);
     padding: var(--s3) var(--s4);
     border-left: 2px solid var(--ink);
     background: repeating-linear-gradient(
@@ -1954,11 +2061,6 @@
     color: var(--ink);
   }
 
-  .btn-group {
-    display: flex;
-    align-items: center;
-    gap: var(--s2);
-  }
 
   .completed-tag {
     display: inline-flex;
@@ -1979,28 +2081,12 @@
     text-underline-offset: 2px;
   }
 
-  .issues-note {
-    margin: 0;
-    padding: var(--s2) var(--s4);
-    border-top: 1px solid var(--rule);
-    font-size: var(--t-micro);
-    color: var(--ink-2);
-  }
 
   .branch-link:hover {
     color: var(--ink);
   }
 
-  /* Modal de Diff */
-  .diff-container {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s3);
-  }
 
-  .diff-meta {
-    font-size: var(--t-small);
-  }
 
   .link-ext {
     display: inline-flex;
@@ -2010,16 +2096,6 @@
     text-decoration: underline;
   }
 
-  .diff-code {
-    max-height: 28rem;
-    overflow: auto;
-    font-size: var(--t-micro);
-    background: var(--paper-sunk);
-    padding: var(--s4);
-    border: 1px solid var(--rule);
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
 
   .modal-foot {
     width: 100%;

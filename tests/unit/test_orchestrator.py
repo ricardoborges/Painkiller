@@ -24,13 +24,13 @@ def mock_tracker():
 @pytest.fixture
 def mock_sandbox():
     sandbox = AsyncMock()
+    sandbox.run_tests.return_value = (0, "Tests passed")
     return sandbox
 
 
 @pytest.fixture
 def mock_git():
     git = AsyncMock()
-    git.run_tests.return_value = (0, "Tests passed")
     git.merge_branch.return_value = (0, "Fast-forward")
     return git
 
@@ -66,9 +66,9 @@ async def test_dispatch_task_success(mock_tracker, mock_sandbox, mock_git):
 
     mock_git.create_branch.assert_called_once()
     mock_sandbox.run_task.assert_called_once()
-    mock_git.run_tests.assert_called_once()
+    mock_sandbox.run_tests.assert_called_once()
     mock_git.merge_branch.assert_called_once_with("/repo", source_branch="feature/t1", target_branch="main")
-    mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.RUNNING, assigned_branch="feature/t1")
+    mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.RUNNING, assigned_branch="feature/t1", error="")
     mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.COMPLETED)
 
 
@@ -81,7 +81,7 @@ async def test_dispatch_task_treats_test_exit_code_5_as_success(mock_tracker, mo
     mock_tracker.get_project.return_value = project
     mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="Success")
     # Exit code 5 from pytest means 0 tests collected
-    mock_git.run_tests.return_value = (5, "collected 0 items\nno tests ran")
+    mock_sandbox.run_tests.return_value = (5, "collected 0 items\nno tests ran")
 
     orchestrator = PainkillerOrchestrator(
         tracker=mock_tracker,
@@ -198,6 +198,22 @@ async def test_dispatch_task_timeout_keeps_error_short(mock_tracker, mock_sandbo
 
 
 @pytest.mark.asyncio
+async def test_failed_run_still_pushes_branch_for_the_ui_link(mock_tracker, mock_sandbox, mock_git):
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    task = Task(id="t1", project_id="p1", title="T", description="D")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_git.push.return_value = (0, "Pushed")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=1, logs="boom")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    # Ao criar a branch e depois da falha: o link do card nunca dá 404 no Gitea.
+    assert [c.args for c in mock_git.push.call_args_list] == [("/repo", "feature/t1")] * 2
+
+
+@pytest.mark.asyncio
 async def test_retry_after_failure_tells_agent_to_continue(mock_tracker, mock_sandbox, mock_git):
     project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc", status=TaskStatus.FAILED)
@@ -297,7 +313,7 @@ async def test_abbreviate_tests_restarts_live_run_without_tests(mock_tracker, mo
     assert "prevalece sobre" in runs[1]
     assert "Execução anterior interrompida" in runs[1]
     mock_sandbox.stop_task.assert_awaited_once_with("t1")
-    mock_git.run_tests.assert_not_called()
+    mock_sandbox.run_tests.assert_not_called()
     statuses = [c.args[1] for c in mock_tracker.update_task_status.call_args_list]
     assert TaskStatus.FAILED not in statuses  # o reinício não registra falha
     assert statuses[-1] == TaskStatus.COMPLETED

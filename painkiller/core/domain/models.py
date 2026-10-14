@@ -287,6 +287,36 @@ class User(BaseModel):
         return self.role == UserRole.ADMIN
 
 
+class FileChange(BaseModel):
+    """One file a task's branch changed, relative to where it left the default branch."""
+    path: str
+    # A (novo), M (alterado), D (removido).
+    status: str = "M"
+    additions: int = 0
+    deletions: int = 0
+    binary: bool = False
+    # Sem patch quando o arquivo é binário ou quando a resposta já passou do teto.
+    patch: Optional[str] = None
+    truncated: bool = False
+
+
+class BranchChanges(BaseModel):
+    """What a task's branch changed, read from the repo while the agent works."""
+    branch: str
+    base_branch: str
+    # False quando a branch não existe (ainda não despachada ou já apagada).
+    available: bool = True
+    # A branch está em checkout: entra o que ainda não foi commitado.
+    live: bool = False
+    # Já incorporada na principal: o diff vem do commit de merge, então segue
+    # legível mesmo depois de a branch ser apagada ao fechar a sessão.
+    merged: bool = False
+    merge_commit: Optional[str] = None
+    files: list[FileChange] = Field(default_factory=list)
+    # Arquivos além do teto, só contados.
+    omitted: int = 0
+
+
 class ExecutionResult(BaseModel):
     """Outcome of running a task in a sandbox container."""
     exit_code: int

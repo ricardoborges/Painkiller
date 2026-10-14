@@ -62,7 +62,8 @@ async def abbreviate_tests(task_id: str, request: Request):
 # arquivo). O formato do `agy` não é contrato estável: sem acerto, fica só o nome.
 _TOOL_DETAIL_KEYS = (
     "command", "CommandLine", "cmd", "file_path", "path", "AbsolutePath",
-    "TargetFile", "pattern", "query", "url", "description",
+    "TargetFile", "pattern", "query", "url", "skill", "skill_name", "name",
+    "description",
 )
 
 
@@ -86,6 +87,10 @@ def _tool_detail(raw: dict) -> Optional[str]:
             value = args.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()[:200]
+        # Chave desconhecida: o primeiro texto curto ainda diz mais que só o nome.
+        for value in args.values():
+            if isinstance(value, str) and value.strip() and len(value) <= 200:
+                return value.strip()
     return None
 
 
@@ -165,6 +170,35 @@ async def merge_task(task_id: str, request: Request):
         return updated_task
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{task_id}/changes")
+async def get_task_changes(task_id: str, request: Request):
+    """Files the task's branch changed, per file, including what the agent has not committed yet.
+
+    Lê o repositório no host enquanto o contêiner trabalha (é o mesmo bind mount),
+    então a UI pode acompanhar a tarefa rodando sem esperar o commit.
+    """
+    tracker = request.app.state.tracker
+    task = await tracker.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    project = await tracker.get_project(task.project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    branch = task.assigned_branch or f"feature/{task.id}"
+    changes = await request.app.state.git.branch_changes(
+        project.repo_path, branch, base_branch=project.default_branch
+    )
+    # O mesmo diff no Gitea: o commit de merge, ou a comparação enquanto a
+    # branch não entrou (lá só aparece o que já foi enviado).
+    web_url = None
+    if project.repo_url:
+        if changes.merge_commit:
+            web_url = f"{project.repo_url}/commit/{changes.merge_commit}"
+        elif changes.available:
+            web_url = f"{project.repo_url}/compare/{project.default_branch}...{branch}"
+    return {**changes.model_dump(), "web_url": web_url}
 
 
 @router.get("/{task_id}/diff")

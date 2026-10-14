@@ -44,6 +44,13 @@
   --shadow: rgba(20, 20, 22, 0.24);
   --scrim: rgba(20, 20, 22, 0.32);
 
+  /* Terminal do agente: o único bloco invertido, ainda só tinta e papel. */
+  --term-bg: #141416;
+  --term-fg: #e4e4e7;
+  --term-dim: #8b8b93;
+  --term-faint: #5a5a62;
+  --term-rule: #2c2c32;
+
   color-scheme: light;
 
   /* Tipografia */
@@ -107,6 +114,12 @@
   --on-accent: #ffffff;
   --shadow: rgba(0, 0, 0, 0.6);
   --scrim: rgba(0, 0, 0, 0.55);
+
+  --term-bg: #0a0a0b;
+  --term-fg: #e4e4e7;
+  --term-dim: #8b8b93;
+  --term-faint: #55555c;
+  --term-rule: #26262b;
 
   color-scheme: dark;
 }

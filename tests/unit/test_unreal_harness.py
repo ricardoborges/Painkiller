@@ -332,3 +332,16 @@ def test_failed_turn_still_reports_its_usage(runner_output, capsys):
     assert error.type == AgentEventType.ERROR
     assert parse_agent_usage(error.raw) == (80, 10, None, "deepseek-v4-pro")
     assert parse_task_usage(out) == (80, 10, None, "deepseek-v4-pro")
+
+
+def test_tool_call_carries_arguments_as_ui_detail(capsys):
+    from painkiller.api.routes.tasks import _tool_detail
+
+    translator = bridge.TurnTranslator()
+    call = {"Type": "tool_call", "Data": {"CallID": "c1", "Name": "Bash", "Arguments": '{"command": "npm install"}'}}
+    translator.feed(_item(1, "model_response", _response([call])))
+    line = capsys.readouterr().out.strip().splitlines()[-1]
+
+    event = parse_agent_line(line)
+    assert event.type is AgentEventType.TOOL_USE
+    assert _tool_detail(event.raw) == "npm install"

@@ -1,5 +1,6 @@
 """Project routes with full CRUD, contextualization fields, and attachment upload."""
 
+import asyncio
 import os
 import shutil
 import uuid
@@ -16,6 +17,7 @@ from painkiller.core.attachment_reader import extract_attachment_text
 from painkiller.core.domain.models import EFFORT_HARNESSES, EFFORT_LEVELS, User, harness_effort, key_provider
 from painkiller.core.i18n import SUPPORTED_LOCALES, get_locale, translate
 from painkiller.core.naming import compose_project_identity
+from painkiller.core.scaffold import ScaffoldError, extract_scaffold
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -34,6 +36,9 @@ class CreateProjectRequest(BaseModel):
     effort: Optional[str] = None
     # Sem valor, vale o idioma em que o analista está usando a interface.
     language: Optional[str] = None
+    # Template escolhido no formulário: com arcabouço, ele vira o primeiro
+    # commit do repositório e as tarefas já começam com a estrutura pronta.
+    template_id: Optional[str] = None
 
 
 class UpdateProjectRequest(BaseModel):
@@ -129,6 +134,14 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
     effort = _checked_effort(req.harness, req.effort)
     language = _checked_language(req.language or get_locale())
 
+    scaffold = None
+    if req.template_id:
+        template = await tracker.get_project_template(req.template_id)
+        if not template or not template.is_active:
+            raise HTTPException(status_code=400, detail="Template não encontrado")
+        if template.scaffold_path and os.path.exists(template.scaffold_path):
+            scaffold = template
+
     identity = compose_project_identity(user, req.name)
 
     # Default repo path inside storage if not provided
@@ -137,6 +150,15 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
 
     default_branch = req.default_branch or "main"
     await git.init_repo(base_repo_path, default_branch=default_branch, initial_commit=True)
+    if scaffold:
+        try:
+            await asyncio.to_thread(extract_scaffold, scaffold.scaffold_path, base_repo_path)
+        except ScaffoldError as e:
+            if not req.repo_path:
+                shutil.rmtree(base_repo_path, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=f"O arcabouço do template é inválido: {e}")
+        # Commit próprio, antes do push: o Gitea já nasce com a estrutura em main.
+        await git.commit_wip(base_repo_path, f"chore: scaffold from template {scaffold.name}")
 
     repo_url = None
     if vcs:
@@ -240,6 +262,10 @@ async def delete_project(project_id: str, request: Request):
             import logging
             logging.getLogger(__name__).warning(f"Could not archive Gitea repo of {project_id}: {e}")
     await tracker.delete_project(project_id)
+    remove_cache = getattr(getattr(request.app.state, "sandbox", None), "remove_package_cache", None)
+    if remove_cache:
+        # Docker bloqueante: fora do loop, e falha não impede a exclusão.
+        await asyncio.get_running_loop().run_in_executor(None, remove_cache, project_id)
     return {"status": "deleted", "project_id": project_id}
 
 

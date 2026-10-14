@@ -2,6 +2,7 @@ import { i18n, t } from '$lib/i18n/index.svelte';
 import type {
   AgentEvent,
   AuthConfig,
+  BranchChanges,
   AnalysisSession,
   Clarification,
   InterrogationStart,
@@ -203,6 +204,8 @@ export const api = {
     model?: string;
     effort?: string;
     language?: string;
+    /** Com arcabouço, ele vira o primeiro commit do repositório. */
+    template_id?: string;
   }) => request<Project>('/projects', { method: 'POST', ...json(body) }),
 
   updateProject: (
@@ -391,6 +394,8 @@ export const api = {
       `/projects/${projectId}/issues/sync`,
       { method: 'POST' }
     ),
+
+  getTaskChanges: (id: string) => request<BranchChanges>(`/tasks/${id}/changes`),
 
   getTaskDiff: (id: string) =>
     request<{

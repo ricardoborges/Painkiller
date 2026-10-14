@@ -172,12 +172,18 @@ class PainkillerOrchestrator:
         branch_name = task.assigned_branch or f"feature/{task.id}"
         await self.git.create_branch(project.repo_path, branch_name, project.default_branch)
         task.assigned_branch = branch_name
+        # O link da branch na UI aponta para o Gitea: sem este push ele dá 404
+        # até a tarefa passar nos testes.
+        await self._push(project.repo_path, branch_name, task.id)
 
         # Mark as running and persist assigned branch
         await self.tracker.update_task_status(
             task.id,
             TaskStatus.RUNNING,
             assigned_branch=branch_name,
+            # O erro da execução anterior não vale mais: a UI o mostraria
+            # durante a nova tentativa.
+            error="",
         )
 
         # Build prompt instructions. As respostas já dadas pelo analista entram
@@ -203,6 +209,10 @@ class PainkillerOrchestrator:
         )
         self._note(task.id, tr("Agente encerrou com código {code}", code=result.exit_code))
         await self._record_usage(task, result, project)
+        if result.exit_code != 0:
+            # Pausa (o commit WIP do `painkiller ask`) ou falha: o que o agente
+            # commitou fica visível no Gitea. O sucesso envia antes do merge.
+            await self._push(project.repo_path, branch_name, task.id)
 
         if task.id in self._restart_requested and result.exit_code not in (0, 42):
             return None
@@ -235,7 +245,10 @@ class PainkillerOrchestrator:
                 test_code, test_out = 0, ""
             else:
                 self._note(task.id, tr("Executando a suíte de testes do repositório"))
-                test_code, test_out = await self.git.run_tests(project.repo_path)
+                # No worker, nunca no processo da API: a suíte é código do agente.
+                test_code, test_out = await self.sandbox.run_tests(
+                    task, project.repo_path, harness=project.harness, timeout_seconds=timeout
+                )
             if test_code in (0, 5):
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
                 await self._push(project.repo_path, branch_name, task.id)
@@ -489,6 +502,24 @@ class PainkillerOrchestrator:
                 "- Read only what you need to implement, implement it, commit and finish."
             ))
         instructions.append(L(f"\n## Descrição:\n{task.description}", f"\n## Description:\n{task.description}"))
+        # Cada passo do agente é uma ida ao modelo: sondar o ambiente e recriar o
+        # projeto custava minutos por tarefa antes de qualquer código.
+        instructions.append(L(
+            "\n## Ambiente (já pronto, não verifique):\n"
+            "- O contêiner já tem Node.js 22, npm, Python 3, pip, uv e git. Não confira versões, rede nem "
+            "gerenciadores de pacote antes de trabalhar.\n"
+            "- Se o repositório já tem estrutura de projeto (package.json, pyproject.toml, etc.), trabalhe "
+            "dentro dela: NÃO rode geradores (create-*, sv create, npm init, cookiecutter...) nem recrie a "
+            "estrutura. Instale dependências com o gerenciador que o projeto já usa.\n"
+            "- Os caches de npm, pip e uv persistem entre tarefas: instalar de novo é rápido.",
+            "\n## Environment (already set up, do not check):\n"
+            "- The container already has Node.js 22, npm, Python 3, pip, uv and git. Do not check versions, "
+            "network or package managers before working.\n"
+            "- If the repository already has a project structure (package.json, pyproject.toml, etc.), work "
+            "inside it: do NOT run generators (create-*, sv create, npm init, cookiecutter...) or recreate the "
+            "structure. Install dependencies with the package manager the project already uses.\n"
+            "- npm, pip and uv caches persist across tasks: reinstalling is fast.",
+        ))
         if retrying:
             instructions.append(L(
                 "\n## Execução anterior interrompida:\n"

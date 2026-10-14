@@ -33,6 +33,21 @@ class SandboxPort(ABC):
         pass
 
     @abstractmethod
+    async def run_tests(
+        self,
+        task: Task,
+        repo_path: str,
+        harness: Optional[Any] = None,
+        timeout_seconds: int = 900,
+    ) -> tuple[int, str]:
+        """Run the target repo's test suite in an isolated worker; return (exit code, output).
+
+        Exit code 5 means no tests were collected. The suite is code the agent
+        wrote, so it must never run in the caller's own process.
+        """
+        pass
+
+    @abstractmethod
     async def stop_task(self, task_id: str) -> None:
         """Force-stop any running container for a task."""
         pass
