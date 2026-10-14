@@ -6,6 +6,7 @@
     DeploymentRecord,
     DeploymentStatus,
     EnvironmentStatusResponse,
+    EnvironmentType,
     IterationSession,
     Project,
     SessionStatus,
@@ -15,6 +16,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
+  import { deploys } from '$lib/stores/deploys.svelte';
   import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
 
   /* Entrada de um projeto que já tem histórico: o que está no ar, quanto custou,
@@ -33,7 +35,11 @@
   $effect(() => {
     const id = project.id;
     ready = false;
-    Promise.all([
+    load(id);
+  });
+
+  function load(id: string) {
+    return Promise.all([
       api.getProjectUsage(id).catch(() => null),
       api.getEnvironmentStatus(id).catch(() => null),
       api.listDeployments(id, 5).catch(() => [] as DeploymentRecord[]),
@@ -45,7 +51,18 @@
       deployments = d;
       tasks = t;
       ready = true;
+      // Um deploy disparado antes de um F5 (ou no backlog) continua sendo acompanhado.
+      for (const s of [e?.test, e?.production]) {
+        if (s?.deployment_id && (s.status === 'PENDING' || s.status === 'BUILDING')) {
+          deploys.resume(s.deployment_id);
+        }
+      }
     });
+  }
+
+  // Deploy encerrado: URLs, status e a lista de últimos deploys mudam.
+  $effect(() => {
+    if (deploys.settled) load(project.id);
   });
 
   /* ---- ações ---- */
@@ -91,7 +108,7 @@
   /* O status do Coolify manda; sem registro de deploy, vale a URL fixa do projeto. */
   const environments = $derived([
     {
-      key: 'production',
+      key: 'production' as EnvironmentType,
       label: t('deploys.env.production'),
       url: env?.production.url ?? project.production_url ?? null,
       status: env?.production.status ?? null,
@@ -99,7 +116,7 @@
       updated: env?.production.updated_at ?? null
     },
     {
-      key: 'test',
+      key: 'test' as EnvironmentType,
       label: t('dashboard.test'),
       url: env?.test.url ?? project.test_url ?? null,
       status: env?.test.status ?? null,
@@ -108,7 +125,31 @@
     }
   ]);
 
-  const published = $derived(environments.some((e) => e.url));
+  /* ---- publicar ---- */
+
+  let triggering = $state<EnvironmentType | null>(null);
+  let deployError = $state<string | null>(null);
+
+  /* Teste: o backend escolhe a branch da última tarefa concluída da sessão aberta
+     (ou a branch padrão). Produção: sempre a branch padrão, com confirmação. */
+  async function deploy(environment: EnvironmentType) {
+    if (deploys.active(project.id, environment)) return;
+    if (environment === 'production' && !confirm(t('backlog.confirmProduction'))) return;
+    triggering = environment;
+    deployError = null;
+    try {
+      const record = await api.triggerDeploy(project.id, environment, undefined, openSession?.id);
+      deploys.track(record);
+      env = await api.getEnvironmentStatus(project.id).catch(() => env);
+    } catch (e) {
+      deployError =
+        e instanceof Error
+          ? e.message
+          : t(environment === 'test' ? 'backlog.deployTestFailed' : 'backlog.deployProductionFailed');
+    } finally {
+      triggering = null;
+    }
+  }
 
   /* ---- entregas ---- */
 
@@ -230,9 +271,10 @@
         <h2 class="label">{t('dashboard.published')}</h2>
         {#if !ready}
           <Skeleton rows={2} />
-        {:else if published}
+        {:else}
           <ul class="envs">
             {#each environments as e (e.key)}
+              {@const running = deploys.active(project.id, e.key)}
               <li class="env env-{e.key}" class:hatch={e.status === 'FAILED'} class:empty={!e.url}>
                 <div class="env-head">
                   <span class="env-ico">
@@ -260,17 +302,40 @@
                     {#if e.branch}<span class="truncate" title={e.branch}>{e.branch}</span>{/if}
                     {#if e.updated}<span>{when(e.updated)}</span>{/if}
                   </p>
-                  <a class="env-open btn btn-line btn-sm" href={e.url} target="_blank" rel="noopener noreferrer">
-                    {t('common.open')} <Icon name="external" size={10} />
-                  </a>
                 {:else}
                   <p class="env-none">{t('dashboard.notPublished')}</p>
                 {/if}
+                <div class="env-acts">
+                  <button
+                    type="button"
+                    class="btn btn-line btn-sm"
+                    onclick={() => deploy(e.key)}
+                    disabled={!!running || triggering !== null}
+                    title={e.key === 'test'
+                      ? t('dashboard.deployTestTitle', { branch: project.default_branch })
+                      : t('dashboard.deployProductionTitle', { branch: project.default_branch })}
+                  >
+                    {#if running}
+                      {t('dashboard.deploy.BUILDING')} <span class="mono tabular">{deploys.elapsed(running)}</span>
+                    {:else if triggering === e.key}
+                      {t('dashboard.deploying')}
+                    {:else}
+                      <Icon name="upload" size={10} />
+                      {e.key === 'test' ? t('dashboard.deployTest') : t('dashboard.deployProduction')}
+                    {/if}
+                  </button>
+                  {#if e.url}
+                    <a class="btn btn-line btn-sm" href={e.url} target="_blank" rel="noopener noreferrer">
+                      {t('common.open')} <Icon name="external" size={10} />
+                    </a>
+                  {/if}
+                </div>
               </li>
             {/each}
           </ul>
-        {:else}
-          <p class="faint none">{t('dashboard.nothingPublished')}</p>
+          {#if deployError}
+            <p class="err" role="alert">{deployError}</p>
+          {/if}
         {/if}
 
         {#if deployments.length}
@@ -502,11 +567,6 @@
     color: var(--ink-3);
   }
 
-  .none {
-    margin-top: var(--s3);
-    font-size: var(--t-small);
-  }
-
   /* ---- ambientes ---- */
 
   /* Exceção pedida à regra de cor única, como os toasts de deploy: cada ambiente
@@ -627,12 +687,18 @@
     white-space: nowrap;
   }
 
-  .env-open {
+  .env-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2);
+    margin-top: auto;
+    padding-top: var(--s2);
+  }
+
+  .env-acts .btn {
     display: inline-flex;
     align-items: center;
     gap: var(--s2);
-    align-self: flex-start;
-    margin-top: var(--s2);
   }
 
   .env-none {

@@ -135,15 +135,44 @@ def _model_keys(model: str) -> list[str]:
     return keys
 
 
+#: Preços que um projeto sobrescreve, por modelo.
+ProjectPrices = dict[str, ModelPrice]
+
+
+def inherited_prices(settings: UsageSettings, harness: Optional[object]) -> ProjectPrices:
+    """Admin prices a project of this harness inherits, by model.
+
+    O último vence: preços dos outros harnesses (registros de antes de o projeto
+    trocar de harness), a lista sem harness e, por cima, a do harness do projeto.
+    """
+    current = getattr(harness, "value", harness) or ""
+    merged: ProjectPrices = {}
+    for name, table in settings.harness_prices.items():
+        if name != current:
+            merged.update(table)
+    merged.update(settings.prices)
+    merged.update(settings.harness_prices.get(current, {}))
+    return merged
+
+
+def project_pricing(settings: UsageSettings, harness: Optional[object]) -> UsageSettings:
+    """The shared settings as one project of this harness sees them."""
+    return settings.model_copy(
+        update={"prices": inherited_prices(settings, harness), "harness_prices": {}}
+    )
+
+
 def resolve_price(
     model: str,
     settings: UsageSettings,
     fallback: Optional[PriceLookup] = None,
+    overrides: Optional[ProjectPrices] = None,
 ) -> tuple[Optional[ModelPrice], str]:
-    """Price for a model and where it came from: "settings", "catalog" or "none"."""
-    for key in _model_keys(model):
-        if key in settings.prices:
-            return settings.prices[key], "settings"
+    """Price for a model and where it came from: "project", "settings", "catalog" or "none"."""
+    for source, table in (("project", overrides or {}), ("settings", settings.prices)):
+        for key in _model_keys(model):
+            if key in table:
+                return table[key], source
     if fallback and model:
         price = fallback(model)
         if price is not None:
@@ -155,17 +184,18 @@ def record_cost(
     record: UsageRecord,
     settings: UsageSettings,
     fallback: Optional[PriceLookup] = None,
+    overrides: Optional[ProjectPrices] = None,
 ) -> Optional[float]:
     """USD cost of one record. None means we have tokens but no way to price them.
 
-    O preço cadastrado pelo analista vence, porque é o contrato dele; depois o
+    O preço do projeto vence, depois o do admin, porque são o contrato; depois o
     custo que a ferramenta reportou; por último o catálogo do LiteLLM.
     """
-    price, _ = resolve_price(record.model, settings, None)
+    price, _ = resolve_price(record.model, settings, None, overrides)
     if price is None and record.reported_cost_usd is not None:
         return record.reported_cost_usd
     if price is None:
-        price, _ = resolve_price(record.model, settings, fallback)
+        price, _ = resolve_price(record.model, settings, fallback, overrides)
     if price is None:
         return None
     return (
@@ -194,6 +224,7 @@ def summarize(
     budget_usd: Optional[float] = None,
     days: int = 30,
     now: Optional[datetime] = None,
+    overrides: Optional[ProjectPrices] = None,
 ) -> dict:
     """Aggregate one project's ledger into totals, budget position and breakdowns."""
     now = now or datetime.now(timezone.utc)
@@ -208,7 +239,7 @@ def summarize(
         daily[day] = {"date": day, "cost_usd": 0.0, "tokens": 0}
 
     for record in records:
-        cost = record_cost(record, settings, fallback)
+        cost = record_cost(record, settings, fallback, overrides)
         _add(totals, record, cost)
         _add(by_source[record.source.value], record, cost)
         _add(by_model.setdefault(record.model or "", _bucket()), record, cost)
@@ -225,7 +256,7 @@ def summarize(
     budget = budget_usd
     models = []
     for model, bucket in by_model.items():
-        price, origin = resolve_price(model, settings, fallback)
+        price, origin = resolve_price(model, settings, fallback, overrides)
         models.append(
             {
                 "key": model,

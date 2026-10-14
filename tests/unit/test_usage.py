@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from painkiller.adapters.issue_trackers.sqlite_tracker import SQLiteIssueTracker
 from painkiller.api.server import create_app
-from tests.auth_helpers import admin_headers
+from tests.auth_helpers import admin_headers, user_headers
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
@@ -21,7 +21,9 @@ from painkiller.core.domain.models import (
     UsageSource,
 )
 from painkiller.core.usage import (
+    inherited_prices,
     parse_agent_usage,
+    project_pricing,
     parse_task_usage,
     record_cost,
     summarize,
@@ -98,6 +100,33 @@ def test_record_cost_prefers_analyst_price_then_reported_then_catalog():
     assert record_cost(unreported, UsageSettings()) is None
 
 
+def test_project_inherits_its_harness_price_and_may_override_it():
+    settings = UsageSettings(
+        prices={"shared": ModelPrice(input_per_mtok=9), "deepseek-flash": ModelPrice(input_per_mtok=7)},
+        harness_prices={
+            "deepseek_superpowers": {"deepseek-flash": ModelPrice(input_per_mtok=1)},
+            "unreal_superpowers": {"deepseek-flash": ModelPrice(input_per_mtok=2),
+                                   "only-unreal": ModelPrice(input_per_mtok=3)},
+        },
+    )
+    # O harness do projeto vence a lista sem harness; a de outros harnesses é reserva.
+    prices = inherited_prices(settings, "deepseek_superpowers")
+    assert prices["deepseek-flash"].input_per_mtok == 1
+    assert prices["shared"].input_per_mtok == 9
+    assert prices["only-unreal"].input_per_mtok == 3
+    assert inherited_prices(settings, "unreal_superpowers")["deepseek-flash"].input_per_mtok == 2
+
+    record = UsageRecord(source=UsageSource.TASK, model="deepseek-flash", input_tokens=1_000_000)
+    seen = project_pricing(settings, "deepseek_superpowers")
+    assert record_cost(record, seen) == pytest.approx(1.0)
+    overrides = {"deepseek-flash": ModelPrice(input_per_mtok=4)}
+    assert record_cost(record, seen, overrides=overrides) == pytest.approx(4.0)
+
+    summary = summarize([record], seen, overrides=overrides)
+    assert summary["by_model"][0]["price_source"] == "project"
+    assert summarize([record], seen)["by_model"][0]["price_source"] == "settings"
+
+
 def test_summarize_budget_breakdowns_and_unpriced():
     now = datetime(2026, 9, 21, 12, tzinfo=timezone.utc)
     settings = UsageSettings(prices={"m1": ModelPrice(input_per_mtok=1, output_per_mtok=1)})
@@ -158,6 +187,13 @@ async def test_ledger_roundtrip(tmp_path):
         assert await ledger.get_project_budget("p2") is None
         await ledger.save_project_budget("p1", None)
         assert await ledger.get_project_budget("p1") is None
+
+        assert await ledger.get_project_prices("p1") == {}
+        await ledger.save_project_prices("p1", {"m": ModelPrice(output_per_mtok=2)})
+        assert await ledger.get_project_prices("p1") == {"m": ModelPrice(output_per_mtok=2)}
+        assert await ledger.get_project_prices("p2") == {}
+        await ledger.save_project_prices("p1", {})
+        assert await ledger.get_project_prices("p1") == {}
     finally:
         await ledger.close()
 
@@ -292,6 +328,58 @@ async def test_usage_routes_are_scoped_to_the_project(client):
     assert (await c.get(f"{base}/balances")).json() == []  # projeto sem chave
     await tracker.update_project(mine.id, harness="maki_superpowers", api_key="sk-proj")
     assert (await c.get(f"{base}/balances")).json()[0]["balance"] == 12.5
+
+
+async def test_admin_prices_per_harness_and_project_overrides(client):
+    c, app = client
+    tracker = app.state.tracker
+    project = await tracker.create_project(name="App", repo_path="/tmp/app")
+    await tracker.update_project(project.id, harness="deepseek_superpowers", api_key="sk-x")
+    base = f"/api/projects/{project.id}/usage"
+    await app.state.usage.record_usage(
+        UsageRecord(source=UsageSource.TASK, model="deepseek-flash", project_id=project.id,
+                    input_tokens=1_000_000, output_tokens=1_000_000)
+    )
+
+    res = await c.put("/api/usage/settings", json={
+        "harness_prices": {
+            "deepseek_superpowers": {"deepseek-flash": {"input_per_mtok": 0.25, "output_per_mtok": 0.75}},
+            "agy_superpowers": {},
+        },
+    })
+    assert res.status_code == 200
+    assert list(res.json()["harness_prices"]) == ["deepseek_superpowers"]
+    assert (await c.put("/api/usage/settings", json={"harness_prices": {"x": {}}})).status_code == 400
+
+    prices = (await c.get(f"{base}/prices")).json()
+    assert prices["harness"] == "deepseek_superpowers"
+    assert prices["model"] == "deepseek-flash"
+    assert prices["inherited"]["deepseek-flash"]["input_per_mtok"] == 0.25
+    assert prices["overrides"] == {}
+    assert (await c.get(base)).json()["totals"]["cost_usd"] == pytest.approx(1.0)
+
+    res = await c.put(f"{base}/prices", json={"prices": {
+        " deepseek-flash ": {"input_per_mtok": 1, "output_per_mtok": 2}, "": {"input_per_mtok": 5},
+    }})
+    assert res.json()["overrides"] == {"deepseek-flash": {"input_per_mtok": 1.0, "output_per_mtok": 2.0}}
+    summary = (await c.get(base)).json()
+    assert summary["totals"]["cost_usd"] == pytest.approx(3.0)
+    assert summary["by_model"][0]["price_source"] == "project"
+    assert (await c.get(f"{base}/records")).json()[0]["cost_usd"] == pytest.approx(3.0)
+
+    # Só o admin mexe na tabela compartilhada; o dono do projeto ajusta o dele.
+    alice = await tracker.create_user(email="alice@example.com")
+    mine = await tracker.create_project(name="Dela", repo_path="/tmp/dela", owner_id=alice.id)
+    alice_h = user_headers(alice.id)
+    assert (await c.get("/api/usage/settings", headers=alice_h)).status_code == 200
+    assert (await c.put("/api/usage/settings", json={}, headers=alice_h)).status_code == 403
+    res = await c.put(f"/api/projects/{mine.id}/usage/prices", headers=alice_h,
+                      json={"prices": {"gemini-3.8-flash": {"input_per_mtok": 1}}})
+    assert res.status_code == 200
+    assert (await c.get(f"{base}/prices", headers=alice_h)).status_code == 404
+
+    await tracker.delete_project(project.id)
+    assert await app.state.usage.get_project_prices(project.id) == {}
 
 
 async def test_fetch_balances_only_for_configured_providers(monkeypatch):

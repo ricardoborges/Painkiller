@@ -37,6 +37,7 @@ from painkiller.core.domain.models import (
     AnalysisStatus,
     AgentEvent,
     AgentEventType,
+    ModelPrice,
     UsageRecord,
     UsageSettings,
     UsageSource,
@@ -265,6 +266,10 @@ def _budget_key(project_id: str) -> str:
     return f"usage:budget:{project_id}"
 
 
+def _prices_key(project_id: str) -> str:
+    return f"usage:prices:{project_id}"
+
+
 class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, PlatformSettingsPort):
     """Asynchronous SQLite implementation of the tracker, usage ledger and user directory ports."""
 
@@ -434,7 +439,11 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
                 await session.execute(delete(TaskRecord).where(TaskRecord.project_id == project_id))
             await session.execute(delete(IterationSessionRecord).where(IterationSessionRecord.project_id == project_id))
             await session.execute(delete(ProjectRecord).where(ProjectRecord.id == project_id))
-            await session.execute(delete(SettingRecord).where(SettingRecord.key == _budget_key(project_id)))
+            await session.execute(
+                delete(SettingRecord).where(
+                    SettingRecord.key.in_((_budget_key(project_id), _prices_key(project_id)))
+                )
+            )
             await session.commit()
 
     def _to_project_domain(self, record: ProjectRecord) -> Project:
@@ -1096,6 +1105,16 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
     async def save_project_budget(self, project_id: str, budget_usd: Optional[float]) -> None:
         value = None if budget_usd is None else json.dumps({"budget_usd": budget_usd})
         await self._write_setting(_budget_key(project_id), value)
+
+    async def get_project_prices(self, project_id: str) -> dict[str, ModelPrice]:
+        value = await self._read_setting(_prices_key(project_id))
+        if not value:
+            return {}
+        return {model: ModelPrice.model_validate(p) for model, p in json.loads(value).items()}
+
+    async def save_project_prices(self, project_id: str, prices: dict[str, ModelPrice]) -> None:
+        value = json.dumps({m: p.model_dump() for m, p in prices.items()}) if prices else None
+        await self._write_setting(_prices_key(project_id), value)
 
     def _to_iteration_session_domain(self, record: IterationSessionRecord) -> IterationSession:
         return IterationSession(

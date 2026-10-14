@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 
-from painkiller.core.domain.models import UsageRecord, UsageSettings
+from painkiller.core.domain.models import ModelPrice, UsageRecord, UsageSettings
 
 
 class UsageLedgerPort(ABC):
@@ -42,4 +42,14 @@ class UsageLedgerPort(ABC):
     @abstractmethod
     async def save_project_budget(self, project_id: str, budget_usd: Optional[float]) -> None:
         """Persist the project's budget in USD; None removes it."""
+        pass
+
+    @abstractmethod
+    async def get_project_prices(self, project_id: str) -> dict[str, ModelPrice]:
+        """Return the model prices this project overrides (empty when it inherits all)."""
+        pass
+
+    @abstractmethod
+    async def save_project_prices(self, project_id: str, prices: dict[str, ModelPrice]) -> None:
+        """Persist the project's price overrides; an empty dict removes them."""
         pass

@@ -313,6 +313,7 @@ EN_US: dict[str, str] = {
         "🚀 Task approved and merged into the main branch ({branch}).",
     # ---- custos e chaves ----
     "Moeda local inválida. Use um código como BRL.": "Invalid local currency. Use a code such as USD.",
+    "Harness desconhecido na tabela de preços.": "Unknown harness in the price table.",
     "Não foi possível consultar o saldo: {error}": "Could not fetch the balance: {error}",
     "Validação não suportada para {provider}.": "Validation not supported for {provider}.",
     "Não foi possível falar com o provedor: {error}": "Could not reach the provider: {error}",

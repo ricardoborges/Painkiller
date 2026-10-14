@@ -25,6 +25,22 @@ export const DEEPSEEK_KEY_HARNESSES: readonly HarnessType[] = [
   'unreal_superpowers'
 ];
 
+/** Nome de cada harness, na ordem do formulário de projeto. Nomes próprios: não se traduzem. */
+export const HARNESS_NAMES: Record<HarnessType, string> = {
+  agy_superpowers: 'Antigravity (agy)',
+  deepseek_superpowers: 'DeepSeek Harness (dsh)',
+  maki_superpowers: 'Maki',
+  unreal_superpowers: 'Unreal Agent'
+};
+
+/** Modelos sugeridos por harness; o primeiro é o padrão (os mesmos presets do ProjectForm). */
+export const HARNESS_MODELS: Record<HarnessType, readonly string[]> = {
+  agy_superpowers: ['gemini-3.8-flash', 'gemini-3.8-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+  deepseek_superpowers: ['deepseek-flash', 'deepseek-v4-pro'],
+  maki_superpowers: ['deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4-flash', 'deepseek/deepseek-flash'],
+  unreal_superpowers: ['deepseek-flash', 'deepseek-v4-pro']
+};
+
 export type EffortLevel = 'low' | 'medium' | 'high';
 
 /** Harnesses com nível de esforço ajustável (agy e dsh); Maki e Unreal não têm. */
@@ -451,12 +467,24 @@ export interface ModelPrice {
   output_per_mtok: number;
 }
 
-/** Vale para todos os projetos; o orçamento é por projeto. */
+/** Definido pelo admin, vale para todos os projetos; o orçamento é por projeto. */
 export interface UsageSettings {
   /** Unidades da moeda local por 1 USD. */
   exchange_rate: number | null;
   local_currency: string;
+  /** Preço por modelo para qualquer harness (lista anterior aos preços por harness). */
   prices: Record<string, ModelPrice>;
+  /** Preço por harness e modelo: o que cada projeto herda do seu harness. */
+  harness_prices: Partial<Record<HarnessType, Record<string, ModelPrice>>>;
+}
+
+/** Preços de um projeto: os herdados do admin e os que ele sobrescreve. */
+export interface ProjectPrices {
+  harness: HarnessType;
+  /** Modelo efetivo do projeto (o escolhido ou o padrão do harness). */
+  model: string;
+  inherited: Record<string, ModelPrice>;
+  overrides: Record<string, ModelPrice>;
 }
 
 export interface UsageBucket {
@@ -481,7 +509,7 @@ export interface UsageSummary {
   by_source: (UsageBucket & { key: UsageSource })[];
   by_model: (UsageBucket & {
     price: ModelPrice | null;
-    price_source: 'settings' | 'catalog' | 'none';
+    price_source: 'project' | 'settings' | 'catalog' | 'none';
   })[];
   daily: { date: string; cost_usd: number; tokens: number }[];
 }

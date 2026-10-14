@@ -84,11 +84,9 @@ services:
       # nomeado: os contentores irmaos montam estes mesmos caminhos pelo host.
       - ./storage:/app/storage
 
-      # Frontend estático da SPA servido pelo FastAPI
-      - ./painkiller/api/static:/app/painkiller/api/static
-
-      # Codigo python em hot-reload
-      - ./painkiller:/app/painkiller
+      # Sem bind mount de ./painkiller nem de static/: a imagem ja traz o codigo
+      # e a SPA construida, e static/ nao e versionado (vazio num clone novo),
+      # entao monta-lo por cima servia 404 em "/".
 
       - painkiller-db:/data
 

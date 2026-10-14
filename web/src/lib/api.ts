@@ -16,6 +16,8 @@ import type {
   TaskStreamState,
   UsageEntry,
   UsageSettings,
+  ModelPrice,
+  ProjectPrices,
   UsageSummary,
   User,
   DeploymentRecord,
@@ -413,7 +415,7 @@ export const api = {
       gitea_url: string | null;
     }>(`/tasks/${id}/diff`),
 
-  /* ---- custos (por projeto; preços e câmbio são compartilhados) ---- */
+  /* ---- custos (por projeto; o admin define câmbio e preços por harness) ---- */
   getProjectUsage: (projectId: string) => request<UsageSummary>(`/projects/${projectId}/usage`),
 
   listProjectUsageRecords: (projectId: string, limit = 50) =>
@@ -425,7 +427,18 @@ export const api = {
       ...json({ budget_usd })
     }),
 
+  getProjectPrices: (projectId: string) =>
+    request<ProjectPrices>(`/projects/${projectId}/usage/prices`),
+
+  saveProjectPrices: (projectId: string, prices: Record<string, ModelPrice>) =>
+    request<ProjectPrices>(`/projects/${projectId}/usage/prices`, {
+      method: 'PUT',
+      ...json({ prices })
+    }),
+
   getUsageSettings: () => request<UsageSettings>('/usage/settings'),
+
+  /** Só o admin. */
 
   saveUsageSettings: (body: UsageSettings) =>
     request<UsageSettings>('/usage/settings', { method: 'PUT', ...json(body) }),

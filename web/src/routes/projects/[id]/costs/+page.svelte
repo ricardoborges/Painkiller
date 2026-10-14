@@ -1,13 +1,18 @@
 <script lang="ts">
   import { t, tp, i18n, formatDate, formatNumber } from '$lib/i18n/index.svelte';
   import { api } from '$lib/api';
-  import type {
-    UsageEntry,
-    UsageSettings,
-    UsageSource,
-    UsageSummary
+  import { auth } from '$lib/stores/auth.svelte';
+  import {
+    HARNESS_NAMES,
+    type ModelPrice,
+    type ProjectPrices,
+    type UsageEntry,
+    type UsageSource,
+    type UsageSummary
   } from '$lib/types';
+  import { fromRows, parseAmount, toRows, type PriceRow } from '$lib/prices';
   import Icon from '$lib/components/Icon.svelte';
+  import PriceRows from '$lib/components/PriceRows.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import Placeholder from '$lib/components/Placeholder.svelte';
 
@@ -25,11 +30,9 @@
   let loading = $state(true);
   let error = $state('');
 
-  // Formulário de configuração: cópia editável, só vira UsageSettings no salvar.
-  type PriceRow = { model: string; input: string; output: string };
+  // Formulário: orçamento e preços que este projeto sobrescreve; o resto vem do admin.
   let budget = $state('');
-  let currency = $state('BRL');
-  let rate = $state('');
+  let pricing = $state<ProjectPrices | null>(null);
   let priceRows = $state<PriceRow[]>([]);
   let saving = $state(false);
   let saveError = $state('');
@@ -45,14 +48,14 @@
     loading = true;
     error = '';
     try {
-      const [s, r, settings] = await Promise.all([
+      const [s, r, p] = await Promise.all([
         api.getProjectUsage(projectId),
         api.listProjectUsageRecords(projectId, 30),
-        api.getUsageSettings()
+        api.getProjectPrices(projectId)
       ]);
       summary = s;
       records = r;
-      fillForm(settings, s.budget.budget_usd);
+      fillForm(p, s.budget.budget_usd);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -60,62 +63,33 @@
     }
   }
 
-  function fillForm(s: UsageSettings, budgetUsd: number | null) {
+  function fillForm(p: ProjectPrices, budgetUsd: number | null) {
     budget = budgetUsd == null ? '' : String(budgetUsd);
-    currency = s.local_currency || 'BRL';
-    rate = s.exchange_rate == null ? '' : String(s.exchange_rate);
-    priceRows = Object.entries(s.prices).map(([model, p]) => ({
-      model,
-      input: String(p.input_per_mtok),
-      output: String(p.output_per_mtok)
-    }));
-  }
-
-  /** Aceita vírgula decimal, que é o que um analista brasileiro digita (e ponto, em inglês). */
-  function num(text: string): number | null {
-    const clean = text.trim().replace(/\s/g, '').replace(',', '.');
-    if (!clean) return null;
-    const n = Number(clean);
-    return Number.isFinite(n) ? n : NaN;
+    pricing = p;
+    priceRows = toRows(p.overrides);
   }
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
     saveError = '';
-    const budgetN = num(budget);
-    const rateN = num(rate);
+    const budgetN = parseAmount(budget);
     if (Number.isNaN(budgetN) || (budgetN ?? 0) < 0) {
       saveError = t('costs.budgetInvalid');
       return;
     }
-    if (Number.isNaN(rateN) || (rateN != null && rateN <= 0)) {
-      saveError = t('costs.rateInvalid');
+    const { prices, invalid } = fromRows(priceRows);
+    if (invalid) {
+      saveError = t('costs.priceInvalid', { model: invalid });
       return;
-    }
-    const prices: UsageSettings['prices'] = {};
-    for (const row of priceRows) {
-      const model = row.model.trim();
-      if (!model) continue;
-      const i = num(row.input) ?? 0;
-      const o = num(row.output) ?? 0;
-      if (Number.isNaN(i) || Number.isNaN(o) || i < 0 || o < 0) {
-        saveError = t('costs.priceInvalid', { model });
-        return;
-      }
-      prices[model] = { input_per_mtok: i, output_per_mtok: o };
     }
 
     saving = true;
     try {
-      const [saved, savedBudget] = await Promise.all([
-        api.saveUsageSettings({
-          exchange_rate: rateN,
-          local_currency: currency.trim().toUpperCase() || 'BRL',
-          prices
-        }),
+      const [savedPrices, savedBudget] = await Promise.all([
+        api.saveProjectPrices(projectId, prices),
         api.saveProjectBudget(projectId, budgetN)
       ]);
-      fillForm(saved, savedBudget.budget_usd);
+      fillForm(savedPrices, savedBudget.budget_usd);
       savedAt = new Date();
       // Preço novo muda o custo de tudo que já foi gasto: recalcula.
       const [s, r] = await Promise.all([
@@ -129,14 +103,6 @@
     } finally {
       saving = false;
     }
-  }
-
-  function addPrice(model = '', input = '', output = '') {
-    priceRows = [...priceRows, { model, input, output }];
-  }
-
-  function removePrice(i: number) {
-    priceRows = priceRows.filter((_, idx) => idx !== i);
   }
 
   /* ---- formatação ---- */
@@ -185,11 +151,14 @@
   const over = $derived((summary?.budget.remaining_usd ?? 0) < 0);
   const dailyMax = $derived(Math.max(0, ...(summary?.daily.map((d) => d.cost_usd) ?? [])));
   const dailyTotal = $derived(summary?.daily.reduce((a, d) => a + d.cost_usd, 0) ?? 0);
-  const unpricedModels = $derived(
-    summary?.by_model.filter(
-      (m) => m.price_source !== 'settings' && !priceRows.some((r) => r.model.trim() === m.key)
-    ) ?? []
-  );
+  const inheritedRows = $derived(Object.entries(pricing?.inherited ?? {}));
+  const overridden = $derived(new Set(priceRows.map((r) => r.model.trim())));
+  /** Atalhos: o modelo do projeto, os herdados e os que já consumiram tokens. */
+  const suggestions = $derived<{ model: string; price?: ModelPrice | null }[]>([
+    ...(pricing ? [{ model: pricing.model, price: pricing.inherited[pricing.model] }] : []),
+    ...inheritedRows.map(([model, price]) => ({ model, price })),
+    ...(summary?.by_model ?? []).filter((m) => m.key).map((m) => ({ model: m.key, price: m.price }))
+  ]);
 </script>
 
 <div class="spread head">
@@ -368,7 +337,13 @@
               <td class="num mono">
                 {#if m.price}
                   {money(m.price.input_per_mtok)} / {money(m.price.output_per_mtok)}
-                  <span class="tag">{m.price_source === 'settings' ? t('costs.yours') : t('costs.catalog')}</span>
+                  <span class="tag">
+                    {m.price_source === 'project'
+                      ? t('costs.priceProject')
+                      : m.price_source === 'settings'
+                        ? t('costs.priceAdmin')
+                        : t('costs.catalog')}
+                  </span>
                 {:else}
                   <span class="tag unpriced">{t('costs.noPrice')}</span>
                 {/if}
@@ -435,56 +410,41 @@
         </div>
       </div>
 
-      <h3 class="label sub-title">{t('costs.shared')}</h3>
-      <p class="help">{t('costs.sharedHelp')}</p>
-      <div class="fields">
-        <div class="field">
-          <label for="currency">{t('costs.localCurrency')}</label>
-          <input id="currency" class="input mono" maxlength="5" bind:value={currency} />
-        </div>
-        <div class="field">
-          <label for="rate">{t('costs.rate')}</label>
-          <input id="rate" class="input mono" inputmode="decimal" placeholder={t('costs.ratePlaceholder')} bind:value={rate} />
-        </div>
-      </div>
-
       <h3 class="label sub-title">{t('costs.pricesTitle')}</h3>
-      {#if priceRows.length > 0}
-        <div class="prices">
-          <span class="label">{t('costs.model')}</span>
-          <span class="label">{t('costs.input')}</span>
-          <span class="label">{t('costs.output')}</span>
-          <span></span>
-          {#each priceRows as row, i (i)}
-            <input class="input mono" aria-label={t('costs.model')} placeholder="gemini-3.8-flash" bind:value={row.model} />
-            <input class="input mono" aria-label={t('costs.inputPrice')} inputmode="decimal" bind:value={row.input} />
-            <input class="input mono" aria-label={t('costs.outputPrice')} inputmode="decimal" bind:value={row.output} />
-            <button type="button" class="btn-icon" aria-label={t('costs.removePrice')} onclick={() => removePrice(i)}>
-              <Icon name="trash" />
-            </button>
-          {/each}
-        </div>
+      <p class="help">
+        {t('costs.inheritHelp', { harness: pricing ? HARNESS_NAMES[pricing.harness] : '' })}
+        {#if auth.isAdmin}<a class="link" href="/admin/prices">{t('costs.editAdminPrices')}</a>{/if}
+      </p>
+      {#if inheritedRows.length === 0}
+        <p class="help faint">{t('costs.noInherited')}</p>
+      {:else}
+        <table class="table inherited">
+          <thead>
+            <tr>
+              <th>{t('costs.model')}</th>
+              <th class="num">{t('costs.input')}</th>
+              <th class="num">{t('costs.output')}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each inheritedRows as [model, price] (model)}
+              <tr class:faint={overridden.has(model)}>
+                <td class="mono nowrap">{model}</td>
+                <td class="num mono">{money(price.input_per_mtok)}</td>
+                <td class="num mono">{money(price.output_per_mtok)}</td>
+                <td class="num">
+                  {#if overridden.has(model)}<span class="tag">{t('costs.overridden')}</span>{/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       {/if}
 
-      <div class="row gap">
-        <button type="button" class="btn btn-line btn-sm" onclick={() => addPrice()}>
-          <Icon name="plus" size={12} /> {t('costs.addModel')}
-        </button>
-        {#each unpricedModels as m (m.key)}
-          <button
-            type="button"
-            class="btn btn-quiet btn-sm mono"
-            onclick={() =>
-              addPrice(
-                m.key,
-                m.price ? String(m.price.input_per_mtok) : '',
-                m.price ? String(m.price.output_per_mtok) : ''
-              )}
-          >
-            + {m.key || t('costs.unknown')}
-          </button>
-        {/each}
-      </div>
+      <h3 class="label sub-title">{t('costs.overridesTitle')}</h3>
+      <p class="help">{t('costs.overridesHelp')}</p>
+      <PriceRows bind:rows={priceRows} {suggestions} placeholder={pricing?.model} />
 
       <div class="row gap actions">
         <button type="submit" class="btn btn-solid" disabled={saving}>
@@ -791,11 +751,8 @@
     margin-top: var(--s3);
   }
 
-  .prices {
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr auto;
-    gap: var(--s2) var(--s3);
-    align-items: center;
+  .settings .help {
+    max-width: var(--measure);
   }
 
   .gap {
@@ -825,11 +782,6 @@
 
     .stat + .stat {
       border-top: 1px solid var(--rule);
-    }
-
-    .prices {
-      grid-template-columns: 1.6fr 1fr 1fr auto;
-      gap: var(--s2);
     }
   }
 </style>

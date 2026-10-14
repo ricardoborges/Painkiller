@@ -7,6 +7,7 @@
 
   const tabs = $derived([
     { href: '/admin/templates', label: t('adminTabs.templates') },
+    { href: '/admin/prices', label: t('adminTabs.prices') },
     { href: '/admin/settings', label: t('adminTabs.settings') }
   ]);
 </script>

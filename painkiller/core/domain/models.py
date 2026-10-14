@@ -439,14 +439,19 @@ class ModelPrice(BaseModel):
 
 
 class UsageSettings(BaseModel):
-    """Analyst-defined pricing overrides, shared by every project.
+    """Admin-defined pricing, shared by every project.
 
-    O orçamento não mora aqui: é por projeto (`UsageLedgerPort.get_project_budget`).
+    O orçamento não mora aqui: é por projeto (`UsageLedgerPort.get_project_budget`),
+    assim como os preços que um projeto sobrescreve (`get_project_prices`).
     """
     # Quantas unidades da moeda local valem 1 USD. Vazio = só mostra USD.
     exchange_rate: Optional[float] = None
     local_currency: str = "BRL"
+    # Preço por modelo para qualquer harness (a lista anterior aos preços por harness).
     prices: dict[str, ModelPrice] = Field(default_factory=dict)
+    # Preço por harness (`HarnessType.value`) e modelo: o que cada projeto herda
+    # do seu harness.
+    harness_prices: dict[str, dict[str, ModelPrice]] = Field(default_factory=dict)
 
 
 #: Etapas do wizard de setup inicial, na ordem em que aparecem.
