@@ -1,0 +1,210 @@
+{
+ "id": "interview",
+ "text": "It starts with an interview. A containerized agent runs the Superpowers brainstorming skill, asking one question at a time, often as clickable choices, until the idea is crystal clear.",
+ "durationMs": 11378,
+ "captions": [
+  {
+   "text": "It",
+   "startMs": 0,
+   "endMs": 163,
+   "timestampMs": 82,
+   "confidence": null
+  },
+  {
+   "text": " starts",
+   "startMs": 209,
+   "endMs": 557,
+   "timestampMs": 383,
+   "confidence": null
+  },
+  {
+   "text": " with",
+   "startMs": 592,
+   "endMs": 708,
+   "timestampMs": 650,
+   "confidence": null
+  },
+  {
+   "text": " an",
+   "startMs": 755,
+   "endMs": 813,
+   "timestampMs": 784,
+   "confidence": null
+  },
+  {
+   "text": " interview.",
+   "startMs": 859,
+   "endMs": 1428,
+   "timestampMs": 1144,
+   "confidence": null
+  },
+  {
+   "text": " A",
+   "startMs": 1579,
+   "endMs": 1660,
+   "timestampMs": 1620,
+   "confidence": null
+  },
+  {
+   "text": " containerized",
+   "startMs": 1730,
+   "endMs": 2450,
+   "timestampMs": 2090,
+   "confidence": null
+  },
+  {
+   "text": " agent",
+   "startMs": 2508,
+   "endMs": 2879,
+   "timestampMs": 2694,
+   "confidence": null
+  },
+  {
+   "text": " runs",
+   "startMs": 2961,
+   "endMs": 3274,
+   "timestampMs": 3118,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 3344,
+   "endMs": 3425,
+   "timestampMs": 3385,
+   "confidence": null
+  },
+  {
+   "text": " Superpowers",
+   "startMs": 3471,
+   "endMs": 4063,
+   "timestampMs": 3767,
+   "confidence": null
+  },
+  {
+   "text": " brainstorming",
+   "startMs": 4110,
+   "endMs": 4748,
+   "timestampMs": 4429,
+   "confidence": null
+  },
+  {
+   "text": " skill,",
+   "startMs": 4818,
+   "endMs": 5271,
+   "timestampMs": 5045,
+   "confidence": null
+  },
+  {
+   "text": " asking",
+   "startMs": 5445,
+   "endMs": 5863,
+   "timestampMs": 5654,
+   "confidence": null
+  },
+  {
+   "text": " one",
+   "startMs": 5944,
+   "endMs": 6130,
+   "timestampMs": 6037,
+   "confidence": null
+  },
+  {
+   "text": " question",
+   "startMs": 6165,
+   "endMs": 6525,
+   "timestampMs": 6345,
+   "confidence": null
+  },
+  {
+   "text": " at",
+   "startMs": 6571,
+   "endMs": 6629,
+   "timestampMs": 6600,
+   "confidence": null
+  },
+  {
+   "text": " a",
+   "startMs": 6687,
+   "endMs": 6711,
+   "timestampMs": 6699,
+   "confidence": null
+  },
+  {
+   "text": " time,",
+   "startMs": 6769,
+   "endMs": 7233,
+   "timestampMs": 7001,
+   "confidence": null
+  },
+  {
+   "text": " often",
+   "startMs": 7361,
+   "endMs": 7639,
+   "timestampMs": 7500,
+   "confidence": null
+  },
+  {
+   "text": " as",
+   "startMs": 7674,
+   "endMs": 7744,
+   "timestampMs": 7709,
+   "confidence": null
+  },
+  {
+   "text": " clickable",
+   "startMs": 7802,
+   "endMs": 8197,
+   "timestampMs": 8000,
+   "confidence": null
+  },
+  {
+   "text": " choices,",
+   "startMs": 8231,
+   "endMs": 8824,
+   "timestampMs": 8528,
+   "confidence": null
+  },
+  {
+   "text": " until",
+   "startMs": 8870,
+   "endMs": 9125,
+   "timestampMs": 8998,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 9172,
+   "endMs": 9242,
+   "timestampMs": 9207,
+   "confidence": null
+  },
+  {
+   "text": " idea",
+   "startMs": 9311,
+   "endMs": 9613,
+   "timestampMs": 9462,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 9671,
+   "endMs": 9752,
+   "timestampMs": 9712,
+   "confidence": null
+  },
+  {
+   "text": " crystal",
+   "startMs": 9810,
+   "endMs": 10147,
+   "timestampMs": 9979,
+   "confidence": null
+  },
+  {
+   "text": " clear.",
+   "startMs": 10205,
+   "endMs": 11378,
+   "timestampMs": 10792,
+   "confidence": null
+  }
+ ]
+}

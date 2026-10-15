@@ -1,0 +1,217 @@
+{
+ "id": "ask",
+ "text": "When an agent hits ambiguity, it doesn't guess. It asks: it commits its work, and exits with code forty-two. The analyst answers, and the agent resumes right where it stopped.",
+ "durationMs": 11564,
+ "captions": [
+  {
+   "text": "When",
+   "startMs": 0,
+   "endMs": 232,
+   "timestampMs": 116,
+   "confidence": null
+  },
+  {
+   "text": " an",
+   "startMs": 279,
+   "endMs": 337,
+   "timestampMs": 308,
+   "confidence": null
+  },
+  {
+   "text": " agent",
+   "startMs": 395,
+   "endMs": 697,
+   "timestampMs": 546,
+   "confidence": null
+  },
+  {
+   "text": " hits",
+   "startMs": 755,
+   "endMs": 964,
+   "timestampMs": 860,
+   "confidence": null
+  },
+  {
+   "text": " ambiguity,",
+   "startMs": 998,
+   "endMs": 1718,
+   "timestampMs": 1358,
+   "confidence": null
+  },
+  {
+   "text": " it",
+   "startMs": 1776,
+   "endMs": 1892,
+   "timestampMs": 1834,
+   "confidence": null
+  },
+  {
+   "text": " doesn't",
+   "startMs": 1927,
+   "endMs": 2194,
+   "timestampMs": 2061,
+   "confidence": null
+  },
+  {
+   "text": " guess.",
+   "startMs": 2241,
+   "endMs": 2879,
+   "timestampMs": 2560,
+   "confidence": null
+  },
+  {
+   "text": " It",
+   "startMs": 3053,
+   "endMs": 3204,
+   "timestampMs": 3129,
+   "confidence": null
+  },
+  {
+   "text": " asks:",
+   "startMs": 3262,
+   "endMs": 3796,
+   "timestampMs": 3529,
+   "confidence": null
+  },
+  {
+   "text": " it",
+   "startMs": 3878,
+   "endMs": 4005,
+   "timestampMs": 3942,
+   "confidence": null
+  },
+  {
+   "text": " commits",
+   "startMs": 4040,
+   "endMs": 4354,
+   "timestampMs": 4197,
+   "confidence": null
+  },
+  {
+   "text": " its",
+   "startMs": 4400,
+   "endMs": 4528,
+   "timestampMs": 4464,
+   "confidence": null
+  },
+  {
+   "text": " work,",
+   "startMs": 4586,
+   "endMs": 5097,
+   "timestampMs": 4842,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 5190,
+   "endMs": 5329,
+   "timestampMs": 5260,
+   "confidence": null
+  },
+  {
+   "text": " exits",
+   "startMs": 5399,
+   "endMs": 5735,
+   "timestampMs": 5567,
+   "confidence": null
+  },
+  {
+   "text": " with",
+   "startMs": 5770,
+   "endMs": 5909,
+   "timestampMs": 5840,
+   "confidence": null
+  },
+  {
+   "text": " code",
+   "startMs": 5968,
+   "endMs": 6269,
+   "timestampMs": 6119,
+   "confidence": null
+  },
+  {
+   "text": " forty-two.",
+   "startMs": 6316,
+   "endMs": 7163,
+   "timestampMs": 6740,
+   "confidence": null
+  },
+  {
+   "text": " The",
+   "startMs": 7674,
+   "endMs": 7790,
+   "timestampMs": 7732,
+   "confidence": null
+  },
+  {
+   "text": " analyst",
+   "startMs": 7848,
+   "endMs": 8220,
+   "timestampMs": 8034,
+   "confidence": null
+  },
+  {
+   "text": " answers,",
+   "startMs": 8290,
+   "endMs": 8882,
+   "timestampMs": 8586,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 8916,
+   "endMs": 9056,
+   "timestampMs": 8986,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 9091,
+   "endMs": 9160,
+   "timestampMs": 9126,
+   "confidence": null
+  },
+  {
+   "text": " agent",
+   "startMs": 9207,
+   "endMs": 9474,
+   "timestampMs": 9341,
+   "confidence": null
+  },
+  {
+   "text": " resumes",
+   "startMs": 9520,
+   "endMs": 9915,
+   "timestampMs": 9718,
+   "confidence": null
+  },
+  {
+   "text": " right",
+   "startMs": 9996,
+   "endMs": 10205,
+   "timestampMs": 10101,
+   "confidence": null
+  },
+  {
+   "text": " where",
+   "startMs": 10240,
+   "endMs": 10403,
+   "timestampMs": 10322,
+   "confidence": null
+  },
+  {
+   "text": " it",
+   "startMs": 10437,
+   "endMs": 10507,
+   "timestampMs": 10472,
+   "confidence": null
+  },
+  {
+   "text": " stopped.",
+   "startMs": 10553,
+   "endMs": 11564,
+   "timestampMs": 11059,
+   "confidence": null
+  }
+ ]
+}

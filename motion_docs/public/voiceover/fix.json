@@ -1,0 +1,126 @@
+{
+ "id": "fix",
+ "text": "And if a deploy fails? The build log becomes a new task, and the agent fixes it.",
+ "durationMs": 5666,
+ "captions": [
+  {
+   "text": "And",
+   "startMs": 0,
+   "endMs": 186,
+   "timestampMs": 93,
+   "confidence": null
+  },
+  {
+   "text": " if",
+   "startMs": 244,
+   "endMs": 313,
+   "timestampMs": 279,
+   "confidence": null
+  },
+  {
+   "text": " a",
+   "startMs": 360,
+   "endMs": 383,
+   "timestampMs": 372,
+   "confidence": null
+  },
+  {
+   "text": " deploy",
+   "startMs": 441,
+   "endMs": 778,
+   "timestampMs": 610,
+   "confidence": null
+  },
+  {
+   "text": " fails?",
+   "startMs": 848,
+   "endMs": 1474,
+   "timestampMs": 1161,
+   "confidence": null
+  },
+  {
+   "text": " The",
+   "startMs": 1800,
+   "endMs": 1904,
+   "timestampMs": 1852,
+   "confidence": null
+  },
+  {
+   "text": " build",
+   "startMs": 1962,
+   "endMs": 2194,
+   "timestampMs": 2078,
+   "confidence": null
+  },
+  {
+   "text": " log",
+   "startMs": 2229,
+   "endMs": 2403,
+   "timestampMs": 2316,
+   "confidence": null
+  },
+  {
+   "text": " becomes",
+   "startMs": 2461,
+   "endMs": 2763,
+   "timestampMs": 2612,
+   "confidence": null
+  },
+  {
+   "text": " a",
+   "startMs": 2798,
+   "endMs": 2821,
+   "timestampMs": 2810,
+   "confidence": null
+  },
+  {
+   "text": " new",
+   "startMs": 2879,
+   "endMs": 3019,
+   "timestampMs": 2949,
+   "confidence": null
+  },
+  {
+   "text": " task,",
+   "startMs": 3077,
+   "endMs": 3587,
+   "timestampMs": 3332,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 3657,
+   "endMs": 3785,
+   "timestampMs": 3721,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 3820,
+   "endMs": 3889,
+   "timestampMs": 3855,
+   "confidence": null
+  },
+  {
+   "text": " agent",
+   "startMs": 3947,
+   "endMs": 4238,
+   "timestampMs": 4093,
+   "confidence": null
+  },
+  {
+   "text": " fixes",
+   "startMs": 4296,
+   "endMs": 4656,
+   "timestampMs": 4476,
+   "confidence": null
+  },
+  {
+   "text": " it.",
+   "startMs": 4714,
+   "endMs": 5666,
+   "timestampMs": 5190,
+   "confidence": null
+  }
+ ]
+}

@@ -1,0 +1,182 @@
+{
+ "id": "deploy",
+ "text": "Then Painkiller pushes to its built-in Gitea, and hands the branch to Coolify. Each task gets its own preview, and production is one click away.",
+ "durationMs": 9845,
+ "captions": [
+  {
+   "text": "Then",
+   "startMs": 0,
+   "endMs": 267,
+   "timestampMs": 134,
+   "confidence": null
+  },
+  {
+   "text": " Painkiller",
+   "startMs": 348,
+   "endMs": 824,
+   "timestampMs": 586,
+   "confidence": null
+  },
+  {
+   "text": " pushes",
+   "startMs": 859,
+   "endMs": 1173,
+   "timestampMs": 1016,
+   "confidence": null
+  },
+  {
+   "text": " to",
+   "startMs": 1219,
+   "endMs": 1289,
+   "timestampMs": 1254,
+   "confidence": null
+  },
+  {
+   "text": " its",
+   "startMs": 1370,
+   "endMs": 1474,
+   "timestampMs": 1422,
+   "confidence": null
+  },
+  {
+   "text": " built-in",
+   "startMs": 1521,
+   "endMs": 1939,
+   "timestampMs": 1730,
+   "confidence": null
+  },
+  {
+   "text": " Gitea,",
+   "startMs": 2032,
+   "endMs": 2624,
+   "timestampMs": 2328,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 2740,
+   "endMs": 2879,
+   "timestampMs": 2810,
+   "confidence": null
+  },
+  {
+   "text": " hands",
+   "startMs": 2937,
+   "endMs": 3158,
+   "timestampMs": 3048,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 3193,
+   "endMs": 3262,
+   "timestampMs": 3228,
+   "confidence": null
+  },
+  {
+   "text": " branch",
+   "startMs": 3297,
+   "endMs": 3576,
+   "timestampMs": 3437,
+   "confidence": null
+  },
+  {
+   "text": " to",
+   "startMs": 3622,
+   "endMs": 3680,
+   "timestampMs": 3651,
+   "confidence": null
+  },
+  {
+   "text": " Coolify.",
+   "startMs": 3738,
+   "endMs": 4493,
+   "timestampMs": 4116,
+   "confidence": null
+  },
+  {
+   "text": " Each",
+   "startMs": 4934,
+   "endMs": 5166,
+   "timestampMs": 5050,
+   "confidence": null
+  },
+  {
+   "text": " task",
+   "startMs": 5213,
+   "endMs": 5619,
+   "timestampMs": 5416,
+   "confidence": null
+  },
+  {
+   "text": " gets",
+   "startMs": 5700,
+   "endMs": 5909,
+   "timestampMs": 5805,
+   "confidence": null
+  },
+  {
+   "text": " its",
+   "startMs": 5956,
+   "endMs": 6072,
+   "timestampMs": 6014,
+   "confidence": null
+  },
+  {
+   "text": " own",
+   "startMs": 6118,
+   "endMs": 6304,
+   "timestampMs": 6211,
+   "confidence": null
+  },
+  {
+   "text": " preview,",
+   "startMs": 6374,
+   "endMs": 7001,
+   "timestampMs": 6688,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 7152,
+   "endMs": 7303,
+   "timestampMs": 7228,
+   "confidence": null
+  },
+  {
+   "text": " production",
+   "startMs": 7361,
+   "endMs": 7848,
+   "timestampMs": 7605,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 7918,
+   "endMs": 8046,
+   "timestampMs": 7982,
+   "confidence": null
+  },
+  {
+   "text": " one",
+   "startMs": 8104,
+   "endMs": 8278,
+   "timestampMs": 8191,
+   "confidence": null
+  },
+  {
+   "text": " click",
+   "startMs": 8313,
+   "endMs": 8522,
+   "timestampMs": 8418,
+   "confidence": null
+  },
+  {
+   "text": " away.",
+   "startMs": 8568,
+   "endMs": 9845,
+   "timestampMs": 9207,
+   "confidence": null
+  }
+ ]
+}

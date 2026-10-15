@@ -1,0 +1,126 @@
+{
+ "id": "hook",
+ "text": "Describing an app is easy. Shipping it is the hard part: specs, tickets, handoffs, reviews, and deploys.",
+ "durationMs": 7616,
+ "captions": [
+  {
+   "text": "Describing",
+   "startMs": 0,
+   "endMs": 580,
+   "timestampMs": 290,
+   "confidence": null
+  },
+  {
+   "text": " an",
+   "startMs": 627,
+   "endMs": 685,
+   "timestampMs": 656,
+   "confidence": null
+  },
+  {
+   "text": " app",
+   "startMs": 731,
+   "endMs": 882,
+   "timestampMs": 807,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 940,
+   "endMs": 1022,
+   "timestampMs": 981,
+   "confidence": null
+  },
+  {
+   "text": " easy.",
+   "startMs": 1103,
+   "endMs": 1625,
+   "timestampMs": 1364,
+   "confidence": null
+  },
+  {
+   "text": " Shipping",
+   "startMs": 1869,
+   "endMs": 2206,
+   "timestampMs": 2038,
+   "confidence": null
+  },
+  {
+   "text": " it",
+   "startMs": 2264,
+   "endMs": 2345,
+   "timestampMs": 2305,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 2403,
+   "endMs": 2485,
+   "timestampMs": 2444,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 2531,
+   "endMs": 2601,
+   "timestampMs": 2566,
+   "confidence": null
+  },
+  {
+   "text": " hard",
+   "startMs": 2659,
+   "endMs": 2856,
+   "timestampMs": 2758,
+   "confidence": null
+  },
+  {
+   "text": " part:",
+   "startMs": 2914,
+   "endMs": 3320,
+   "timestampMs": 3117,
+   "confidence": null
+  },
+  {
+   "text": " specs,",
+   "startMs": 3471,
+   "endMs": 4075,
+   "timestampMs": 3773,
+   "confidence": null
+  },
+  {
+   "text": " tickets,",
+   "startMs": 4122,
+   "endMs": 4725,
+   "timestampMs": 4424,
+   "confidence": null
+  },
+  {
+   "text": " handoffs,",
+   "startMs": 4795,
+   "endMs": 5457,
+   "timestampMs": 5126,
+   "confidence": null
+  },
+  {
+   "text": " reviews,",
+   "startMs": 5584,
+   "endMs": 6084,
+   "timestampMs": 5834,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 6118,
+   "endMs": 6246,
+   "timestampMs": 6182,
+   "confidence": null
+  },
+  {
+   "text": " deploys.",
+   "startMs": 6304,
+   "endMs": 7616,
+   "timestampMs": 6960,
+   "confidence": null
+  }
+ ]
+}

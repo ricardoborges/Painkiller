@@ -1,0 +1,154 @@
+{
+ "id": "intro",
+ "text": "Meet Painkiller: a self-hosted platform that turns a conversation into running software, by orchestrating AI coding agents inside isolated Docker containers.",
+ "durationMs": 10356,
+ "captions": [
+  {
+   "text": "Meet",
+   "startMs": 0,
+   "endMs": 244,
+   "timestampMs": 122,
+   "confidence": null
+  },
+  {
+   "text": " Painkiller:",
+   "startMs": 302,
+   "endMs": 1045,
+   "timestampMs": 674,
+   "confidence": null
+  },
+  {
+   "text": " a",
+   "startMs": 1324,
+   "endMs": 1370,
+   "timestampMs": 1347,
+   "confidence": null
+  },
+  {
+   "text": " self-hosted",
+   "startMs": 1463,
+   "endMs": 2125,
+   "timestampMs": 1794,
+   "confidence": null
+  },
+  {
+   "text": " platform",
+   "startMs": 2171,
+   "endMs": 2635,
+   "timestampMs": 2403,
+   "confidence": null
+  },
+  {
+   "text": " that",
+   "startMs": 2682,
+   "endMs": 2798,
+   "timestampMs": 2740,
+   "confidence": null
+  },
+  {
+   "text": " turns",
+   "startMs": 2844,
+   "endMs": 3135,
+   "timestampMs": 2990,
+   "confidence": null
+  },
+  {
+   "text": " a",
+   "startMs": 3170,
+   "endMs": 3193,
+   "timestampMs": 3182,
+   "confidence": null
+  },
+  {
+   "text": " conversation",
+   "startMs": 3251,
+   "endMs": 3866,
+   "timestampMs": 3559,
+   "confidence": null
+  },
+  {
+   "text": " into",
+   "startMs": 3913,
+   "endMs": 4063,
+   "timestampMs": 3988,
+   "confidence": null
+  },
+  {
+   "text": " running",
+   "startMs": 4145,
+   "endMs": 4412,
+   "timestampMs": 4279,
+   "confidence": null
+  },
+  {
+   "text": " software,",
+   "startMs": 4470,
+   "endMs": 5166,
+   "timestampMs": 4818,
+   "confidence": null
+  },
+  {
+   "text": " by",
+   "startMs": 5445,
+   "endMs": 5584,
+   "timestampMs": 5515,
+   "confidence": null
+  },
+  {
+   "text": " orchestrating",
+   "startMs": 5666,
+   "endMs": 6339,
+   "timestampMs": 6003,
+   "confidence": null
+  },
+  {
+   "text": " AI",
+   "startMs": 6420,
+   "endMs": 6757,
+   "timestampMs": 6589,
+   "confidence": null
+  },
+  {
+   "text": " coding",
+   "startMs": 6838,
+   "endMs": 7175,
+   "timestampMs": 7007,
+   "confidence": null
+  },
+  {
+   "text": " agents",
+   "startMs": 7233,
+   "endMs": 7605,
+   "timestampMs": 7419,
+   "confidence": null
+  },
+  {
+   "text": " inside",
+   "startMs": 7674,
+   "endMs": 8173,
+   "timestampMs": 7924,
+   "confidence": null
+  },
+  {
+   "text": " isolated",
+   "startMs": 8243,
+   "endMs": 8800,
+   "timestampMs": 8522,
+   "confidence": null
+  },
+  {
+   "text": " Docker",
+   "startMs": 8858,
+   "endMs": 9149,
+   "timestampMs": 9004,
+   "confidence": null
+  },
+  {
+   "text": " containers.",
+   "startMs": 9195,
+   "endMs": 10356,
+   "timestampMs": 9776,
+   "confidence": null
+  }
+ ]
+}

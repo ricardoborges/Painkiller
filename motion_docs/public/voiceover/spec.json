@@ -1,0 +1,203 @@
+{
+ "id": "spec",
+ "text": "The result is a written spec, committed to Git. This is spec-driven development: the spec is broken down into small, atomic tasks, each with acceptance criteria and dependencies.",
+ "durationMs": 11610,
+ "captions": [
+  {
+   "text": "The",
+   "startMs": 0,
+   "endMs": 163,
+   "timestampMs": 82,
+   "confidence": null
+  },
+  {
+   "text": " result",
+   "startMs": 232,
+   "endMs": 569,
+   "timestampMs": 401,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 627,
+   "endMs": 708,
+   "timestampMs": 668,
+   "confidence": null
+  },
+  {
+   "text": " a",
+   "startMs": 743,
+   "endMs": 766,
+   "timestampMs": 755,
+   "confidence": null
+  },
+  {
+   "text": " written",
+   "startMs": 813,
+   "endMs": 1080,
+   "timestampMs": 947,
+   "confidence": null
+  },
+  {
+   "text": " spec,",
+   "startMs": 1149,
+   "endMs": 1649,
+   "timestampMs": 1399,
+   "confidence": null
+  },
+  {
+   "text": " committed",
+   "startMs": 1730,
+   "endMs": 2125,
+   "timestampMs": 1928,
+   "confidence": null
+  },
+  {
+   "text": " to",
+   "startMs": 2159,
+   "endMs": 2218,
+   "timestampMs": 2189,
+   "confidence": null
+  },
+  {
+   "text": " Git.",
+   "startMs": 2287,
+   "endMs": 2728,
+   "timestampMs": 2508,
+   "confidence": null
+  },
+  {
+   "text": " This",
+   "startMs": 3170,
+   "endMs": 3379,
+   "timestampMs": 3275,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 3448,
+   "endMs": 3518,
+   "timestampMs": 3483,
+   "confidence": null
+  },
+  {
+   "text": " spec-driven",
+   "startMs": 3553,
+   "endMs": 4180,
+   "timestampMs": 3867,
+   "confidence": null
+  },
+  {
+   "text": " development:",
+   "startMs": 4238,
+   "endMs": 4899,
+   "timestampMs": 4569,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 5108,
+   "endMs": 5201,
+   "timestampMs": 5155,
+   "confidence": null
+  },
+  {
+   "text": " spec",
+   "startMs": 5248,
+   "endMs": 5492,
+   "timestampMs": 5370,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 5550,
+   "endMs": 5619,
+   "timestampMs": 5585,
+   "confidence": null
+  },
+  {
+   "text": " broken",
+   "startMs": 5677,
+   "endMs": 5991,
+   "timestampMs": 5834,
+   "confidence": null
+  },
+  {
+   "text": " down",
+   "startMs": 6037,
+   "endMs": 6246,
+   "timestampMs": 6142,
+   "confidence": null
+  },
+  {
+   "text": " into",
+   "startMs": 6304,
+   "endMs": 6467,
+   "timestampMs": 6386,
+   "confidence": null
+  },
+  {
+   "text": " small,",
+   "startMs": 6536,
+   "endMs": 6908,
+   "timestampMs": 6722,
+   "confidence": null
+  },
+  {
+   "text": " atomic",
+   "startMs": 6931,
+   "endMs": 7314,
+   "timestampMs": 7123,
+   "confidence": null
+  },
+  {
+   "text": " tasks,",
+   "startMs": 7372,
+   "endMs": 7988,
+   "timestampMs": 7680,
+   "confidence": null
+  },
+  {
+   "text": " each",
+   "startMs": 8197,
+   "endMs": 8406,
+   "timestampMs": 8302,
+   "confidence": null
+  },
+  {
+   "text": " with",
+   "startMs": 8452,
+   "endMs": 8591,
+   "timestampMs": 8522,
+   "confidence": null
+  },
+  {
+   "text": " acceptance",
+   "startMs": 8626,
+   "endMs": 9172,
+   "timestampMs": 8899,
+   "confidence": null
+  },
+  {
+   "text": " criteria",
+   "startMs": 9207,
+   "endMs": 9845,
+   "timestampMs": 9526,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 9903,
+   "endMs": 10019,
+   "timestampMs": 9961,
+   "confidence": null
+  },
+  {
+   "text": " dependencies.",
+   "startMs": 10077,
+   "endMs": 11610,
+   "timestampMs": 10844,
+   "confidence": null
+  }
+ ]
+}

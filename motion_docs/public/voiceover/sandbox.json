@@ -1,0 +1,168 @@
+{
+ "id": "sandbox",
+ "text": "Every task gets its own sandboxed container, on its own feature branch. Agents work in parallel, and you can watch every step live.",
+ "durationMs": 9056,
+ "captions": [
+  {
+   "text": "Every",
+   "startMs": 0,
+   "endMs": 337,
+   "timestampMs": 169,
+   "confidence": null
+  },
+  {
+   "text": " task",
+   "startMs": 383,
+   "endMs": 755,
+   "timestampMs": 569,
+   "confidence": null
+  },
+  {
+   "text": " gets",
+   "startMs": 836,
+   "endMs": 1057,
+   "timestampMs": 947,
+   "confidence": null
+  },
+  {
+   "text": " its",
+   "startMs": 1103,
+   "endMs": 1219,
+   "timestampMs": 1161,
+   "confidence": null
+  },
+  {
+   "text": " own",
+   "startMs": 1265,
+   "endMs": 1451,
+   "timestampMs": 1358,
+   "confidence": null
+  },
+  {
+   "text": " sandboxed",
+   "startMs": 1544,
+   "endMs": 2113,
+   "timestampMs": 1829,
+   "confidence": null
+  },
+  {
+   "text": " container,",
+   "startMs": 2159,
+   "endMs": 2821,
+   "timestampMs": 2490,
+   "confidence": null
+  },
+  {
+   "text": " on",
+   "startMs": 2937,
+   "endMs": 3077,
+   "timestampMs": 3007,
+   "confidence": null
+  },
+  {
+   "text": " its",
+   "startMs": 3123,
+   "endMs": 3239,
+   "timestampMs": 3181,
+   "confidence": null
+  },
+  {
+   "text": " own",
+   "startMs": 3286,
+   "endMs": 3495,
+   "timestampMs": 3391,
+   "confidence": null
+  },
+  {
+   "text": " feature",
+   "startMs": 3576,
+   "endMs": 3889,
+   "timestampMs": 3733,
+   "confidence": null
+  },
+  {
+   "text": " branch.",
+   "startMs": 3913,
+   "endMs": 4470,
+   "timestampMs": 4192,
+   "confidence": null
+  },
+  {
+   "text": " Agents",
+   "startMs": 4911,
+   "endMs": 5364,
+   "timestampMs": 5138,
+   "confidence": null
+  },
+  {
+   "text": " work",
+   "startMs": 5410,
+   "endMs": 5642,
+   "timestampMs": 5526,
+   "confidence": null
+  },
+  {
+   "text": " in",
+   "startMs": 5700,
+   "endMs": 5759,
+   "timestampMs": 5730,
+   "confidence": null
+  },
+  {
+   "text": " parallel,",
+   "startMs": 5828,
+   "endMs": 6409,
+   "timestampMs": 6119,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 6478,
+   "endMs": 6618,
+   "timestampMs": 6548,
+   "confidence": null
+  },
+  {
+   "text": " you",
+   "startMs": 6676,
+   "endMs": 6745,
+   "timestampMs": 6711,
+   "confidence": null
+  },
+  {
+   "text": " can",
+   "startMs": 6792,
+   "endMs": 6908,
+   "timestampMs": 6850,
+   "confidence": null
+  },
+  {
+   "text": " watch",
+   "startMs": 6966,
+   "endMs": 7210,
+   "timestampMs": 7088,
+   "confidence": null
+  },
+  {
+   "text": " every",
+   "startMs": 7268,
+   "endMs": 7523,
+   "timestampMs": 7396,
+   "confidence": null
+  },
+  {
+   "text": " step",
+   "startMs": 7570,
+   "endMs": 7825,
+   "timestampMs": 7698,
+   "confidence": null
+  },
+  {
+   "text": " live.",
+   "startMs": 7906,
+   "endMs": 9056,
+   "timestampMs": 8481,
+   "confidence": null
+  }
+ ]
+}

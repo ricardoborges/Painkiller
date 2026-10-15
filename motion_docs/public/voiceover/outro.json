@@ -1,0 +1,56 @@
+{
+ "id": "outro",
+ "text": "Painkiller. From conversation, to spec, to production.",
+ "durationMs": 3715,
+ "captions": [
+  {
+   "text": "Painkiller.",
+   "startMs": 0,
+   "endMs": 766,
+   "timestampMs": 383,
+   "confidence": null
+  },
+  {
+   "text": " From",
+   "startMs": 1091,
+   "endMs": 1265,
+   "timestampMs": 1178,
+   "confidence": null
+  },
+  {
+   "text": " conversation,",
+   "startMs": 1335,
+   "endMs": 2020,
+   "timestampMs": 1678,
+   "confidence": null
+  },
+  {
+   "text": " to",
+   "startMs": 2067,
+   "endMs": 2171,
+   "timestampMs": 2119,
+   "confidence": null
+  },
+  {
+   "text": " spec,",
+   "startMs": 2241,
+   "endMs": 2624,
+   "timestampMs": 2433,
+   "confidence": null
+  },
+  {
+   "text": " to",
+   "startMs": 2659,
+   "endMs": 2740,
+   "timestampMs": 2700,
+   "confidence": null
+  },
+  {
+   "text": " production.",
+   "startMs": 2810,
+   "endMs": 3715,
+   "timestampMs": 3263,
+   "confidence": null
+  }
+ ]
+}

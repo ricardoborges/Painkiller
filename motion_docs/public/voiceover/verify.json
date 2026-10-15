@@ -1,0 +1,175 @@
+{
+ "id": "verify",
+ "text": "When the agent is done, the tests run in a fresh worker. Green means merge. And every token is counted against the project's budget.",
+ "durationMs": 8499,
+ "captions": [
+  {
+   "text": "When",
+   "startMs": 0,
+   "endMs": 244,
+   "timestampMs": 122,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 279,
+   "endMs": 348,
+   "timestampMs": 314,
+   "confidence": null
+  },
+  {
+   "text": " agent",
+   "startMs": 406,
+   "endMs": 685,
+   "timestampMs": 546,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 743,
+   "endMs": 824,
+   "timestampMs": 784,
+   "confidence": null
+  },
+  {
+   "text": " done,",
+   "startMs": 882,
+   "endMs": 1231,
+   "timestampMs": 1057,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 1324,
+   "endMs": 1428,
+   "timestampMs": 1376,
+   "confidence": null
+  },
+  {
+   "text": " tests",
+   "startMs": 1474,
+   "endMs": 1823,
+   "timestampMs": 1649,
+   "confidence": null
+  },
+  {
+   "text": " run",
+   "startMs": 1892,
+   "endMs": 2101,
+   "timestampMs": 1997,
+   "confidence": null
+  },
+  {
+   "text": " in",
+   "startMs": 2171,
+   "endMs": 2252,
+   "timestampMs": 2212,
+   "confidence": null
+  },
+  {
+   "text": " a",
+   "startMs": 2287,
+   "endMs": 2310,
+   "timestampMs": 2299,
+   "confidence": null
+  },
+  {
+   "text": " fresh",
+   "startMs": 2368,
+   "endMs": 2624,
+   "timestampMs": 2496,
+   "confidence": null
+  },
+  {
+   "text": " worker.",
+   "startMs": 2670,
+   "endMs": 3251,
+   "timestampMs": 2961,
+   "confidence": null
+  },
+  {
+   "text": " Green",
+   "startMs": 3495,
+   "endMs": 3796,
+   "timestampMs": 3646,
+   "confidence": null
+  },
+  {
+   "text": " means",
+   "startMs": 3866,
+   "endMs": 4133,
+   "timestampMs": 4000,
+   "confidence": null
+  },
+  {
+   "text": " merge.",
+   "startMs": 4214,
+   "endMs": 4795,
+   "timestampMs": 4505,
+   "confidence": null
+  },
+  {
+   "text": " And",
+   "startMs": 5039,
+   "endMs": 5178,
+   "timestampMs": 5109,
+   "confidence": null
+  },
+  {
+   "text": " every",
+   "startMs": 5248,
+   "endMs": 5457,
+   "timestampMs": 5353,
+   "confidence": null
+  },
+  {
+   "text": " token",
+   "startMs": 5515,
+   "endMs": 5828,
+   "timestampMs": 5672,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 5875,
+   "endMs": 5944,
+   "timestampMs": 5910,
+   "confidence": null
+  },
+  {
+   "text": " counted",
+   "startMs": 6014,
+   "endMs": 6385,
+   "timestampMs": 6200,
+   "confidence": null
+  },
+  {
+   "text": " against",
+   "startMs": 6420,
+   "endMs": 6699,
+   "timestampMs": 6560,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 6734,
+   "endMs": 6803,
+   "timestampMs": 6769,
+   "confidence": null
+  },
+  {
+   "text": " project's",
+   "startMs": 6850,
+   "endMs": 7256,
+   "timestampMs": 7053,
+   "confidence": null
+  },
+  {
+   "text": " budget.",
+   "startMs": 7303,
+   "endMs": 8499,
+   "timestampMs": 7901,
+   "confidence": null
+  }
+ ]
+}

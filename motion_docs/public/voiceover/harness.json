@@ -1,0 +1,203 @@
+{
+ "id": "harness",
+ "text": "Painkiller is harness-agnostic. Pick Antigravity with Gemini, or DeepSeek through dsh, Maki, or Unreal Agent. Every harness carries the same Superpowers skills: planning, test-driven development, and systematic debugging.",
+ "durationMs": 16439,
+ "captions": [
+  {
+   "text": "Painkiller",
+   "startMs": 0,
+   "endMs": 569,
+   "timestampMs": 285,
+   "confidence": null
+  },
+  {
+   "text": " is",
+   "startMs": 615,
+   "endMs": 697,
+   "timestampMs": 656,
+   "confidence": null
+  },
+  {
+   "text": " harness-agnostic.",
+   "startMs": 766,
+   "endMs": 1881,
+   "timestampMs": 1324,
+   "confidence": null
+  },
+  {
+   "text": " Pick",
+   "startMs": 2577,
+   "endMs": 2810,
+   "timestampMs": 2694,
+   "confidence": null
+  },
+  {
+   "text": " Antigravity",
+   "startMs": 2879,
+   "endMs": 3564,
+   "timestampMs": 3222,
+   "confidence": null
+  },
+  {
+   "text": " with",
+   "startMs": 3611,
+   "endMs": 3738,
+   "timestampMs": 3675,
+   "confidence": null
+  },
+  {
+   "text": " Gemini,",
+   "startMs": 3796,
+   "endMs": 4400,
+   "timestampMs": 4098,
+   "confidence": null
+  },
+  {
+   "text": " or",
+   "startMs": 4516,
+   "endMs": 4667,
+   "timestampMs": 4592,
+   "confidence": null
+  },
+  {
+   "text": " DeepSeek",
+   "startMs": 4737,
+   "endMs": 5259,
+   "timestampMs": 4998,
+   "confidence": null
+  },
+  {
+   "text": " through",
+   "startMs": 5317,
+   "endMs": 5538,
+   "timestampMs": 5428,
+   "confidence": null
+  },
+  {
+   "text": " dsh,",
+   "startMs": 5596,
+   "endMs": 6327,
+   "timestampMs": 5962,
+   "confidence": null
+  },
+  {
+   "text": " Maki,",
+   "startMs": 6444,
+   "endMs": 7012,
+   "timestampMs": 6728,
+   "confidence": null
+  },
+  {
+   "text": " or",
+   "startMs": 7094,
+   "endMs": 7256,
+   "timestampMs": 7175,
+   "confidence": null
+  },
+  {
+   "text": " Unreal",
+   "startMs": 7338,
+   "endMs": 7744,
+   "timestampMs": 7541,
+   "confidence": null
+  },
+  {
+   "text": " Agent.",
+   "startMs": 7825,
+   "endMs": 8429,
+   "timestampMs": 8127,
+   "confidence": null
+  },
+  {
+   "text": " Every",
+   "startMs": 9125,
+   "endMs": 9416,
+   "timestampMs": 9271,
+   "confidence": null
+  },
+  {
+   "text": " harness",
+   "startMs": 9474,
+   "endMs": 9810,
+   "timestampMs": 9642,
+   "confidence": null
+  },
+  {
+   "text": " carries",
+   "startMs": 9868,
+   "endMs": 10205,
+   "timestampMs": 10037,
+   "confidence": null
+  },
+  {
+   "text": " the",
+   "startMs": 10263,
+   "endMs": 10344,
+   "timestampMs": 10304,
+   "confidence": null
+  },
+  {
+   "text": " same",
+   "startMs": 10391,
+   "endMs": 10646,
+   "timestampMs": 10519,
+   "confidence": null
+  },
+  {
+   "text": " Superpowers",
+   "startMs": 10693,
+   "endMs": 11308,
+   "timestampMs": 11001,
+   "confidence": null
+  },
+  {
+   "text": " skills:",
+   "startMs": 11331,
+   "endMs": 12005,
+   "timestampMs": 11668,
+   "confidence": null
+  },
+  {
+   "text": " planning,",
+   "startMs": 12446,
+   "endMs": 12945,
+   "timestampMs": 12696,
+   "confidence": null
+  },
+  {
+   "text": " test-driven",
+   "startMs": 13003,
+   "endMs": 13560,
+   "timestampMs": 13282,
+   "confidence": null
+  },
+  {
+   "text": " development,",
+   "startMs": 13618,
+   "endMs": 14257,
+   "timestampMs": 13938,
+   "confidence": null
+  },
+  {
+   "text": " and",
+   "startMs": 14373,
+   "endMs": 14524,
+   "timestampMs": 14449,
+   "confidence": null
+  },
+  {
+   "text": " systematic",
+   "startMs": 14582,
+   "endMs": 15139,
+   "timestampMs": 14861,
+   "confidence": null
+  },
+  {
+   "text": " debugging.",
+   "startMs": 15209,
+   "endMs": 16439,
+   "timestampMs": 15824,
+   "confidence": null
+  }
+ ]
+}
