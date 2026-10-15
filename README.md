@@ -12,8 +12,8 @@ Painkiller is a self-hosted platform that turns rough ideas into deployed applic
 Instead of pasting prompts back and forth in a chat window, Painkiller brainstorms specifications with you, decomposes tasks, runs agents inside isolated Docker containers, tracks code in Git, and deploys preview environments automatically.
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=KN6PPyYFisg">
-    <img src="https://img.youtube.com/vi/KN6PPyYFisg/maxresdefault.jpg" alt="Watch the Painkiller explainer video on YouTube" width="720" />
+  <a href="https://www.youtube.com/watch?v=6p9CPKRO2o0">
+    <img src="https://img.youtube.com/vi/6p9CPKRO2o0/maxresdefault.jpg" alt="Watch the Painkiller explainer video on YouTube" width="720" />
   </a>
   <br />
   <sub>▶ Watch the explainer video on YouTube (~2 min)</sub>
