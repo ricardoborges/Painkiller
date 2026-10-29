@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Optional, Any
+from painkiller.core.android_template import template_guidelines
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
@@ -179,7 +180,8 @@ class PainkillerOrchestrator:
         # aqui: sem isso a reexecução refaz a mesma pergunta (exit 42 em loop).
         history = await self._clarification_history(task.id)
         instructions = self._build_task_instructions(
-            task, project, retrying=retrying, clarifications=history
+            task, project, retrying=retrying, clarifications=history,
+            guidelines=await template_guidelines(self.tracker),
         )
 
         # Execute container
@@ -404,6 +406,7 @@ class PainkillerOrchestrator:
         project: Project,
         retrying: bool = False,
         clarifications: Optional[list[ClarificationRequest]] = None,
+        guidelines: str = "",
     ) -> str:
         english = project_language(project) == "en-US"
 
@@ -420,20 +423,35 @@ class PainkillerOrchestrator:
         # projeto custava minutos por tarefa antes de qualquer código.
         instructions.append(L(
             "\n## Ambiente (já pronto, não verifique):\n"
-            "- O contêiner já tem Node.js 22, npm, Python 3, pip, uv e git. Não confira versões, rede nem "
-            "gerenciadores de pacote antes de trabalhar.\n"
-            "- Se o repositório já tem estrutura de projeto (package.json, pyproject.toml, etc.), trabalhe "
-            "dentro dela: NÃO rode geradores (create-*, sv create, npm init, cookiecutter...) nem recrie a "
-            "estrutura. Instale dependências com o gerenciador que o projeto já usa.\n"
-            "- Os caches de npm, pip e uv persistem entre tarefas: instalar de novo é rápido.",
+            "- O repositório é um app Android nativo em Kotlin (Jetpack Compose, Gradle com Kotlin DSL). "
+            "O contêiner já tem JDK 17, o Android SDK (ANDROID_HOME) com a plataforma e o build-tools, git, "
+            "Python 3 e Node.js 22. Não confira versões, rede nem SDK antes de trabalhar.\n"
+            "- Trabalhe dentro da estrutura que já existe: NÃO rode geradores (android create, assistentes "
+            "do Android Studio, gradle init) nem recrie o projeto. Use sempre o wrapper: ./gradlew.\n"
+            "- Para validar: ./gradlew testDebugUnitTest (testes unitários em app/src/test) e "
+            "./gradlew assembleDebug. Não há emulador nem dispositivo: testes instrumentados "
+            "(androidTest) não rodam aqui. Ao terminar, o Painkiller roda os dois comandos e a tarefa "
+            "só é aceita se ambos passarem.\n"
+            "- O cache do Gradle persiste entre tarefas: o primeiro build baixa as dependências, os "
+            "seguintes são rápidos. Passe --no-daemon para não deixar processos para trás.",
             "\n## Environment (already set up, do not check):\n"
-            "- The container already has Node.js 22, npm, Python 3, pip, uv and git. Do not check versions, "
-            "network or package managers before working.\n"
-            "- If the repository already has a project structure (package.json, pyproject.toml, etc.), work "
-            "inside it: do NOT run generators (create-*, sv create, npm init, cookiecutter...) or recreate the "
-            "structure. Install dependencies with the package manager the project already uses.\n"
-            "- npm, pip and uv caches persist across tasks: reinstalling is fast.",
+            "- The repository is a native Android app in Kotlin (Jetpack Compose, Gradle with Kotlin DSL). "
+            "The container already has JDK 17, the Android SDK (ANDROID_HOME) with the platform and "
+            "build-tools, git, Python 3 and Node.js 22. Do not check versions, network or SDK before working.\n"
+            "- Work inside the existing structure: do NOT run generators (android create, Android Studio "
+            "wizards, gradle init) or recreate the project. Always use the wrapper: ./gradlew.\n"
+            "- To validate: ./gradlew testDebugUnitTest (unit tests in app/src/test) and "
+            "./gradlew assembleDebug. There is no emulator or device: instrumented tests (androidTest) "
+            "do not run here. When you finish, Painkiller runs both commands and the task is only "
+            "accepted if both pass.\n"
+            "- The Gradle cache persists across tasks: the first build downloads the dependencies, later "
+            "ones are fast. Pass --no-daemon so no process is left behind.",
         ))
+        if guidelines:
+            instructions.append(L(
+                "\n## Diretrizes técnicas do app (definidas pelo administrador):\n",
+                "\n## App technical guidelines (set by the administrator):\n",
+            ) + guidelines)
         if retrying:
             instructions.append(L(
                 "\n## Execução anterior interrompida:\n"

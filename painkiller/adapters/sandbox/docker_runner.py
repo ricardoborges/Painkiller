@@ -37,6 +37,9 @@ PACKAGE_CACHE_ENV = {
     "UV_CACHE_DIR": f"{PACKAGE_CACHE_MOUNT}/uv",
     "PNPM_STORE_DIR": f"{PACKAGE_CACHE_MOUNT}/pnpm",
     "YARN_CACHE_FOLDER": f"{PACKAGE_CACHE_MOUNT}/yarn",
+    # Distribuição do wrapper, dependências Maven e o build cache do Gradle:
+    # o primeiro build de um app Android baixa centenas de MB.
+    "GRADLE_USER_HOME": f"{PACKAGE_CACHE_MOUNT}/gradle",
 }
 
 

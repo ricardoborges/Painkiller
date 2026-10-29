@@ -24,7 +24,6 @@ import type {
   EnvironmentType,
   EnvironmentStatusResponse,
   ProjectTemplate,
-  ProjectType,
   SetupState,
   CoolifyStatus,
   CoolifyBootstrapResult,
@@ -472,39 +471,20 @@ export const api = {
   createDeployFixTask: (deploymentId: string) =>
     request<Task>(`/deployments/${deploymentId}/fix`, { method: 'POST' }),
 
-  /* ---- templates (admin & public) ---- */
+  /* ---- template (único: app Android nativo; o admin só configura) ---- */
   listAdminTemplates: () => request<ProjectTemplate[]>('/admin/templates'),
-  createAdminTemplate: (data: {
-    name: string;
-    description?: string;
-    project_type: ProjectType;
-    coolify_compatible?: boolean;
-    prompt?: string;
-    is_active?: boolean;
-  }) =>
-    request<ProjectTemplate>('/admin/templates', {
-      method: 'POST',
-      ...json(data)
-    }),
   getAdminTemplate: (id: string) => request<ProjectTemplate>(`/admin/templates/${id}`),
   updateAdminTemplate: (
     id: string,
     data: {
       name?: string;
       description?: string;
-      project_type?: ProjectType;
-      coolify_compatible?: boolean;
       prompt?: string;
-      is_active?: boolean;
     }
   ) =>
     request<ProjectTemplate>(`/admin/templates/${id}`, {
       method: 'PUT',
       ...json(data)
-    }),
-  deleteAdminTemplate: (id: string) =>
-    request<{ deleted: boolean }>(`/admin/templates/${id}`, {
-      method: 'DELETE'
     }),
   uploadTemplateSkill: (templateId: string, file: File) => {
     const data = new FormData();

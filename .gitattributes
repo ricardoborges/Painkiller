@@ -2,3 +2,6 @@
 *.sh text eol=lf
 # Patches go through `git apply` inside Linux builds: CRLF breaks them.
 *.patch text eol=lf
+# Arcabouço embutido: copiado tal como está para o repositório do app (o
+# gradlew com CRLF quebra no contêiner Linux).
+painkiller/scaffolds/** -text

@@ -81,48 +81,23 @@
   let isCustomModel = $state(false);
   let customModelText = $state('');
 
-  /** Valor da opção "Outra" em Solução desejada: abre o campo de texto livre. */
-  const OTHER_SOLUTION = '__other__';
+  // Todo projeto nasce do único template (app Android nativo): ele só é
+  // mostrado, não escolhido. A solução descreve o app em si.
+  let template = $state<ProjectTemplate | null>(null);
 
-  let templates = $state<ProjectTemplate[]>([]);
-  /** Id do template escolhido, OTHER_SOLUTION ou '' (nada escolhido ainda). */
-  let solutionChoice = $state<string>('');
-  const selectedTemplate = $derived(templates.find((t) => t.id === solutionChoice) ?? null);
-  // Sem templates cadastrados não há o que listar: o campo livre aparece direto.
-  const writesSolution = $derived(templates.length === 0 || solutionChoice === OTHER_SOLUTION);
-
-  /** Texto que vai em solution_description quando um template é escolhido. */
-  function templateSolution(t: ProjectTemplate): string {
-    return (t.prompt || t.description || t.name).trim();
-  }
-
-  const effectiveSolution = $derived(
-    writesSolution ? solution.trim() : selectedTemplate ? templateSolution(selectedTemplate) : ''
-  );
-
-  async function loadTemplates(currentSolution: string) {
+  async function loadTemplate() {
     try {
-      templates = await api.listActiveTemplates();
+      template = (await api.listActiveTemplates())[0] ?? null;
     } catch {
-      templates = [];
-    }
-    // Na edição, reconhece o template cuja solução o projeto ainda usa.
-    if (currentSolution) {
-      const match = templates.find((t) => templateSolution(t) === currentSolution.trim());
-      solutionChoice = match ? match.id : OTHER_SOLUTION;
+      template = null;
     }
   }
 
-  function onSolutionChoice(id: string) {
-    solutionChoice = id;
-    const t = templates.find((x) => x.id === id);
-    if (t && !description && t.description) description = t.description;
-  }
+  const effectiveSolution = $derived(solution.trim());
 
   // Repopula ao montar e sempre que o projeto editado muda
   $effect(() => {
-    solutionChoice = project?.solution_description ? OTHER_SOLUTION : '';
-    loadTemplates(project?.solution_description ?? '');
+    loadTemplate();
     name = project?.name ?? '';
     description = project?.description ?? '';
     purpose = project?.purpose ?? '';
@@ -257,10 +232,9 @@
         body.api_key = apiKey.trim();
       }
 
-      // O arcabouço do template só entra na criação: depois o repositório já é do agente.
-      let saved = editing
-        ? await api.updateProject(project!.id, body)
-        : await api.createProject({ ...body, template_id: selectedTemplate?.id });
+      // O arcabouço do template só entra na criação (o backend o aplica sozinho):
+      // depois o repositório já é do agente.
+      let saved = editing ? await api.updateProject(project!.id, body) : await api.createProject(body);
 
       for (const file of files) {
         const res = await api.uploadAttachment(saved.id, file);
@@ -312,60 +286,27 @@
   </div>
 
   <div class="field">
-    <label for={templates.length ? 'psol-options' : 'psol'}>
+    <label for="psol">
       {t('form.solution')} <span class="req">*</span>
     </label>
-    {#if templates.length}
-      <p class="help">{t('form.solutionHelp')}</p>
-      <div id="psol-options" class="harness-options">
-        {#each templates as tpl (tpl.id)}
-          <label class="radio-card" class:active={solutionChoice === tpl.id}>
-            <input
-              type="radio"
-              name="solution"
-              value={tpl.id}
-              checked={solutionChoice === tpl.id}
-              onchange={() => onSolutionChoice(tpl.id)}
-            />
-            <div class="radio-info">
-              <span class="radio-title">{tpl.name}</span>
-              <span class="radio-desc">
-                {PROJECT_TYPE_META[tpl.project_type]?.label || tpl.project_type}
-                {#if tpl.coolify_compatible}· {t('form.coolifyCompatible')}{/if}
-                {#if tpl.scaffold_filename && !editing}· {t('form.withScaffold')}{/if}
-                {#if tpl.description}· {tpl.description}{/if}
-              </span>
-            </div>
-          </label>
-        {/each}
-        <label class="radio-card" class:active={solutionChoice === OTHER_SOLUTION}>
-          <input
-            type="radio"
-            name="solution"
-            value={OTHER_SOLUTION}
-            checked={solutionChoice === OTHER_SOLUTION}
-            onchange={() => onSolutionChoice(OTHER_SOLUTION)}
-          />
-          <div class="radio-info">
-            <span class="radio-title">{t('form.otherSolution')}</span>
-            <span class="radio-desc">{t('form.otherSolutionDesc')}</span>
-          </div>
-        </label>
-      </div>
-    {/if}
-    {#if writesSolution}
-      <textarea
-        id="psol"
-        class="textarea"
-        bind:value={solution}
-        placeholder={t('form.solutionPlaceholder')}
-        aria-invalid={touched && missing.solution ? 'true' : undefined}
-      ></textarea>
-    {/if}
+    <p class="help">
+      {#if template}
+        <span class="platform mono">
+          {PROJECT_TYPE_META[template.project_type]?.label || template.name}{#if !editing}
+            · {t('form.withScaffold')}{/if}
+        </span>
+      {/if}
+      {t('form.solutionHelp')}
+    </p>
+    <textarea
+      id="psol"
+      class="textarea"
+      bind:value={solution}
+      placeholder={t('form.solutionPlaceholder')}
+      aria-invalid={touched && missing.solution ? 'true' : undefined}
+    ></textarea>
     {#if touched && missing.solution}
-      <p class="field-error">
-        {writesSolution ? t('form.solutionError') : t('form.solutionChoiceError')}
-      </p>
+      <p class="field-error">{t('form.solutionError')}</p>
     {/if}
   </div>
 
@@ -729,6 +670,14 @@
   .radio-desc {
     font-size: var(--t-micro);
     color: var(--ink-2);
+  }
+
+  /* Plataforma fixa do template: informativa, não é uma escolha. */
+  .platform {
+    display: block;
+    margin-bottom: var(--s1);
+    color: var(--ink);
+    font-weight: 600;
   }
 
   .key-link {

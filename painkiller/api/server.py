@@ -46,6 +46,7 @@ from painkiller.api.routes.usage import router as usage_router
 from painkiller.api.routes.sessions import router as sessions_router
 from painkiller.api.routes.deployments import router as deployments_router
 from painkiller.api.routes.gitea_proxy import router as gitea_proxy_router
+from painkiller.core.android_template import ensure_android_template
 from painkiller.api.routes.admin_templates import router as admin_templates_router, public_router as templates_router
 from painkiller.api.routes.setup import router as setup_router
 from painkiller.core.i18n import normalize_locale, parse_accept_language, reset_locale, set_locale, translate
@@ -152,6 +153,8 @@ def create_app(
         # Startup
         tracker: SQLiteIssueTracker = app.state.tracker
         await tracker.init_db()
+        # O único template desta edição existe antes do primeiro formulário.
+        await ensure_android_template(tracker)
         # O que o admin salvou no wizard vence o .env; aplicado antes do 1º request.
         try:
             await app.state.platform.load()

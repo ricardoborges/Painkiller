@@ -24,7 +24,8 @@ from painkiller.core.domain.models import (
 )
 from painkiller.core.i18n import SUPPORTED_LOCALES, get_locale, translate
 from painkiller.core.naming import compose_project_identity
-from painkiller.core.scaffold import ScaffoldError, extract_scaffold
+from painkiller.core.android_template import ANDROID_TEMPLATE_ID, BUNDLED_SCAFFOLD_DIR, has_uploaded_scaffold
+from painkiller.core.scaffold import ScaffoldError, copy_scaffold_dir, extract_scaffold
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -141,31 +142,36 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
     effort = _checked_effort(req.harness, req.effort)
     language = _checked_language(req.language or get_locale())
 
-    scaffold = None
-    if req.template_id:
-        template = await tracker.get_project_template(req.template_id)
-        if not template or not template.is_active:
-            raise HTTPException(status_code=400, detail="Template não encontrado")
-        if template.scaffold_path and os.path.exists(template.scaffold_path):
-            scaffold = template
+    # Todo projeto nasce do único template (app Android nativo): o .zip que o
+    # admin subiu ou, sem ele, o arcabouço embutido.
+    template = await tracker.get_project_template(req.template_id or ANDROID_TEMPLATE_ID)
+    if req.template_id and (not template or not template.is_active):
+        raise HTTPException(status_code=400, detail="Template não encontrado")
 
     identity = compose_project_identity(user, req.name)
 
     # Default repo path inside storage if not provided
     base_repo_path = req.repo_path or os.path.join(_get_storage_dir(), "projects", identity.project_id, "repo")
     os.makedirs(base_repo_path, exist_ok=True)
+    # Um repositório existente (repo_path do admin) já tem o próprio código:
+    # o arcabouço só entra numa pasta vazia.
+    fresh_repo = not any(name != ".git" for name in os.listdir(base_repo_path))
 
     default_branch = req.default_branch or "main"
     await git.init_repo(base_repo_path, default_branch=default_branch, initial_commit=True)
-    if scaffold:
+    if fresh_repo:
         try:
-            await asyncio.to_thread(extract_scaffold, scaffold.scaffold_path, base_repo_path)
+            if template and has_uploaded_scaffold(template):
+                await asyncio.to_thread(extract_scaffold, template.scaffold_path, base_repo_path)
+            else:
+                await asyncio.to_thread(copy_scaffold_dir, BUNDLED_SCAFFOLD_DIR, base_repo_path)
         except ScaffoldError as e:
             if not req.repo_path:
                 shutil.rmtree(base_repo_path, ignore_errors=True)
             raise HTTPException(status_code=400, detail=f"O arcabouço do template é inválido: {e}")
         # Commit próprio, antes do push: o Gitea já nasce com a estrutura em main.
-        await git.commit_wip(base_repo_path, f"chore: scaffold from template {scaffold.name}")
+        name = template.name if template else ANDROID_TEMPLATE_ID
+        await git.commit_wip(base_repo_path, f"chore: scaffold from template {name}")
 
     repo_url = None
     if vcs:

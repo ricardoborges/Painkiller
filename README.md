@@ -7,6 +7,8 @@
 
 # Painkiller
 
+> **Android edition.** This branch specializes Painkiller in building **native Android apps in Kotlin** (Jetpack Compose + Gradle). Every project starts from a single Android template — a bundled Compose scaffold, or a `.zip` the admin uploads — and the agents build and unit-test the app with the Gradle wrapper inside workers that ship JDK 17 and the Android SDK. The harness choice (`agy`, `dsh`, `maki`, `unreal`) stays per project.
+
 Painkiller is a self-hosted platform that turns rough ideas into deployed applications through collaborative brainstorming, spec-driven development (SDD), and autonomous coding agents.
 
 Instead of pasting prompts back and forth in a chat window, Painkiller brainstorms specifications with you, decomposes tasks, runs agents inside isolated Docker containers, tracks code in Git, and deploys preview environments automatically.

@@ -286,7 +286,7 @@ class IssueTrackerPort(ABC):
         name: str,
         project_type: ProjectType,
         description: str = "",
-        coolify_compatible: bool = True,
+        coolify_compatible: bool = False,
         skill_path: Optional[str] = None,
         skill_filename: Optional[str] = None,
         scaffold_path: Optional[str] = None,

@@ -68,3 +68,44 @@ def extract_scaffold(zip_path: str, dest: str) -> list[str]:
                 os.chmod(target, os.stat(target).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
             written.append("/".join(parts))
     return written
+
+
+def _walk_scaffold_dir(src: str):
+    """Yield (absolute, relative posix) paths of the files of a scaffold folder."""
+    for root, dirs, files in os.walk(src):
+        # build/ e .gradle/ são saída de um build local do arcabouço embutido.
+        dirs[:] = sorted(d for d in dirs if d not in SKIPPED_PARTS and d not in ("build", ".gradle", ".idea"))
+        for name in sorted(files):
+            if name in SKIPPED_PARTS or name == "local.properties":
+                continue
+            path = os.path.join(root, name)
+            yield path, os.path.relpath(path, src).replace(os.sep, "/")
+
+
+def copy_scaffold_dir(src: str, dest: str) -> list[str]:
+    """Copy a scaffold folder (the bundled one) into ``dest``; same rules as the zip."""
+    if not os.path.isdir(src):
+        raise ScaffoldError(f"arcabouço não encontrado: {src}")
+    written: list[str] = []
+    for path, rel in _walk_scaffold_dir(src):
+        target = os.path.join(dest, *rel.split("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copyfile(path, target)
+        # O checkout no Windows perde o bit de execução do gradlew.
+        if rel == "gradlew" or (os.name != "nt" and os.access(path, os.X_OK)):
+            os.chmod(target, os.stat(target).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        written.append(rel)
+    return written
+
+
+def zip_scaffold_dir(src: str, zip_path: str) -> str:
+    """Pack a scaffold folder as a .zip, so the admin can download and adapt it."""
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path, rel in _walk_scaffold_dir(src):
+            info = zipfile.ZipInfo.from_file(path, rel)
+            if rel == "gradlew":
+                info.external_attr = (0o755 | stat.S_IFREG) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            with open(path, "rb") as f:
+                archive.writestr(info, f.read())
+    return zip_path

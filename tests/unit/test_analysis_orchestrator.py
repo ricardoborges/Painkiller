@@ -638,3 +638,14 @@ def test_prompt_carries_implementation_notes_only_when_given(tmp_path):
     prompt = build_analysis_prompt(project)
     assert "=== DETALHES DE IMPLEMENTAÇÃO E REGRAS DE NEGÓCIO ===" in prompt
     assert "Valores em centavos." in prompt
+
+
+def test_prompt_settles_the_android_platform(tmp_path):
+    plain = build_analysis_prompt(_project(tmp_path))
+    assert "=== PLATAFORMA ===" in plain
+    assert "app Android nativo em Kotlin" in plain
+    assert "Diretrizes técnicas" not in plain
+
+    guided = build_analysis_prompt(_project(tmp_path), guidelines="Use Room para persistência.")
+    assert "Diretrizes técnicas definidas pelo administrador" in guided
+    assert "Use Room para persistência." in guided

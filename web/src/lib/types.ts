@@ -67,77 +67,16 @@ export const EFFORT_LEVELS: { id: EffortLevel; label: string }[] = [
   }
 ];
 
-export const PROJECT_TYPES = [
-  'api',
-  'web_static',
-  'web_fullstack',
-  'desktop',
-  'mobile_crossplatform',
-  'android_native'
-] as const;
+/** Esta edição só fabrica apps Android nativos: o único template é desse tipo. */
+export const PROJECT_TYPES = ['android_native'] as const;
 
 export type ProjectType = (typeof PROJECT_TYPES)[number];
 
-export const PROJECT_TYPE_META: Record<
-  ProjectType,
-  { label: string; coolifyDefault: boolean; category: 'web' | 'other'; description: string }
-> = {
-  api: {
-    get label() {
-      return t('projectType.api.label');
-    },
-    coolifyDefault: true,
-    category: 'web',
-    get description() {
-      return t('projectType.api.description');
-    }
-  },
-  web_static: {
-    get label() {
-      return t('projectType.web_static.label');
-    },
-    coolifyDefault: true,
-    category: 'web',
-    get description() {
-      return t('projectType.web_static.description');
-    }
-  },
-  web_fullstack: {
-    get label() {
-      return t('projectType.web_fullstack.label');
-    },
-    coolifyDefault: true,
-    category: 'web',
-    get description() {
-      return t('projectType.web_fullstack.description');
-    }
-  },
-  desktop: {
-    get label() {
-      return t('projectType.desktop.label');
-    },
-    coolifyDefault: false,
-    category: 'other',
-    get description() {
-      return t('projectType.desktop.description');
-    }
-  },
-  mobile_crossplatform: {
-    get label() {
-      return t('projectType.mobile_crossplatform.label');
-    },
-    coolifyDefault: false,
-    category: 'other',
-    get description() {
-      return t('projectType.mobile_crossplatform.description');
-    }
-  },
+export const PROJECT_TYPE_META: Record<ProjectType, { label: string; description: string }> = {
   android_native: {
     get label() {
       return t('projectType.android_native.label');
     },
-    coolifyDefault: false,
-    category: 'other',
     get description() {
       return t('projectType.android_native.description');
     }
@@ -154,6 +93,8 @@ export interface ProjectTemplate {
   skill_filename?: string | null;
   scaffold_path?: string | null;
   scaffold_filename?: string | null;
+  /** Sem .zip do admin, os projetos nascem do arcabouço embutido. */
+  bundled_scaffold: boolean;
   prompt: string;
   is_active: boolean;
   created_at: string;

@@ -1,10 +1,12 @@
-"""Unit and integration tests for Admin Project Templates and public template listing."""
+"""The single Android template: seeded at startup, configured (never created) by the admin."""
 
 import io
+import zipfile
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from painkiller.api.server import create_app
-from painkiller.core.domain.models import ProjectType, is_coolify_compatible, User, UserRole
+from painkiller.core.android_template import ANDROID_TEMPLATE_ID, DEFAULT_PROMPT, ensure_android_template
 from tests.auth_helpers import admin_headers, user_headers
 
 
@@ -18,158 +20,104 @@ async def app_and_client(tmp_path, monkeypatch):
             yield app, c
 
 
-@pytest.mark.asyncio
-async def test_coolify_compatibility_logic():
-    assert is_coolify_compatible(ProjectType.API) is True
-    assert is_coolify_compatible(ProjectType.WEB_STATIC) is True
-    assert is_coolify_compatible(ProjectType.WEB_FULLSTACK) is True
-    assert is_coolify_compatible(ProjectType.DESKTOP) is False
-    assert is_coolify_compatible(ProjectType.MOBILE_CROSSPLATFORM) is False
-    assert is_coolify_compatible(ProjectType.ANDROID_NATIVE) is False
-    assert is_coolify_compatible("invalid_type") is False
+def _zip_bytes(entries: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in entries.items():
+            z.writestr(name, data)
+    return buf.getvalue()
 
 
-@pytest.mark.asyncio
-async def test_admin_template_crud(app_and_client):
+async def test_android_template_is_seeded(app_and_client):
+    _, client = app_and_client
+    res = await client.get("/api/admin/templates", headers=admin_headers())
+    assert res.status_code == 200
+    templates = res.json()
+    assert [t["id"] for t in templates] == [ANDROID_TEMPLATE_ID]
+    tpl = templates[0]
+    assert tpl["project_type"] == "android_native"
+    assert tpl["coolify_compatible"] is False
+    assert tpl["is_active"] is True
+    assert tpl["prompt"] == DEFAULT_PROMPT
+    assert tpl["bundled_scaffold"] is True
+
+
+async def test_seed_drops_other_templates_and_keeps_admin_edits(app_and_client):
     app, client = app_and_client
-    headers = admin_headers()
+    tracker = app.state.tracker
+    await tracker.update_project_template(ANDROID_TEMPLATE_ID, prompt="Use Hilt.")
+    # Resto da edição generalista, com um tipo que não existe mais.
+    await tracker.create_project_template(name="Web", project_type="android_native", template_id="tpl-web")
+    from sqlalchemy import text
+    async with tracker.engine.begin() as conn:
+        await conn.execute(text("UPDATE project_templates SET project_type='WEB_FULLSTACK' WHERE id='tpl-web'"))
 
-    # 1. Create Web Fullstack template (auto Coolify compatible)
-    res = await client.post(
-        "/api/admin/templates",
-        json={
-            "name": "FastAPI + SvelteKit",
-            "description": "Fullstack web app with Python and SvelteKit",
-            "project_type": "web_fullstack",
-            "prompt": "Siga o padrão ports and adapters.",
-        },
+    await ensure_android_template(tracker)
+
+    templates = await tracker.list_project_templates()
+    assert [t.id for t in templates] == [ANDROID_TEMPLATE_ID]
+    assert templates[0].prompt == "Use Hilt."
+
+
+async def test_admin_cannot_create_or_delete_templates(app_and_client):
+    _, client = app_and_client
+    headers = admin_headers()
+    res = await client.post("/api/admin/templates", json={"name": "Web"}, headers=headers)
+    assert res.status_code == 405
+    res = await client.delete(f"/api/admin/templates/{ANDROID_TEMPLATE_ID}", headers=headers)
+    assert res.status_code == 405
+
+
+async def test_admin_updates_the_template(app_and_client):
+    _, client = app_and_client
+    headers = admin_headers()
+    res = await client.put(
+        f"/api/admin/templates/{ANDROID_TEMPLATE_ID}",
+        json={"name": "Android (Hilt)", "description": "Com DI", "prompt": "Use Hilt."},
         headers=headers,
     )
     assert res.status_code == 200
-    tpl1 = res.json()
-    assert tpl1["id"].startswith("tpl-")
-    assert tpl1["name"] == "FastAPI + SvelteKit"
-    assert tpl1["project_type"] == "web_fullstack"
-    assert tpl1["coolify_compatible"] is True
-    assert tpl1["is_active"] is True
-    assert tpl1["prompt"] == "Siga o padrão ports and adapters."
+    assert res.json()["name"] == "Android (Hilt)"
+    assert res.json()["prompt"] == "Use Hilt."
 
-    # 2. Create Android Native template (incompatible with Coolify)
-    res2 = await client.post(
-        "/api/admin/templates",
-        json={
-            "name": "Android Native App",
-            "description": "Native Android with Kotlin and Jetpack Compose",
-            "project_type": "android_native",
-            "prompt": "Arquitetura MVVM limpa.",
-        },
-        headers=headers,
-    )
-    assert res2.status_code == 200
-    tpl2 = res2.json()
-    assert tpl2["project_type"] == "android_native"
-    assert tpl2["coolify_compatible"] is False
-
-    # 3. List admin templates
-    list_res = await client.get("/api/admin/templates", headers=headers)
-    assert list_res.status_code == 200
-    all_tpls = list_res.json()
-    assert len(all_tpls) == 2
-
-    # 4. Get by ID
-    get_res = await client.get(f"/api/admin/templates/{tpl1['id']}", headers=headers)
-    assert get_res.status_code == 200
-    assert get_res.json()["name"] == "FastAPI + SvelteKit"
-
-    # 5. Update template
-    up_res = await client.put(
-        f"/api/admin/templates/{tpl1['id']}",
-        json={"name": "FastAPI + Svelte 5 Fullstack", "is_active": False},
-        headers=headers,
-    )
-    assert up_res.status_code == 200
-    assert up_res.json()["name"] == "FastAPI + Svelte 5 Fullstack"
-    assert up_res.json()["is_active"] is False
-
-    # 6. Delete template
-    del_res = await client.delete(f"/api/admin/templates/{tpl2['id']}", headers=headers)
-    assert del_res.status_code == 200
-    assert del_res.json()["deleted"] is True
-
-    # Verify deleted
-    get_del = await client.get(f"/api/admin/templates/{tpl2['id']}", headers=headers)
-    assert get_del.status_code == 404
+    res = await client.put(f"/api/admin/templates/{ANDROID_TEMPLATE_ID}", json={"name": "  "}, headers=headers)
+    assert res.status_code == 400
 
 
-@pytest.mark.asyncio
 async def test_admin_authorization_required(app_and_client):
     app, client = app_and_client
-    tracker = app.state.tracker
-
-    # Create a regular user in the DB
-    reg_user = await tracker.create_user(email="user@example.com", name="Regular User")
+    reg_user = await app.state.tracker.create_user(email="user@example.com", name="Regular User")
     u_headers = user_headers(reg_user.id)
 
-    # Regular user attempting admin endpoints should get 403
-    res = await client.get("/api/admin/templates", headers=u_headers)
+    assert (await client.get("/api/admin/templates", headers=u_headers)).status_code == 403
+    res = await client.put(f"/api/admin/templates/{ANDROID_TEMPLATE_ID}", json={"prompt": "x"}, headers=u_headers)
     assert res.status_code == 403
 
-    res = await client.post(
-        "/api/admin/templates",
-        json={"name": "Test", "project_type": "api"},
-        headers=u_headers,
-    )
-    assert res.status_code == 403
+    # A listagem pública (formulário de projeto) mostra o template a todos.
+    pub = await client.get("/api/templates", headers=u_headers)
+    assert pub.status_code == 200
+    assert [t["id"] for t in pub.json()] == [ANDROID_TEMPLATE_ID]
 
 
-@pytest.mark.asyncio
-async def test_public_active_templates_listing(app_and_client):
-    app, client = app_and_client
-    tracker = app.state.tracker
-    adm_headers = admin_headers()
-
-    reg_user = await tracker.create_user(email="alice@example.com", name="Alice")
-    u_headers = user_headers(reg_user.id)
-
-    # Admin creates an active and an inactive template
-    await client.post(
-        "/api/admin/templates",
-        json={"name": "Active Web", "project_type": "web_static", "is_active": True},
-        headers=adm_headers,
-    )
-    await client.post(
-        "/api/admin/templates",
-        json={"name": "Draft Mobile", "project_type": "mobile_crossplatform", "is_active": False},
-        headers=adm_headers,
-    )
-
-    # Regular user calls public endpoint
-    pub_res = await client.get("/api/templates", headers=u_headers)
-    assert pub_res.status_code == 200
-    templates = pub_res.json()
-    assert len(templates) == 1
-    assert templates[0]["name"] == "Active Web"
-
-
-@pytest.mark.asyncio
-async def test_template_skill_and_scaffold_upload_download_delete(app_and_client):
-    app, client = app_and_client
-    headers = admin_headers()
-
-    # Create template
-    res = await client.post(
-        "/api/admin/templates",
-        json={"name": "Scaffolded API", "project_type": "api"},
-        headers=headers,
-    )
+async def test_bundled_scaffold_downloads_as_zip(app_and_client):
+    _, client = app_and_client
+    res = await client.get(f"/api/admin/templates/{ANDROID_TEMPLATE_ID}/scaffold/download", headers=admin_headers())
     assert res.status_code == 200
-    tpl_id = res.json()["id"]
+    names = zipfile.ZipFile(io.BytesIO(res.content)).namelist()
+    assert "gradlew" in names
+    assert "app/build.gradle.kts" in names
+    assert not any(n.startswith(("build/", ".gradle/")) or n == "local.properties" for n in names)
+
+
+async def test_template_skill_and_scaffold_upload_download_delete(app_and_client):
+    _, client = app_and_client
+    headers = admin_headers()
+    tpl_id = ANDROID_TEMPLATE_ID
 
     # 1. Invalid skill file format (e.g. .txt)
-    bad_file = ("bad.txt", io.BytesIO(b"hello world"), "text/plain")
     res_bad = await client.post(
         f"/api/admin/templates/{tpl_id}/skill",
-        files={"file": bad_file},
+        files={"file": ("bad.txt", io.BytesIO(b"hello world"), "text/plain")},
         headers=headers,
     )
     assert res_bad.status_code == 400
@@ -182,33 +130,37 @@ async def test_template_skill_and_scaffold_upload_download_delete(app_and_client
         headers=headers,
     )
     assert res_skill.status_code == 200
-    data = res_skill.json()
-    assert data["skill_filename"] == "architecture_skill.md"
-    assert data["skill_path"] is not None
+    assert res_skill.json()["skill_filename"] == "architecture_skill.md"
 
-    # Download skill
     dl_skill = await client.get(f"/api/admin/templates/{tpl_id}/skill/download", headers=headers)
     assert dl_skill.status_code == 200
     assert dl_skill.content == skill_content
 
-    # 3. Upload valid scaffold file (.zip)
-    scaffold_content = b"PK\x03\x04mockzipcontent"
+    # 3. A .zip that is not a zip is refused and keeps the bundled scaffold.
+    res_bad_zip = await client.post(
+        f"/api/admin/templates/{tpl_id}/scaffold",
+        files={"file": ("broken.zip", io.BytesIO(b"PK\x03\x04garbage"), "application/zip")},
+        headers=headers,
+    )
+    assert res_bad_zip.status_code == 400
+
+    # 4. Upload valid scaffold file (.zip)
+    scaffold_content = _zip_bytes({"app/settings.gradle.kts": 'rootProject.name = "Mine"'})
     res_scaffold = await client.post(
         f"/api/admin/templates/{tpl_id}/scaffold",
-        files={"file": ("starter_scaffold.zip", io.BytesIO(scaffold_content), "application/zip")},
+        files={"file": ("my_android.zip", io.BytesIO(scaffold_content), "application/zip")},
         headers=headers,
     )
     assert res_scaffold.status_code == 200
-    data2 = res_scaffold.json()
-    assert data2["scaffold_filename"] == "starter_scaffold.zip"
-    assert data2["scaffold_path"] is not None
+    data = res_scaffold.json()
+    assert data["scaffold_filename"] == "my_android.zip"
+    assert data["bundled_scaffold"] is False
 
-    # Download scaffold
     dl_scaffold = await client.get(f"/api/admin/templates/{tpl_id}/scaffold/download", headers=headers)
     assert dl_scaffold.status_code == 200
     assert dl_scaffold.content == scaffold_content
 
-    # 4. Delete skill and scaffold
+    # 5. Delete skill and scaffold: the bundled scaffold is back.
     del_skill = await client.delete(f"/api/admin/templates/{tpl_id}/skill", headers=headers)
     assert del_skill.status_code == 200
     assert del_skill.json()["skill_path"] is None
@@ -216,3 +168,4 @@ async def test_template_skill_and_scaffold_upload_download_delete(app_and_client
     del_scaffold = await client.delete(f"/api/admin/templates/{tpl_id}/scaffold", headers=headers)
     assert del_scaffold.status_code == 200
     assert del_scaffold.json()["scaffold_path"] is None
+    assert del_scaffold.json()["bundled_scaffold"] is True

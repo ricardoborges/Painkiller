@@ -63,3 +63,21 @@ def test_script_aggregates_exit_codes(tmp_path, codes, expected):
     env = {"PATH": f"{(tmp_path / 'bin').as_posix()}:/usr/bin:/bin", "CODES": (tmp_path / "codes").as_posix()}
     proc = subprocess.run(["sh", "-c", script], env=env, capture_output=True)
     assert proc.returncode == expected
+
+
+def test_gradle_project_runs_unit_tests_and_debug_build(tmp_path):
+    _touch(tmp_path / "settings.gradle.kts", 'include(":app")\n')
+    _touch(tmp_path / "gradlew", "#!/bin/sh\n")
+    # Um script Python solto não tira o app Android do Gradle.
+    _touch(tmp_path / "tools" / "tests" / "test_x.py")
+
+    script = build_test_script(str(tmp_path))
+
+    assert "sh ./gradlew" in script
+    assert "testDebugUnitTest assembleDebug" in script
+    assert "pytest" not in script
+
+
+def test_gradle_without_wrapper_uses_installed_gradle(tmp_path):
+    _touch(tmp_path / "settings.gradle", "")
+    assert "exec gradle " in build_test_script(str(tmp_path))

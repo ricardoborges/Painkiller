@@ -1,37 +1,30 @@
 <script lang="ts">
   import { t } from '$lib/i18n/index.svelte';
   import { api, authedUrl } from '$lib/api';
-  import {
-    PROJECT_TYPES,
-    PROJECT_TYPE_META,
-    type ProjectTemplate,
-    type ProjectType
-  } from '$lib/types';
+  import type { ProjectTemplate } from '$lib/types';
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
 
+  // Edita o único template (app Android nativo): não há criação nem tipo a escolher.
   let {
     open = $bindable(false),
-    template = null,
+    template,
     onsaved
   }: {
     open?: boolean;
-    template?: ProjectTemplate | null;
+    template: ProjectTemplate;
     onsaved: (t: ProjectTemplate) => void;
   } = $props();
 
   let name = $state('');
   let description = $state('');
-  let projectType = $state<ProjectType>('web_fullstack');
-  let coolifyCompatible = $state(true);
   let prompt = $state('');
-  let isActive = $state(true);
 
   // Arquivos novos a enviar
   let skillFile = $state<File | null>(null);
   let scaffoldFile = $state<File | null>(null);
 
-  // Remoção de arquivos existentes no modo de edição
+  // Remoção de arquivos existentes
   let removeSkill = $state(false);
   let removeScaffold = $state(false);
 
@@ -39,30 +32,11 @@
   let error = $state<string | null>(null);
   let touched = $state(false);
 
-  const editing = $derived(template !== null);
-
-  // Atualiza compatibilidade padrão com Coolify se o usuário trocar o tipo (a menos que tenha editado explicitamente)
-  let lastType = $state<ProjectType>('web_fullstack');
-
   $effect(() => {
     if (!open) return;
-    if (template) {
-      name = template.name;
-      description = template.description || '';
-      projectType = template.project_type;
-      coolifyCompatible = template.coolify_compatible;
-      prompt = template.prompt || '';
-      isActive = template.is_active;
-      lastType = template.project_type;
-    } else {
-      name = '';
-      description = '';
-      projectType = 'web_fullstack';
-      coolifyCompatible = PROJECT_TYPE_META['web_fullstack'].coolifyDefault;
-      prompt = '';
-      isActive = true;
-      lastType = 'web_fullstack';
-    }
+    name = template.name;
+    description = template.description || '';
+    prompt = template.prompt || '';
     skillFile = null;
     scaffoldFile = null;
     removeSkill = false;
@@ -71,12 +45,6 @@
     touched = false;
     busy = false;
   });
-
-  function onTypeChange(newType: ProjectType) {
-    projectType = newType;
-    // Se o tipo mudou, atualiza a sugestão de compatibilidade com o Coolify
-    coolifyCompatible = PROJECT_TYPE_META[newType].coolifyDefault;
-  }
 
   function handleSkillSelect(e: Event) {
     const input = e.target as HTMLInputElement;
@@ -117,47 +85,24 @@
     error = null;
 
     try {
-      let saved: ProjectTemplate;
+      let saved = await api.updateAdminTemplate(template.id, {
+        name: name.trim(),
+        description: description.trim(),
+        prompt: prompt.trim()
+      });
 
-      if (editing && template) {
-        saved = await api.updateAdminTemplate(template.id, {
-          name: name.trim(),
-          description: description.trim(),
-          project_type: projectType,
-          coolify_compatible: coolifyCompatible,
-          prompt: prompt.trim(),
-          is_active: isActive
-        });
+      if (removeSkill && template.skill_path) {
+        saved = await api.deleteTemplateSkill(template.id);
+      }
+      if (skillFile) {
+        saved = await api.uploadTemplateSkill(template.id, skillFile);
+      }
 
-        if (removeSkill && template.skill_path) {
-          saved = await api.deleteTemplateSkill(template.id);
-        }
-        if (skillFile) {
-          saved = await api.uploadTemplateSkill(template.id, skillFile);
-        }
-
-        if (removeScaffold && template.scaffold_path) {
-          saved = await api.deleteTemplateScaffold(template.id);
-        }
-        if (scaffoldFile) {
-          saved = await api.uploadTemplateScaffold(template.id, scaffoldFile);
-        }
-      } else {
-        saved = await api.createAdminTemplate({
-          name: name.trim(),
-          description: description.trim(),
-          project_type: projectType,
-          coolify_compatible: coolifyCompatible,
-          prompt: prompt.trim(),
-          is_active: isActive
-        });
-
-        if (skillFile) {
-          saved = await api.uploadTemplateSkill(saved.id, skillFile);
-        }
-        if (scaffoldFile) {
-          saved = await api.uploadTemplateScaffold(saved.id, scaffoldFile);
-        }
+      if (removeScaffold && template.scaffold_path) {
+        saved = await api.deleteTemplateScaffold(template.id);
+      }
+      if (scaffoldFile) {
+        saved = await api.uploadTemplateScaffold(template.id, scaffoldFile);
       }
 
       open = false;
@@ -170,7 +115,7 @@
   }
 </script>
 
-<Modal bind:open title={editing ? t('templateDialog.editTitle') : t('templateDialog.newTitle')} width="50rem">
+<Modal bind:open title={t('templateDialog.editTitle')} width="50rem">
   {#snippet body()}
     <form id="template-form" onsubmit={submit}>
       {#if error}
@@ -197,44 +142,6 @@
         {#if touched && !name.trim()}
           <span class="error mono">{t('templateDialog.nameRequired')}</span>
         {/if}
-      </div>
-
-      <!-- Tipo de Projeto -->
-      <div class="field">
-        <label for="tpl-type" class="label">{t('templateDialog.type')}</label>
-        <select
-          id="tpl-type"
-          class="input"
-          value={projectType}
-          onchange={(e) => onTypeChange(e.currentTarget.value as ProjectType)}
-        >
-          {#each PROJECT_TYPES as type (type)}
-            <option value={type}>
-              {PROJECT_TYPE_META[type].label}
-              ({PROJECT_TYPE_META[type].coolifyDefault ? t('form.coolifyCompatible') : t('templateDialog.noCoolifyDeploy')})
-            </option>
-          {/each}
-        </select>
-        <span class="help">
-          {PROJECT_TYPE_META[projectType].description}
-        </span>
-      </div>
-
-      <!-- Compatibilidade com Coolify -->
-      <div class="field coolify-box" class:is-coolify={coolifyCompatible}>
-        <label class="check-label">
-          <input type="checkbox" bind:checked={coolifyCompatible} />
-          <span class="check-text">
-            <strong>{t('templateDialog.coolifyCompatible')}</strong>
-            <span class="help">
-              {#if coolifyCompatible}
-                {t('templateDialog.coolifyOn')}
-              {:else}
-                {t('templateDialog.coolifyOff')}
-              {/if}
-            </span>
-          </span>
-        </label>
       </div>
 
       <!-- Descrição -->
@@ -272,7 +179,7 @@
           <span class="label">{t('templateDialog.skill')}</span>
           <span class="help">{@html t('templateDialog.skillHelp')}</span>
 
-          {#if template?.skill_filename && !removeSkill && !skillFile}
+          {#if template.skill_filename && !removeSkill && !skillFile}
             <div class="current-file">
               <span class="mono truncate">{template.skill_filename}</span>
               <div class="file-acts">
@@ -328,7 +235,23 @@
           <span class="label">{t('templateDialog.scaffold')}</span>
           <span class="help">{@html t('templateDialog.scaffoldHelp')}</span>
 
-          {#if template?.scaffold_filename && !removeScaffold && !scaffoldFile}
+          {#if !scaffoldFile && (template.bundled_scaffold || removeScaffold)}
+            <!-- Sem .zip próprio vale o embutido; baixá-lo é o ponto de partida para adaptar. -->
+            <div class="current-file bundled">
+              <span class="mono truncate">{t('templateDialog.bundledScaffold')}</span>
+              <div class="file-acts">
+                <a
+                  href={authedUrl(`/admin/templates/${template.id}/scaffold/download`)}
+                  class="btn-quiet btn-sm"
+                  title={t('templateDialog.downloadBundledScaffold')}
+                  download
+                >
+                  <Icon name="download" size={12} />
+                </a>
+              </div>
+            </div>
+          {/if}
+          {#if template.scaffold_filename && !template.bundled_scaffold && !removeScaffold && !scaffoldFile}
             <div class="current-file">
               <span class="mono truncate">{template.scaffold_filename}</span>
               <div class="file-acts">
@@ -379,17 +302,6 @@
           {/if}
         </div>
       </div>
-
-      <!-- Ativo / Inativo -->
-      <div class="field">
-        <label class="check-label">
-          <input type="checkbox" bind:checked={isActive} />
-          <span class="check-text">
-            <strong>{t('templateDialog.active')}</strong>
-            <span class="help">{t('templateDialog.activeHelp')}</span>
-          </span>
-        </label>
-      </div>
     </form>
   {/snippet}
 
@@ -409,13 +321,7 @@
         class="btn btn-solid btn-sm"
         disabled={busy}
       >
-        {#if busy}
-          {t('common.saving')}
-        {:else if editing}
-          {t('form.saveChanges')}
-        {:else}
-          {t('templateDialog.create')}
-        {/if}
+        {busy ? t('common.saving') : t('form.saveChanges')}
       </button>
     </div>
   {/snippet}
@@ -464,39 +370,15 @@
     color: var(--ink);
   }
 
-  .coolify-box {
-    padding: var(--s3);
-    border: 1px solid var(--rule-2);
-    background: var(--paper-sunk);
-  }
-
-  .coolify-box.is-coolify {
-    border-color: var(--ink-3);
-  }
-
-  .check-label {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--s3);
-    cursor: pointer;
-  }
-
-  .check-label input[type='checkbox'] {
-    margin-top: 0.2rem;
-    cursor: pointer;
-  }
-
-  .check-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    font-size: var(--t-small);
-  }
-
   .file-field {
     padding: var(--s3);
     border: 1px dashed var(--rule-2);
     background: var(--paper-sunk);
+  }
+
+  .current-file.bundled {
+    border-style: dashed;
+    color: var(--ink-2);
   }
 
   .current-file {

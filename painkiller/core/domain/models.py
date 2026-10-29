@@ -94,29 +94,8 @@ class Task(BaseModel):
 
 
 class ProjectType(str, Enum):
-    """Categorias de projetos suportadas pelo Painkiller."""
-    API = "api"
-    WEB_STATIC = "web_static"
-    WEB_FULLSTACK = "web_fullstack"
-    DESKTOP = "desktop"
-    MOBILE_CROSSPLATFORM = "mobile_crossplatform"
+    """Categorias de projetos suportadas: esta edição só fabrica apps Android nativos."""
     ANDROID_NATIVE = "android_native"
-
-
-COOLIFY_COMPATIBLE_TYPES: set[ProjectType] = {
-    ProjectType.API,
-    ProjectType.WEB_STATIC,
-    ProjectType.WEB_FULLSTACK,
-}
-
-
-def is_coolify_compatible(project_type: ProjectType | str) -> bool:
-    """Verifica se o tipo de projeto pode ser implantado no Coolify."""
-    try:
-        t = ProjectType(project_type)
-        return t in COOLIFY_COMPATIBLE_TYPES
-    except ValueError:
-        return False
 
 
 class ProjectTemplate(BaseModel):
@@ -124,8 +103,9 @@ class ProjectTemplate(BaseModel):
     id: str
     name: str
     description: str = ""
-    project_type: ProjectType = ProjectType.WEB_FULLSTACK
-    coolify_compatible: bool = True
+    project_type: ProjectType = ProjectType.ANDROID_NATIVE
+    # Um APK não sobe no Coolify; o campo fica pela compatibilidade do esquema.
+    coolify_compatible: bool = False
     skill_path: Optional[str] = None
     skill_filename: Optional[str] = None
     scaffold_path: Optional[str] = None

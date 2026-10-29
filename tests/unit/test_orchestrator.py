@@ -367,3 +367,27 @@ def test_prompt_with_superpowers_keeps_the_skills(mock_tracker, mock_sandbox, mo
     assert "1. Utilize as skills e boas práticas do plugin Superpowers" in instructions
     assert "NÃO use as skills" not in instructions
     assert "3. Faça commit" in instructions
+
+
+@pytest.mark.asyncio
+async def test_prompt_carries_android_environment_and_template_guidelines(mock_tracker, mock_sandbox, mock_git):
+    from painkiller.core.domain.models import ProjectTemplate
+
+    project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    task = Task(id="t1", project_id="p1", title="Tela de login", description="Desc")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_tracker.list_clarifications.return_value = []
+    mock_tracker.get_project_template.return_value = ProjectTemplate(
+        id="android-kotlin", name="Android", prompt="Use Hilt para injeção de dependência."
+    )
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    instructions = mock_sandbox.run_task.call_args.args[2]
+    assert "app Android nativo em Kotlin" in instructions
+    assert "./gradlew testDebugUnitTest" in instructions
+    assert "## Diretrizes técnicas do app" in instructions
+    assert "Use Hilt para injeção de dependência." in instructions

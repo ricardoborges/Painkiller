@@ -1,15 +1,28 @@
-"""Admin Project Templates routes with CRUD, file uploads and Coolify compatibility."""
+"""Admin routes for the single project template (native Android app in Kotlin).
+
+Esta edição tem um template só, semeado no startup (``ensure_android_template``):
+o admin não cria nem apaga templates, só configura o que existe e pode trocar o
+arcabouço embutido por um .zip próprio. Sem .zip, vale o embutido.
+"""
 
 import os
 import shutil
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Depends, Request, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from painkiller.api.security import require_admin, current_user
-from painkiller.core.domain.models import ProjectTemplate, ProjectType, is_coolify_compatible, User
+from painkiller.core.android_template import (
+    BUNDLED_SCAFFOLD_DIR,
+    BUNDLED_SCAFFOLD_FILENAME,
+    has_uploaded_scaffold,
+)
+from painkiller.core.domain.models import ProjectTemplate
+from painkiller.core.scaffold import zip_scaffold_dir
 
 
 router = APIRouter(prefix="/api/admin/templates", tags=["admin-templates"])
@@ -26,114 +39,59 @@ def _template_storage_dir(template_id: str) -> str:
     return path
 
 
-class CreateTemplateRequest(BaseModel):
-    name: str = Field(..., min_length=1)
-    description: Optional[str] = ""
-    project_type: ProjectType = ProjectType.WEB_FULLSTACK
-    coolify_compatible: Optional[bool] = None
-    prompt: Optional[str] = ""
-    is_active: Optional[bool] = True
+def _format_template(template: ProjectTemplate) -> dict:
+    data = template.model_dump(mode="json")
+    # Sem .zip do admin, o projeto nasce do arcabouço embutido.
+    data["bundled_scaffold"] = not has_uploaded_scaffold(template)
+    return data
+
+
+async def _require_template(request: Request, template_id: str) -> ProjectTemplate:
+    template = await request.app.state.tracker.get_project_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template não encontrado")
+    return template
 
 
 class UpdateTemplateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    project_type: Optional[ProjectType] = None
-    coolify_compatible: Optional[bool] = None
     prompt: Optional[str] = None
-    is_active: Optional[bool] = None
 
 
 # ---- Admin Endpoints ----
 
 @router.get("", dependencies=[Depends(require_admin)])
 async def list_admin_templates(request: Request):
-    tracker = request.app.state.tracker
-    templates = await tracker.list_project_templates(active_only=False)
-    return [t.model_dump(mode="json") for t in templates]
-
-
-@router.post("", dependencies=[Depends(require_admin)])
-async def create_admin_template(req: CreateTemplateRequest, request: Request):
-    tracker = request.app.state.tracker
-
-    coolify_compatible = (
-        req.coolify_compatible
-        if req.coolify_compatible is not None
-        else is_coolify_compatible(req.project_type)
-    )
-
-    template = await tracker.create_project_template(
-        name=req.name.strip(),
-        project_type=req.project_type,
-        description=(req.description or "").strip(),
-        coolify_compatible=coolify_compatible,
-        prompt=(req.prompt or "").strip(),
-        is_active=True if req.is_active is None else req.is_active,
-    )
-    return template.model_dump(mode="json")
+    templates = await request.app.state.tracker.list_project_templates(active_only=False)
+    return [_format_template(t) for t in templates]
 
 
 @router.get("/{template_id}", dependencies=[Depends(require_admin)])
 async def get_admin_template(template_id: str, request: Request):
-    tracker = request.app.state.tracker
-    template = await tracker.get_project_template(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template não encontrado")
-    return template.model_dump(mode="json")
+    return _format_template(await _require_template(request, template_id))
 
 
 @router.put("/{template_id}", dependencies=[Depends(require_admin)])
 async def update_admin_template(template_id: str, req: UpdateTemplateRequest, request: Request):
-    tracker = request.app.state.tracker
-    existing = await tracker.get_project_template(template_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Template não encontrado")
-
-    coolify_comp = req.coolify_compatible
-    if coolify_comp is None and req.project_type is not None:
-        # Se alterou o tipo e não especificou compatibilidade, recalcula
-        coolify_comp = is_coolify_compatible(req.project_type)
-
-    updated = await tracker.update_project_template(
+    await _require_template(request, template_id)
+    if req.name is not None and not req.name.strip():
+        raise HTTPException(status_code=400, detail="Informe o nome do template")
+    updated = await request.app.state.tracker.update_project_template(
         template_id=template_id,
         name=req.name.strip() if req.name is not None else None,
-        description=req.description.strip() if req.description is not None else None,
-        project_type=req.project_type,
-        coolify_compatible=coolify_comp,
-        prompt=req.prompt if req.prompt is not None else None,
-        is_active=req.is_active,
+        description=req.description,
+        prompt=req.prompt,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Template não encontrado")
-    return updated.model_dump(mode="json")
-
-
-@router.delete("/{template_id}", dependencies=[Depends(require_admin)])
-async def delete_admin_template(template_id: str, request: Request):
-    tracker = request.app.state.tracker
-    template = await tracker.get_project_template(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template não encontrado")
-
-    # Remove arquivos associados do disco
-    storage_dir = os.path.join(_get_storage_dir(), "templates", template_id)
-    if os.path.exists(storage_dir):
-        try:
-            shutil.rmtree(storage_dir, ignore_errors=True)
-        except Exception:
-            pass
-
-    deleted = await tracker.delete_project_template(template_id)
-    return {"deleted": deleted}
+    return _format_template(updated)
 
 
 @router.post("/{template_id}/skill", dependencies=[Depends(require_admin)])
 async def upload_template_skill(template_id: str, request: Request, file: UploadFile = File(...)):
     tracker = request.app.state.tracker
-    template = await tracker.get_project_template(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template não encontrado")
+    template = await _require_template(request, template_id)
 
     original_filename = file.filename or "skill.md"
     ext = Path(original_filename).suffix.lower()
@@ -158,15 +116,13 @@ async def upload_template_skill(template_id: str, request: Request, file: Upload
         skill_path=dest_path,
         skill_filename=original_filename,
     )
-    return updated.model_dump(mode="json")
+    return _format_template(updated)
 
 
 @router.delete("/{template_id}/skill", dependencies=[Depends(require_admin)])
 async def delete_template_skill(template_id: str, request: Request):
     tracker = request.app.state.tracker
-    template = await tracker.get_project_template(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template não encontrado")
+    template = await _require_template(request, template_id)
 
     if template.skill_path and os.path.exists(template.skill_path):
         try:
@@ -179,7 +135,7 @@ async def delete_template_skill(template_id: str, request: Request):
         skill_path="",
         skill_filename="",
     )
-    return updated.model_dump(mode="json")
+    return _format_template(updated)
 
 
 @router.get("/{template_id}/skill/download", dependencies=[Depends(current_user)])
@@ -200,9 +156,7 @@ async def download_template_skill(template_id: str, request: Request):
 @router.post("/{template_id}/scaffold", dependencies=[Depends(require_admin)])
 async def upload_template_scaffold(template_id: str, request: Request, file: UploadFile = File(...)):
     tracker = request.app.state.tracker
-    template = await tracker.get_project_template(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template não encontrado")
+    template = await _require_template(request, template_id)
 
     original_filename = file.filename or "scaffold.zip"
     ext = Path(original_filename).suffix.lower()
@@ -211,30 +165,35 @@ async def upload_template_scaffold(template_id: str, request: Request, file: Upl
 
     storage_dir = _template_storage_dir(template_id)
     dest_path = os.path.join(storage_dir, "scaffold.zip")
+    # Grava ao lado e só troca se for um zip de verdade: um upload ruim não
+    # pode derrubar o arcabouço que já funcionava.
+    staging = dest_path + ".upload"
+    with open(staging, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    if not zipfile.is_zipfile(staging):
+        os.remove(staging)
+        raise HTTPException(status_code=400, detail="O arcabouço da aplicação deve ser um arquivo .zip")
 
     if template.scaffold_path and os.path.exists(template.scaffold_path) and template.scaffold_path != dest_path:
         try:
             os.remove(template.scaffold_path)
         except OSError:
             pass
-
-    with open(dest_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    os.replace(staging, dest_path)
 
     updated = await tracker.update_project_template(
         template_id=template_id,
         scaffold_path=dest_path,
         scaffold_filename=original_filename,
     )
-    return updated.model_dump(mode="json")
+    return _format_template(updated)
 
 
 @router.delete("/{template_id}/scaffold", dependencies=[Depends(require_admin)])
 async def delete_template_scaffold(template_id: str, request: Request):
+    """Drop the admin's .zip: new projects go back to the bundled scaffold."""
     tracker = request.app.state.tracker
-    template = await tracker.get_project_template(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template não encontrado")
+    template = await _require_template(request, template_id)
 
     if template.scaffold_path and os.path.exists(template.scaffold_path):
         try:
@@ -247,37 +206,39 @@ async def delete_template_scaffold(template_id: str, request: Request):
         scaffold_path="",
         scaffold_filename="",
     )
-    return updated.model_dump(mode="json")
+    return _format_template(updated)
 
 
 @router.get("/{template_id}/scaffold/download", dependencies=[Depends(current_user)])
-async def download_template_scaffold(template_id: str, request: Request):
+async def download_template_scaffold(template_id: str, request: Request, background: BackgroundTasks):
     tracker = request.app.state.tracker
     template = await tracker.get_project_template(template_id)
-    if not template or not template.scaffold_path or not os.path.exists(template.scaffold_path):
+    if not template:
         raise HTTPException(status_code=404, detail="Arquivo de arcabouço não encontrado")
 
-    filename = template.scaffold_filename or os.path.basename(template.scaffold_path)
-    return FileResponse(
-        template.scaffold_path,
-        filename=filename,
-        media_type="application/zip",
-    )
+    if has_uploaded_scaffold(template):
+        filename = template.scaffold_filename or os.path.basename(template.scaffold_path)
+        return FileResponse(template.scaffold_path, filename=filename, media_type="application/zip")
+
+    # O embutido sai empacotado na hora: é o ponto de partida para o admin adaptar.
+    fd, zip_path = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    zip_scaffold_dir(BUNDLED_SCAFFOLD_DIR, zip_path)
+    background.add_task(os.remove, zip_path)
+    return FileResponse(zip_path, filename=BUNDLED_SCAFFOLD_FILENAME, media_type="application/zip")
 
 
 # ---- Public / General Endpoints (Para criação de projetos) ----
 
 @public_router.get("", dependencies=[Depends(current_user)])
 async def list_active_templates(request: Request):
-    tracker = request.app.state.tracker
-    templates = await tracker.list_project_templates(active_only=True)
-    return [t.model_dump(mode="json") for t in templates]
+    templates = await request.app.state.tracker.list_project_templates(active_only=True)
+    return [_format_template(t) for t in templates]
 
 
 @public_router.get("/{template_id}", dependencies=[Depends(current_user)])
 async def get_active_template(template_id: str, request: Request):
-    tracker = request.app.state.tracker
-    template = await tracker.get_project_template(template_id)
+    template = await request.app.state.tracker.get_project_template(template_id)
     if not template or not template.is_active:
         raise HTTPException(status_code=404, detail="Template não encontrado")
-    return template.model_dump(mode="json")
+    return _format_template(template)

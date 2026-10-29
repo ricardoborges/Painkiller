@@ -190,6 +190,7 @@ EN_US: dict[str, str] = {
     "A skill deve ser um arquivo .zip ou .md": "The skill must be a .zip or .md file",
     "O arcabouço da aplicação deve ser um arquivo .zip": "The application scaffold must be a .zip file",
     "O arcabouço do template é inválido: {error}": "The template's scaffold is invalid: {error}",
+    "Informe o nome do template": "Enter the template's name",
     # ---- análise ----
     "Falha ao iniciar o agente: {error}": "Failed to start the agent: {error}",
     "Mensagem vazia": "Empty message",

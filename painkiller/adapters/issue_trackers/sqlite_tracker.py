@@ -239,8 +239,10 @@ class ProjectTemplateRecord(Base):
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False)
     description = Column(Text, default="")
-    project_type = Column(SQLEnum(ProjectType), nullable=False, default=ProjectType.WEB_FULLSTACK)
-    coolify_compatible = Column(Boolean, default=True, nullable=False)
+    # Texto, não SQLEnum: bancos da edição generalista guardam tipos que não
+    # existem mais, e um SQLEnum recusaria ler a linha (nem daria para apagá-la).
+    project_type = Column(String, nullable=False, default=ProjectType.ANDROID_NATIVE.name)
+    coolify_compatible = Column(Boolean, default=False, nullable=False)
     skill_path = Column(String, nullable=True)
     skill_filename = Column(String, nullable=True)
     scaffold_path = Column(String, nullable=True)
@@ -1391,12 +1393,10 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
 
     @staticmethod
     def _to_template_domain(row: ProjectTemplateRecord) -> ProjectTemplate:
-        ptype = row.project_type
-        if isinstance(ptype, str):
-            try:
-                ptype = ProjectType(ptype)
-            except ValueError:
-                ptype = ProjectType.WEB_FULLSTACK
+        raw = getattr(row.project_type, "name", row.project_type)
+        ptype = ProjectType.__members__.get(raw) or next(
+            (t for t in ProjectType if t.value == raw), ProjectType.ANDROID_NATIVE
+        )
         return ProjectTemplate(
             id=row.id,
             name=row.name,
@@ -1418,7 +1418,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         name: str,
         project_type: ProjectType,
         description: str = "",
-        coolify_compatible: bool = True,
+        coolify_compatible: bool = False,
         skill_path: Optional[str] = None,
         skill_filename: Optional[str] = None,
         scaffold_path: Optional[str] = None,
@@ -1433,7 +1433,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             id=tid,
             name=name,
             description=description,
-            project_type=project_type,
+            project_type=ProjectType(project_type).name,
             coolify_compatible=coolify_compatible,
             skill_path=skill_path,
             skill_filename=skill_filename,
@@ -1488,7 +1488,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         if description is not None:
             values["description"] = description
         if project_type is not None:
-            values["project_type"] = project_type
+            values["project_type"] = ProjectType(project_type).name
         if coolify_compatible is not None:
             values["coolify_compatible"] = coolify_compatible
         if skill_path is not None:

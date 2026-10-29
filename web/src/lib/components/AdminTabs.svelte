@@ -3,8 +3,6 @@
   import { page } from '$app/state';
 
   /** Subnavegação da área de administração. */
-  let { templateCount }: { templateCount?: number } = $props();
-
   const tabs = $derived([
     { href: '/admin/templates', label: t('adminTabs.templates') },
     { href: '/admin/prices', label: t('adminTabs.prices') },
@@ -17,9 +15,6 @@
     {@const active = page.url.pathname.startsWith(tab.href)}
     <a href={tab.href} class="tab" class:active aria-current={active ? 'page' : undefined}>
       {tab.label}
-      {#if tab.href === '/admin/templates' && templateCount !== undefined}
-        <span class="mono count">{templateCount}</span>
-      {/if}
     </a>
   {/each}
 </nav>
@@ -52,10 +47,5 @@
   .tab.active {
     color: var(--ink);
     border-bottom-color: var(--ink);
-  }
-
-  .count {
-    font-size: var(--t-micro);
-    color: var(--ink-3);
   }
 </style>

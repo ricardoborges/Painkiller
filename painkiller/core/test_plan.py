@@ -1,4 +1,8 @@
-"""Where a target repo's Python tests live, and the shell script that runs them.
+"""How a target repo's tests run: Gradle for the Android app, pytest as a fallback.
+
+Esta edição fabrica apps Android: um repositório com build Gradle na raiz roda
+os testes unitários JVM e monta o APK de debug (não há emulador no worker, então
+androidTest fica de fora). Sem Gradle, vale a busca por suítes pytest abaixo.
 
 The suite runs inside the worker image (the repo mounted at ``/workspace``),
 never in the API process: it is code the agent wrote. A repo whose tests sit
@@ -109,12 +113,38 @@ def _install_deps(folder: str) -> list[str]:
     return commands
 
 
-def build_test_script(repo_path: str) -> Optional[str]:
-    """POSIX sh script that runs every test root, or None when the repo has no Python tests.
+#: Arquivos que marcam um build Gradle na raiz do repositório.
+GRADLE_MARKERS = ("settings.gradle.kts", "settings.gradle", "gradlew")
 
-    Exits with the first real failure; a root that collects nothing (pytest's 5)
+#: Testes unitários JVM e o APK de debug: um app que não monta não passa.
+GRADLE_TASKS = "testDebugUnitTest assembleDebug"
+
+
+def is_gradle_project(repo_path: str) -> bool:
+    return any(os.path.isfile(os.path.join(repo_path, name)) for name in GRADLE_MARKERS)
+
+
+def build_gradle_script(repo_path: str) -> str:
+    """POSIX sh script running the Android app's unit tests and debug build."""
+    # sh ./gradlew: o bit de execução se perde num bind mount vindo do Windows.
+    gradle = "sh ./gradlew" if os.path.isfile(os.path.join(repo_path, "gradlew")) else "gradle"
+    lines = [
+        f"echo '=== gradle {GRADLE_TASKS}'",
+        f"cd {WORKSPACE}",
+        f"exec {gradle} --no-daemon --console=plain --stacktrace {GRADLE_TASKS}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def build_test_script(repo_path: str) -> Optional[str]:
+    """POSIX sh script that runs the repo's tests, or None when it has none.
+
+    A Gradle build at the root wins outright. Otherwise every pytest root runs;
+    the script exits with the first real failure; a root that collects nothing (pytest's 5)
     does not fail the run, and the script exits 5 only when every root was empty.
     """
+    if is_gradle_project(repo_path):
+        return build_gradle_script(repo_path)
     roots = find_test_roots(repo_path)
     if not roots:
         return None
