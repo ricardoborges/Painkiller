@@ -20,6 +20,9 @@
   import ClarificationPanel from '$lib/components/ClarificationPanel.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import AddTaskDialog from '$lib/components/AddTaskDialog.svelte';
+  import ApkControls from '$lib/components/ApkControls.svelte';
+  import { testDevice } from '$lib/stores/testDevice.svelte';
+  import AppPreview from '$lib/components/AppPreview.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
   import DeployTerminal from '$lib/components/DeployTerminal.svelte';
   import { deploys, isDeployActive, deployStage, lastLogLine } from '$lib/stores/deploys.svelte';
@@ -61,8 +64,12 @@
 
   // Deploys (Coolify)
   let envStatus = $state<EnvironmentStatusResponse | null>(null);
-  let deployingEnv = $state<'test' | 'production' | null>(null);
-  let deployingTaskId = $state<string | null>(null);
+  let deployingEnv = $state<'test' | null>(null);
+  let deletingTaskId = $state<string | null>(null);
+  /** O ambiente de teste abre num celular simulado, em modal. */
+  function openDevice() {
+    testDevice.show(envStatus?.test.url ?? currentDeployment?.url ?? data.project.test_url);
+  }
   let deploymentModalOpen = $state(false);
   let fixingDeploy = $state(false);
   // O registro vive no rastreador (que consulta o Coolify até terminar); aqui
@@ -72,7 +79,7 @@
     (shownDeploymentId && deploys.records[shownDeploymentId]) || deploys.latest(data.project.id)
   );
   const runningDeploy = $derived(deploys.active(data.project.id));
-  const productionDeploy = $derived(deploys.active(data.project.id, 'production'));
+  const testDeploy = $derived(deploys.active(data.project.id, 'test'));
 
   const justCreated = $derived(Number(page.url.searchParams.get('new') ?? 0));
   const byId = $derived(new Map(tasks.map((t) => [t.id, t])));
@@ -113,6 +120,14 @@
   const sessionClosed = $derived(activeSession?.status === 'COMPLETED');
   const progressPercent = $derived(tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0);
   const sessionTotals = $derived(taskTotals(tasks));
+
+  // Prévia do app ao lado das tarefas: cada tarefa concluída a relê. Ocultá-la
+  // vale para todos os projetos, como o tema.
+  const PREVIEW_HIDDEN_KEY = 'pk_preview_hidden';
+  let previewCollapsed = $state(localStorage.getItem(PREVIEW_HIDDEN_KEY) === '1');
+  $effect(() => {
+    localStorage.setItem(PREVIEW_HIDDEN_KEY, previewCollapsed ? '1' : '0');
+  });
 
   const counts = $derived.by(() => {
     const map = new Map<string, number>();
@@ -390,45 +405,21 @@
     if (deploys.settled) loadEnvStatus();
   });
 
-  async function deployTest(taskId: string) {
-    const running = deploys.activeForTask(taskId);
-    if (running) {
-      showDeployment(running.id);
+  /**
+   * Um só "Testar" para o backlog: sem tarefa indicada, o backend publica a
+   * branch da última concluída da sessão — que já traz as anteriores, porque
+   * cada tarefa nasce da branch padrão depois do merge das outras.
+   */
+  async function deployTest() {
+    if (testDeploy) {
+      showDeployment(testDeploy.id);
       return;
     }
     deployingEnv = 'test';
-    deployingTaskId = taskId;
     try {
       const record = await api.triggerDeploy(
         data.project.id,
         'test',
-        taskId,
-        activeSession?.id
-      );
-      deploys.track(record);
-      showDeployment(record.id);
-      await loadEnvStatus();
-    } catch (e) {
-      alert(e instanceof Error ? e.message : t('backlog.deployTestFailed'));
-    } finally {
-      deployingEnv = null;
-      deployingTaskId = null;
-    }
-  }
-
-  async function deployProduction() {
-    if (productionDeploy) {
-      showDeployment(productionDeploy.id);
-      return;
-    }
-    if (!confirm(t('backlog.confirmProduction'))) {
-      return;
-    }
-    deployingEnv = 'production';
-    try {
-      const record = await api.triggerDeploy(
-        data.project.id,
-        'production',
         undefined,
         activeSession?.id
       );
@@ -436,7 +427,7 @@
       showDeployment(record.id);
       await loadEnvStatus();
     } catch (e) {
-      alert(e instanceof Error ? e.message : t('backlog.deployProductionFailed'));
+      alert(e instanceof Error ? e.message : t('backlog.deployTestFailed'));
     } finally {
       deployingEnv = null;
     }
@@ -539,6 +530,21 @@
       await load();
     } finally {
       togglingSuperpowers = false;
+    }
+  }
+
+  /** Só as tarefas escritas à mão; o backend recusa as do backlog importado. */
+  async function deleteTask(task: Task) {
+    if (!confirm(t('backlog.confirmDelete', { title: task.title }))) return;
+    deletingTaskId = task.id;
+    try {
+      await api.deleteTask(task.id);
+      delete expandOverride[task.id];
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : t('backlog.deleteFailed'));
+    } finally {
+      deletingTaskId = null;
     }
   }
 
@@ -669,6 +675,8 @@
   </p>
 {/if}
 
+<div class="workspace" class:collapsed={previewCollapsed}>
+<div class="work">
 {#if loading && !tasks.length}
   <div class="pad"><Skeleton variant="table" rows={5} /></div>
 {:else if error}
@@ -787,6 +795,29 @@
           </button>
         {/if}
 
+        {#if completedCount > 0}
+          <ApkControls projectId={data.project.id} />
+        {/if}
+
+        {#if branchesAlive && completedCount > 0}
+          <button
+            type="button"
+            class="btn btn-line btn-sm"
+            onclick={deployTest}
+            disabled={deployingEnv === 'test' || (isQueueRunning && !testDeploy)}
+            title={testDeploy ? t('backlog.testInProgress') : t('backlog.testTitle')}
+          >
+            {#if deployingEnv === 'test'}
+              <span class="spinner-inline" aria-hidden="true"></span> {t('backlog.preparing')}
+            {:else if testDeploy}
+              <span class="spinner-inline" aria-hidden="true"></span> {t('dashboard.deploy.BUILDING')}
+              <span class="mono tabular">{deploys.elapsed(testDeploy)}</span>
+            {:else}
+              <Icon name="flask" size={11} /> {t('backlog.test')}
+            {/if}
+          </button>
+        {/if}
+
         <div class="menu">
           <button
             type="button"
@@ -801,35 +832,23 @@
           </button>
           {#if menuOpen}
             <div class="sheet" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                onclick={() => {
-                  menuOpen = false;
-                  deployProduction();
-                }}
-                disabled={deployingEnv === 'production' ||
-                  (!productionDeploy && (isQueueRunning || completedCount < tasks.length))}
-                title={productionDeploy
-                  ? t('backlog.prodInProgress')
-                  : completedCount < tasks.length
-                    ? t('backlog.prodLocked')
-                    : t('backlog.prodTrigger')}
-              >
-                <Icon name="upload" size={12} />
-                <span>{t('backlog.deployProduction')}</span>
-                {#if productionDeploy}<span class="mono faint tabular">{deploys.elapsed(productionDeploy)}</span>{/if}
-              </button>
-
-              {#each [{ name: t('dashboard.test'), env: envStatus?.test }, { name: t('deploys.env.production'), env: envStatus?.production }] as e (e.name)}
+              {#each [{ name: t('dashboard.test'), env: envStatus?.test }] as e (e.name)}
                 {#if e.env?.url}
-                  <a role="menuitem" href={e.env.url} target="_blank" rel="noopener noreferrer">
-                    <Icon name="external" size={12} />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onclick={() => {
+                      menuOpen = false;
+                      openDevice();
+                    }}
+                    title={t('testDevice.openTitle')}
+                  >
+                    <Icon name="phone" size={12} />
                     <span class="env-text">
                       <span>{e.name}{#if e.env.status && e.env.status !== 'HEALTHY'}<span class="faint"> · {deployStage(e.env.status)}</span>{/if}</span>
                       <span class="mono faint env-url">{e.env.url}</span>
                     </span>
-                  </a>
+                  </button>
                 {:else}
                   <span role="menuitem" aria-disabled="true" class="faint">
                     <Icon name="globe" size={12} />
@@ -1203,29 +1222,8 @@
         </div>
 
         <div class="side">
-          {#if isCompleted}
-            {#if branchesAlive}
-            {@const taskDeploy = deploys.activeForTask(task.id)}
-            <button
-              type="button"
-              class="btn btn-line btn-xs test-task-btn"
-              onclick={() => deployTest(task.id)}
-              disabled={deployingTaskId === task.id || (isQueueRunning && !taskDeploy)}
-              title={taskDeploy
-                ? t('backlog.testInProgress')
-                : t('backlog.testTitle')}
-            >
-              {#if deployingTaskId === task.id}
-                <span class="spinner-inline" aria-hidden="true"></span> {t('backlog.preparing')}
-              {:else if taskDeploy}
-                <span class="spinner-inline" aria-hidden="true"></span> {t('dashboard.deploy.BUILDING')}
-                <span class="mono tabular">{deploys.elapsed(taskDeploy)}</span>
-              {:else}
-                <Icon name="play" size={10} /> {t('backlog.test')}
-              {/if}
-            </button>
-            {/if}
-          {:else if isMerging}
+          <!-- Concluída não tem ação própria: o teste é um só, na barra da sessão. -->
+          {#if isMerging}
             <span class="completed-tag label mono">
               <span class="spinner-inline" aria-hidden="true"></span> {t('backlog.merging')}
             </span>
@@ -1240,7 +1238,7 @@
               <Icon name="square" size={10} />
               <span>{stoppingTaskId === task.id ? t('activity.stopping') : t('activity.stop')}</span>
             </button>
-          {:else}
+          {:else if !isCompleted}
             <button
               type="button"
               class="btn btn-line btn-sm"
@@ -1265,12 +1263,30 @@
                 <span>{t('backlog.superpowers')}</span>
               </label>
             {/if}
+            {#if task.manual}
+              <button
+                type="button"
+                class="btn-link label delete-task"
+                onclick={() => deleteTask(task)}
+                disabled={deletingTaskId === task.id || isQueueRunning}
+                title={t('backlog.deleteTitle')}
+              >
+                <Icon name="trash" size={11} />
+                <span>{deletingTaskId === task.id ? t('backlog.deleting') : t('backlog.delete')}</span>
+              </button>
+            {/if}
           {/if}
         </div>
       </li>
     {/each}
   </ol>
 {/if}
+</div>
+
+<aside class="phone-col">
+  <AppPreview projectId={data.project.id} version={completedCount} bind:collapsed={previewCollapsed} />
+</aside>
+</div>
 
 <AddTaskDialog
   bind:open={addTaskOpen}
@@ -1300,9 +1316,15 @@
               <span class="faint tabular">{deploys.elapsed(currentDeployment)}</span>
             </span>
             {#if currentDeployment.url && currentDeployment.status === 'HEALTHY'}
-              <a href={currentDeployment.url} target="_blank" rel="noopener noreferrer" class="link-ext bold">
-                {t('deploys.openApp')} <Icon name="external" size={10} />
-              </a>
+              <button
+                type="button"
+                class="btn-link link-ext bold"
+                onclick={() => {
+                  openDevice();
+                }}
+              >
+                <Icon name="phone" size={10} /> {t('deploys.openApp')}
+              </button>
             {/if}
           </div>
           {#if isDeployActive(currentDeployment)}
@@ -1311,7 +1333,7 @@
           {#if currentDeployment.url}
             <div class="deploy-url-line">
               <span class="muted">URL:</span>
-              <a href={currentDeployment.url} target="_blank" rel="noopener noreferrer" class="app-url">
+              <a href={currentDeployment.url} class="app-url" onclick={(e) => { e.preventDefault(); openDevice(); }}>
                 {currentDeployment.url}
               </a>
             </div>
@@ -1358,6 +1380,42 @@
 <style>
   .pad {
     padding-top: var(--s6);
+  }
+
+  /* Tarefas à esquerda, o app num smartphone à direita, preso na tela
+     enquanto a lista rola. */
+  .workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(17rem, 27vw, 25rem);
+    gap: var(--s6);
+    align-items: start;
+  }
+
+  .workspace.collapsed {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .work {
+    min-width: 0;
+  }
+
+  .phone-col {
+    position: sticky;
+    top: calc(3.25rem + 1px + var(--s5));
+    margin-top: var(--s5);
+  }
+
+  /* Tela estreita: a prévia sobe para antes da lista, com altura própria. */
+  @media (max-width: 1100px) {
+    .workspace,
+    .workspace.collapsed {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .phone-col {
+      position: static;
+      order: -1;
+    }
   }
 
   .created {
@@ -1648,8 +1706,10 @@
 
 
 
-  .test-task-btn {
-    font-size: var(--t-micro);
+  .delete-task {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
   }
 
   /* Modal de Deploy */

@@ -2,6 +2,7 @@ import { t } from '$lib/i18n/index.svelte';
 import { api } from '$lib/api';
 import type { DeploymentRecord, DeploymentStatus, EnvironmentType } from '$lib/types';
 import { toast } from '$lib/stores/toast.svelte';
+import { testDevice } from '$lib/stores/testDevice.svelte';
 
 /**
  * Acompanha os deploys no Coolify até terminarem.
@@ -229,8 +230,13 @@ class DeployTracker {
         tone: 'done',
         title: r.environment === 'test' ? t('deploys.testReady', { env }) : t('deploys.productionDone'),
         detail: `${t('deploys.branch', { branch: r.branch })} · ${took}`,
-        href: r.url ?? undefined,
+        // O teste abre no celular simulado, não na janela inteira do navegador.
+        href: r.url && r.environment !== 'test' ? r.url : undefined,
         hrefLabel: r.url ? t('deploys.openApp') : undefined,
+        action:
+          r.url && r.environment === 'test'
+            ? { label: t('deploys.openApp'), run: () => testDevice.show(r.url) }
+            : undefined,
         duration: 9000
       });
     } else {

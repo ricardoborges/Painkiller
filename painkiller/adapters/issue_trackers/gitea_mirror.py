@@ -1,6 +1,6 @@
 """Mirror backlog tasks into Gitea issues, as a decorator over the tracker.
 
-Every task write in Painkiller goes through five tracker methods, so wrapping
+Every task write in Painkiller goes through a handful of tracker methods, so wrapping
 the tracker is the one place where nothing slips past: the engine and the
 routes keep talking to `IssueTrackerPort` and never learn Gitea exists.
 
@@ -127,6 +127,13 @@ class GiteaIssueMirror:
         await self._inner.add_comment(task_id, author, comment)
         self._spawn(task_id, self._comment(task_id, author, comment))
 
+    async def delete_task(self, task_id: str) -> None:
+        # Lido antes: depois de apagada, a tarefa não diz mais qual é a issue.
+        task = await self._inner.get_task(task_id)
+        await self._inner.delete_task(task_id)
+        if task is not None and task.issue_number is not None:
+            self._spawn(task_id, self._delete_issue(task))
+
     # ---- sincronização ----------------------------------------------------
 
     async def sync_project(self, project_id: str) -> dict[str, Any]:
@@ -226,6 +233,11 @@ class GiteaIssueMirror:
             closed=task.status == TaskStatus.COMPLETED,
             label_ids=[labels[label_name(task.status)]],
         )
+
+    async def _delete_issue(self, task: Task) -> None:
+        repo = self._repo_of(await self._inner.get_project(task.project_id))
+        if repo is not None:
+            await self._vcs.delete_issue(*repo, task.issue_number)
 
     async def _comment(self, task_id: str, author: str, comment: str) -> None:
         task = await self._inner.get_task(task_id)

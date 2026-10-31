@@ -8,7 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from painkiller.api.server import create_app
-from painkiller.core.android_template import ANDROID_TEMPLATE_ID, BUNDLED_SCAFFOLD_DIR
+from painkiller.core.templates import ANDROID_TEMPLATE, ANDROID_TEMPLATE_ID, CAPACITOR_TEMPLATE, CAPACITOR_TEMPLATE_ID
 from painkiller.core.scaffold import ScaffoldError, copy_scaffold_dir, extract_scaffold
 from tests.auth_helpers import admin_headers
 
@@ -75,35 +75,61 @@ async def app_client(tmp_path, monkeypatch):
 
 async def test_create_project_from_uploaded_scaffold(app_client, tmp_path):
     app, client = app_client
-    scaffold = _zip(tmp_path / "scaffold.zip", {"kit/settings.gradle.kts": "x", "kit/app/build.gradle.kts": "y"})
+    scaffold = _zip(tmp_path / "scaffold.zip", {"kit/package.json": "{}", "kit/src/main.tsx": "y"})
     await app.state.tracker.update_project_template(
-        ANDROID_TEMPLATE_ID, name="Android Hilt", scaffold_path=scaffold, scaffold_filename="scaffold.zip",
+        CAPACITOR_TEMPLATE_ID, name="Capacitor Kit", scaffold_path=scaffold, scaffold_filename="scaffold.zip",
     )
 
     res = await client.post("/api/projects", json={"name": "Loja", "api_key": "k"})
 
     assert res.status_code == 200, res.text
     repo = res.json()["repo_path"]
-    assert os.path.exists(os.path.join(repo, "app", "build.gradle.kts"))
+    assert os.path.exists(os.path.join(repo, "src", "main.tsx"))
     # O zip do admin substitui o embutido, não se soma a ele.
-    assert not os.path.exists(os.path.join(repo, "gradlew"))
+    assert not os.path.exists(os.path.join(repo, "capacitor.config.ts"))
     log = subprocess.run(["git", "log", "--format=%s"], cwd=repo, capture_output=True, text=True).stdout
-    assert "scaffold from template Android Hilt" in log
+    assert "scaffold from template Capacitor Kit" in log
     assert subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True).stdout == ""
 
 
-async def test_create_project_uses_bundled_android_scaffold(app_client):
+async def test_create_project_defaults_to_capacitor(app_client):
     _, client = app_client
     res = await client.post("/api/projects", json={"name": "Loja", "api_key": "k"})
 
     assert res.status_code == 200, res.text
+    # Sem template_id, o projeto nasce do Capacitor, o único template ativo.
+    assert res.json()["template_id"] == CAPACITOR_TEMPLATE_ID
     repo = res.json()["repo_path"]
-    tracked = subprocess.run(["git", "ls-files", "-s"], cwd=repo, capture_output=True, text=True).stdout
-    assert "app/src/main/AndroidManifest.xml" in tracked
-    assert "gradle/wrapper/gradle-wrapper.jar" in tracked
-    assert "local.properties" not in tracked
-    # Árvore limpa: a primeira tarefa não herda nada pendente.
+    assert os.path.exists(os.path.join(repo, "capacitor.config.ts"))
+
+
+async def test_create_project_from_inactive_native_template_is_refused(app_client):
+    _, client = app_client
+    res = await client.post(
+        "/api/projects", json={"name": "Loja", "api_key": "k", "template_id": ANDROID_TEMPLATE_ID}
+    )
+    assert res.status_code == 400
+
+
+async def test_create_project_from_capacitor_template(app_client):
+    app, client = app_client
+    res = await client.post(
+        "/api/projects", json={"name": "Clipes", "api_key": "k", "template_id": CAPACITOR_TEMPLATE_ID}
+    )
+
+    assert res.status_code == 200, res.text
+    project = res.json()
+    assert project["template_id"] == CAPACITOR_TEMPLATE_ID
+    repo = project["repo_path"]
+    tracked = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True, text=True).stdout.split()
+    assert {"package.json", "package-lock.json", "capacitor.config.ts", "android/gradlew", "src/App.tsx"} <= set(tracked)
+    # Só o arcabouço do Capacitor: nada do Kotlin na raiz.
+    assert "settings.gradle.kts" not in tracked
+    assert os.access(os.path.join(repo, "android", "gradlew"), os.X_OK)
     assert subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True).stdout == ""
+    # O template fica gravado: é ele que escolhe o ambiente e a verificação das tarefas.
+    stored = await app.state.tracker.get_project(project["id"])
+    assert stored.template_id == CAPACITOR_TEMPLATE_ID
 
 
 async def test_create_project_with_unknown_template_is_refused(app_client):
@@ -113,8 +139,17 @@ async def test_create_project_with_unknown_template_is_refused(app_client):
 
 
 def test_bundled_scaffold_gradlew_keeps_lf(tmp_path):
-    written = copy_scaffold_dir(BUNDLED_SCAFFOLD_DIR, str(tmp_path))
+    written = copy_scaffold_dir(ANDROID_TEMPLATE.scaffold_dir, str(tmp_path))
     assert "gradlew" in written and "settings.gradle.kts" in written
     # Com CRLF, `sh ./gradlew` quebra no worker Linux.
     with open(tmp_path / "gradlew", "rb") as f:
         assert b"\r\n" not in f.read()
+
+
+def test_bundled_capacitor_scaffold_is_ready_to_build(tmp_path):
+    written = copy_scaffold_dir(CAPACITOR_TEMPLATE.scaffold_dir, str(tmp_path))
+    assert "android/gradlew" in written and "package-lock.json" in written
+    with open(tmp_path / "android" / "gradlew", "rb") as f:
+        assert b"\r\n" not in f.read()
+    # Gerados pelo `cap sync`: entram na verificação, nunca no arcabouço.
+    assert not any(w.startswith(("node_modules/", "dist/", "android/app/src/main/assets/public/")) for w in written)

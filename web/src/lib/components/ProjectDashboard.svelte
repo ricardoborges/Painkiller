@@ -15,6 +15,8 @@
   } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
+  import ApkSection from '$lib/components/ApkSection.svelte';
+  import { testDevice } from '$lib/stores/testDevice.svelte';
   import { getProjectSessionStore } from '$lib/stores/session.svelte';
   import { deploys } from '$lib/stores/deploys.svelte';
   import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
@@ -48,7 +50,7 @@
       if (project.id !== id) return;
       usage = u;
       env = e;
-      deployments = d;
+      deployments = d.filter((r) => r.environment === 'test');
       tasks = t;
       ready = true;
       // Um deploy disparado antes de um F5 (ou no backlog) continua sendo acompanhado.
@@ -106,15 +108,8 @@
   });
 
   /* O status do Coolify manda; sem registro de deploy, vale a URL fixa do projeto. */
+  // Só o ambiente de teste: a entrega de produção é o APK release (ver ApkSection).
   const environments = $derived([
-    {
-      key: 'production' as EnvironmentType,
-      label: t('deploys.env.production'),
-      url: env?.production.url ?? project.production_url ?? null,
-      status: env?.production.status ?? null,
-      branch: env?.production.branch ?? null,
-      updated: env?.production.updated_at ?? null
-    },
     {
       key: 'test' as EnvironmentType,
       label: t('dashboard.test'),
@@ -128,13 +123,13 @@
   /* ---- publicar ---- */
 
   let triggering = $state<EnvironmentType | null>(null);
+
   let deployError = $state<string | null>(null);
 
   /* Teste: o backend escolhe a branch da última tarefa concluída da sessão aberta
      (ou a branch padrão). Produção: sempre a branch padrão, com confirmação. */
   async function deploy(environment: EnvironmentType) {
     if (deploys.active(project.id, environment)) return;
-    if (environment === 'production' && !confirm(t('backlog.confirmProduction'))) return;
     triggering = environment;
     deployError = null;
     try {
@@ -266,9 +261,12 @@
 
   <div class="grid">
     <div class="main">
+      <!-- APK: o de produção é o destaque do painel -->
+      <ApkSection projectId={project.id} branch={project.default_branch || 'main'} />
+
       <!-- Ambientes publicados -->
       <section class="panel rise" style="--i: 1">
-        <h2 class="label">{t('dashboard.published')}</h2>
+        <h2 class="label">{t('dashboard.testEnvironment')}</h2>
         {#if !ready}
           <Skeleton rows={2} />
         {:else}
@@ -278,7 +276,7 @@
               <li class="env env-{e.key}" class:hatch={e.status === 'FAILED'} class:empty={!e.url}>
                 <div class="env-head">
                   <span class="env-ico">
-                    <Icon name={e.key === 'production' ? 'globe' : 'flask'} size={16} />
+                    <Icon name="flask" size={16} />
                   </span>
                   <span class="env-name label">{e.label}</span>
                   {#if e.status}
@@ -289,15 +287,14 @@
                   {/if}
                 </div>
                 {#if e.url}
-                  <a
+                  <button
+                    type="button"
                     class="env-url mono truncate"
-                    href={e.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    onclick={() => testDevice.show(e.url)}
                     title={e.url}
                   >
                     {host(e.url)}
-                  </a>
+                  </button>
                   <p class="env-meta mono">
                     {#if e.branch}<span class="truncate" title={e.branch}>{e.branch}</span>{/if}
                     {#if e.updated}<span>{when(e.updated)}</span>{/if}
@@ -311,9 +308,7 @@
                     class="btn btn-line btn-sm"
                     onclick={() => deploy(e.key)}
                     disabled={!!running || triggering !== null}
-                    title={e.key === 'test'
-                      ? t('dashboard.deployTestTitle', { branch: project.default_branch })
-                      : t('dashboard.deployProductionTitle', { branch: project.default_branch })}
+                    title={t('dashboard.deployTestTitle', { branch: project.default_branch })}
                   >
                     {#if running}
                       {t('dashboard.deploy.BUILDING')} <span class="mono tabular">{deploys.elapsed(running)}</span>
@@ -321,13 +316,18 @@
                       {t('dashboard.deploying')}
                     {:else}
                       <Icon name="upload" size={10} />
-                      {e.key === 'test' ? t('dashboard.deployTest') : t('dashboard.deployProduction')}
+                      {t('dashboard.deployTest')}
                     {/if}
                   </button>
                   {#if e.url}
-                    <a class="btn btn-line btn-sm" href={e.url} target="_blank" rel="noopener noreferrer">
-                      {t('common.open')} <Icon name="external" size={10} />
-                    </a>
+                    <button
+                      type="button"
+                      class="btn btn-line btn-sm"
+                      onclick={() => testDevice.show(e.url)}
+                      title={t('testDevice.openTitle')}
+                    >
+                      <Icon name="phone" size={10} /> {t('common.open')}
+                    </button>
                   {/if}
                 </div>
               </li>
@@ -581,7 +581,7 @@
     --test-ink: #2f5596;
 
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--s4);
     margin-top: var(--s3);
   }
@@ -663,6 +663,14 @@
   }
 
   .env-url {
+    display: block;
+    max-width: 100%;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    font-family: var(--font-mono, inherit);
     margin-top: var(--s1);
     font-size: var(--t-body);
     color: var(--ink);

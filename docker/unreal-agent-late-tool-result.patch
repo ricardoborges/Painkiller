@@ -1,10 +1,12 @@
 diff --git a/harness/llm/responsesapi/request.go b/harness/llm/responsesapi/request.go
-index d132e2c..3d5873c 100644
+index d132e2c..99b5f07 100644
 --- a/harness/llm/responsesapi/request.go
 +++ b/harness/llm/responsesapi/request.go
-@@ -87,8 +87,18 @@ func extendRequestBody(body []byte, extensions map[string]jsontext.Value) ([]byt
+@@ -86,9 +86,20 @@ func extendRequestBody(body []byte, extensions map[string]jsontext.Value) ([]byt
+ }
  
  func requestInput(items []llm.Item) (openaiapi.InputParam, error) {
++	items = pairToolResults(items)
  	converted := make(openaiapi.InputParam1, 0, len(items))
 +	answered := make(map[string]bool)
  	for index, item := range items {
@@ -22,10 +24,59 @@ index d132e2c..3d5873c 100644
  		if err != nil {
  			return openaiapi.InputParam{}, fmt.Errorf("input item %d: %w", index, err)
  		}
-@@ -344,3 +354,55 @@ func setUnion(destination json.Unmarshaler, source any) error {
+@@ -344,3 +355,104 @@ func setUnion(destination json.Unmarshaler, source any) error {
  	}
  	return destination.UnmarshalJSON(body)
  }
++
++// pairToolResults moves the first result of each call right after the run of
++// calls it answers.
++//
++// The history can put other items between a call and its first result: a
++// heartbeat or an external input staged before the result, or a late result
++// sent as a user message (see lateToolResultMessage). Providers that turn
++// Responses input into chat messages (DeepSeek answers "No tool output found
++// for tool call") require every call to be followed by its output, with
++// nothing in between. Moved items keep their relative order after the
++// results. Nothing is invented: a call with no result stays as it is.
++func pairToolResults(items []llm.Item) []llm.Item {
++	first := make(map[string]int)
++	for index, item := range items {
++		if result, ok := item.Data.(llm.ToolResult); ok && item.Type == llm.ItemToolResult {
++			if _, seen := first[result.CallID]; !seen {
++				first[result.CallID] = index
++			}
++		}
++	}
++	moved := make([]bool, len(items))
++	paired := make([]llm.Item, 0, len(items))
++	for index := 0; index < len(items); index++ {
++		if moved[index] {
++			continue
++		}
++		if items[index].Type != llm.ItemToolCall {
++			paired = append(paired, items[index])
++			continue
++		}
++		end := index
++		for end < len(items) && items[end].Type == llm.ItemToolCall {
++			paired = append(paired, items[end])
++			end++
++		}
++		for _, item := range items[index:end] {
++			call, ok := item.Data.(llm.ToolCall)
++			if !ok {
++				continue
++			}
++			if position, found := first[call.CallID]; found && position >= end {
++				paired = append(paired, items[position])
++				moved[position] = true
++			}
++		}
++		index = end - 1
++	}
++	return paired
++}
 +
 +// lateToolResultMessage encodes a repeated result for an already answered call.
 +//
@@ -79,10 +130,10 @@ index d132e2c..3d5873c 100644
 +	return item, nil
 +}
 diff --git a/harness/llm/responsesapi/request_test.go b/harness/llm/responsesapi/request_test.go
-index e286388..4bbc075 100644
+index e286388..b8ad4f5 100644
 --- a/harness/llm/responsesapi/request_test.go
 +++ b/harness/llm/responsesapi/request_test.go
-@@ -461,3 +461,46 @@ func TestRequestBodyRejectsExtensionsOverridingStandardFields(t *testing.T) {
+@@ -461,3 +461,106 @@ func TestRequestBodyRejectsExtensionsOverridingStandardFields(t *testing.T) {
  		})
  	}
  }
@@ -127,6 +178,66 @@ index e286388..4bbc075 100644
 +	}
 +	if got := request.Input[len(request.Input)-1]; !reflect.DeepEqual(got, want) {
 +		t.Fatalf("late result = %#v, want %#v", got, want)
++	}
++}
++
++func TestRequestBodyPairsEveryCallWithItsResult(t *testing.T) {
++	text := func(value string) []llm.ToolResultOutput {
++		return []llm.ToolResultOutput{{Kind: llm.ToolResultText, Value: value}}
++	}
++	body, err := requestBody(llm.Request{
++		Model: llm.Model{ID: "gpt-test"},
++		Input: []llm.Item{
++			{Type: llm.ItemToolCall, Data: llm.ToolCall{CallID: "a", Name: "Bash", Arguments: "{}"}},
++			{Type: llm.ItemToolResult, Data: llm.ToolResult{CallID: "a", Output: text("still running")}},
++			{Type: llm.ItemToolCall, Data: llm.ToolCall{CallID: "b", Name: "Bash", Arguments: "{}"}},
++			{Type: llm.ItemToolCall, Data: llm.ToolCall{CallID: "c", Name: "Bash", Arguments: "{}"}},
++			{Type: llm.ItemToolResult, Data: llm.ToolResult{CallID: "b", Output: text("done b")}},
++			// O resultado tardio de "a" vira mensagem do usuário: não pode separar "c" do seu resultado.
++			{Type: llm.ItemToolResult, Data: llm.ToolResult{CallID: "a", Output: text("done a")}},
++			{Type: llm.ItemMessage, Data: llm.Message{Role: llm.RoleUser, Text: "Heartbeat"}},
++			{Type: llm.ItemToolResult, Data: llm.ToolResult{CallID: "c", Output: text("done c")}},
++			// Ainda sem resultado: nada é inventado.
++			{Type: llm.ItemToolCall, Data: llm.ToolCall{CallID: "d", Name: "Bash", Arguments: "{}"}},
++		},
++	}, "", nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var request struct {
++		Input []map[string]any `json:"input"`
++	}
++	if err := json.Unmarshal(body, &request); err != nil {
++		t.Fatal(err)
++	}
++	var got []string
++	for _, item := range request.Input {
++		switch item["type"] {
++		case "function_call":
++			got = append(got, "call "+item["call_id"].(string))
++		case "function_call_output":
++			output := item["output"].([]any)[0].(map[string]any)["text"].(string)
++			got = append(got, "output "+item["call_id"].(string)+": "+output)
++		case "message", nil:
++			if item["role"] != "user" {
++				continue
++			}
++			switch content := item["content"].(type) {
++			case string:
++				got = append(got, "user: "+content)
++			case []any:
++				got = append(got, "user: "+content[len(content)-1].(map[string]any)["text"].(string))
++			}
++		}
++	}
++	want := []string{
++		"call a", "output a: still running",
++		"call b", "call c", "output b: done b", "output c: done c",
++		"user: done a", "user: Heartbeat",
++		"call d",
++	}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("input order = %q, want %q", got, want)
 +	}
 +}
 diff --git a/harness/llm/responsesapi/submission_test.go b/harness/llm/responsesapi/submission_test.go

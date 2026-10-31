@@ -26,6 +26,9 @@
     | 'moon'
     | 'globe'
     | 'flask'
+    | 'refresh'
+    | 'phone'
+    | 'qr'
     | 'chevron-down';
 
   let { name, size = 14 }: { name: Name; size?: number } = $props();
@@ -93,5 +96,15 @@
     <path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12" />
   {:else if name === 'flask'}
     <path d="M6 1.5h4M6.5 1.5v4.5L2.5 14h11l-4-8V1.5M4.25 10.5h7.5" />
+  {:else if name === 'refresh'}
+    <path d="M13 8a5 5 0 1 1-1.46-3.54M13 2v3h-3" />
+  {:else if name === 'phone'}
+    <rect x="4" y="1.5" width="8" height="13" />
+    <path d="M7 12.25h2" />
+  {:else if name === 'qr'}
+    <rect x="2" y="2" width="4.5" height="4.5" />
+    <rect x="9.5" y="2" width="4.5" height="4.5" />
+    <rect x="2" y="9.5" width="4.5" height="4.5" />
+    <path d="M9.5 9.5h2v2h-2zM12 12h2v2h-2zM12 9.5h2M9.5 12v2" />
   {/if}
 </svg>

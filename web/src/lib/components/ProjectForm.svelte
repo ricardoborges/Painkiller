@@ -5,6 +5,7 @@
     DEEPSEEK_KEY_HARNESSES,
     EFFORT_HARNESSES,
     EFFORT_LEVELS,
+    DEFAULT_TEMPLATE_ID,
     type EffortLevel,
     PROJECT_TYPE_META,
     type HarnessType,
@@ -81,15 +82,17 @@
   let isCustomModel = $state(false);
   let customModelText = $state('');
 
-  // Todo projeto nasce do único template (app Android nativo): ele só é
-  // mostrado, não escolhido. A solução descreve o app em si.
-  let template = $state<ProjectTemplate | null>(null);
+  // Todo projeto nasce de um template ativo (hoje só o Capacitor), escolhido
+  // só na criação: depois o repositório já tem a estrutura dele.
+  let templates = $state<ProjectTemplate[]>([]);
+  let templateId = $state(DEFAULT_TEMPLATE_ID);
+  const template = $derived(templates.find((tpl) => tpl.id === templateId) ?? null);
 
-  async function loadTemplate() {
+  async function loadTemplates() {
     try {
-      template = (await api.listActiveTemplates())[0] ?? null;
+      templates = await api.listActiveTemplates();
     } catch {
-      template = null;
+      templates = [];
     }
   }
 
@@ -97,7 +100,8 @@
 
   // Repopula ao montar e sempre que o projeto editado muda
   $effect(() => {
-    loadTemplate();
+    loadTemplates();
+    templateId = project?.template_id ?? DEFAULT_TEMPLATE_ID;
     name = project?.name ?? '';
     description = project?.description ?? '';
     purpose = project?.purpose ?? '';
@@ -216,6 +220,7 @@
         model?: string;
         effort?: string;
         language: Locale;
+        template_id?: string;
       } = {
         name: name.trim(),
         description: description.trim(),
@@ -228,6 +233,9 @@
         effort: hasEffort ? effort : undefined,
         language
       };
+      if (!editing) {
+        body.template_id = templateId;
+      }
       if (apiKey.trim()) {
         body.api_key = apiKey.trim();
       }
@@ -284,6 +292,24 @@
     ></textarea>
     {#if touched && missing.purpose}<p class="field-error">{t('form.purposeError')}</p>{/if}
   </div>
+
+  {#if !editing && templates.length > 1}
+    <div class="field">
+      <label for="ptemplate-options">{t('form.platform')}</label>
+      <p class="help">{t('form.platformHelp')}</p>
+      <div id="ptemplate-options" class="harness-options">
+        {#each templates as tpl (tpl.id)}
+          <label class="radio-card" class:active={templateId === tpl.id}>
+            <input type="radio" name="template" value={tpl.id} bind:group={templateId} />
+            <div class="radio-info">
+              <span class="radio-title">{PROJECT_TYPE_META[tpl.project_type]?.label || tpl.name}</span>
+              <span class="radio-desc">{PROJECT_TYPE_META[tpl.project_type]?.description || tpl.description}</span>
+            </div>
+          </label>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <div class="field">
     <label for="psol">
@@ -672,7 +698,7 @@
     color: var(--ink-2);
   }
 
-  /* Plataforma fixa do template: informativa, não é uma escolha. */
+  /* Plataforma do template: informativa (a escolha fica no campo acima, só na criação). */
   .platform {
     display: block;
     margin-bottom: var(--s1);

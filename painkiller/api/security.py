@@ -121,6 +121,60 @@ def verify_token(token: str, kind: str = SESSION_KIND) -> Optional[dict]:
     return payload
 
 
+#: Chave da prévia do app: vale de um a dois dias, e é a mesma o dia todo,
+#: para o iframe não recarregar a cada leitura.
+_PREVIEW_DAY = 86400
+
+
+def _preview_signature(project_id: str, expires: int) -> str:
+    material = f"preview:{project_id}:{expires}".encode("utf-8")
+    return _b64(hmac.new(_secret(), material, hashlib.sha256).digest())[:32]
+
+
+def issue_preview_key(project_id: str) -> str:
+    """Capability for a project's app preview, which an iframe loads without headers."""
+    expires = (int(time.time()) // _PREVIEW_DAY + 2) * _PREVIEW_DAY
+    return f"{expires}.{_preview_signature(project_id, expires)}"
+
+
+def verify_preview_key(project_id: str, key: str) -> bool:
+    try:
+        raw_expires, signature = key.split(".", 1)
+        expires = int(raw_expires)
+    except ValueError:
+        return False
+    if expires < time.time():
+        return False
+    return hmac.compare_digest(signature, _preview_signature(project_id, expires))
+
+
+#: Link do APK para o QR code: o celular não tem a sessão, então a URL carrega
+#: a autorização. Vale por um tempo curto e só para aquele build.
+APK_LINK_TTL = 3600
+
+
+def _apk_signature(project_id: str, build_id: str, expires: int) -> str:
+    material = f"apk:{project_id}:{build_id}:{expires}".encode("utf-8")
+    return _b64(hmac.new(_secret(), material, hashlib.sha256).digest())[:32]
+
+
+def issue_apk_key(project_id: str, build_id: str, ttl_seconds: int = APK_LINK_TTL) -> tuple[str, int]:
+    """Capability to download one APK build without a session; returns (key, expires)."""
+    expires = int(time.time()) + ttl_seconds
+    return f"{expires}.{_apk_signature(project_id, build_id, expires)}", expires
+
+
+def verify_apk_key(project_id: str, build_id: str, key: str) -> bool:
+    try:
+        raw_expires, signature = key.split(".", 1)
+        expires = int(raw_expires)
+    except ValueError:
+        return False
+    if expires < time.time():
+        return False
+    return hmac.compare_digest(signature, _apk_signature(project_id, build_id, expires))
+
+
 def check_break_glass(username: str, password: str) -> bool:
     """Check the administrator's credentials; always False before the first access."""
     account = admin_account()

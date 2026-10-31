@@ -12,6 +12,7 @@
 
   import Icon from '$lib/components/Icon.svelte';
   import Toaster from '$lib/components/Toaster.svelte';
+  import TestDeviceDialog from '$lib/components/TestDeviceDialog.svelte';
   import LocaleSwitch from '$lib/components/LocaleSwitch.svelte';
 
   let { children } = $props();
@@ -75,6 +76,7 @@
       : [])
   ]);
   const isFluid = $derived(page.url.pathname.includes('/initial-analysis'));
+
 </script>
 
 <svelte:head>
@@ -140,6 +142,7 @@
   </main>
 
   <Toaster />
+  <TestDeviceDialog />
 {/if}
 
 <style>

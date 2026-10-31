@@ -24,6 +24,10 @@ import type {
   EnvironmentType,
   EnvironmentStatusResponse,
   ProjectTemplate,
+  AppPreview,
+  ApkBuild,
+  ApkLink,
+  ApkVariant,
   SetupState,
   CoolifyStatus,
   CoolifyBootstrapResult,
@@ -383,6 +387,10 @@ export const api = {
   stopTask: (id: string) =>
     request<{ status: string; task_id: string }>(`/tasks/${id}/stop`, { method: 'POST' }),
 
+  /** Só tarefas manuais, fora de execução e não concluídas (senão 409). */
+  deleteTask: (id: string) =>
+    request<{ deleted: string }>(`/tasks/${id}`, { method: 'DELETE' }),
+
   /** Vale para a próxima execução; recusado (409) com a tarefa rodando. */
   setTaskSuperpowers: (id: string, enabled: boolean) =>
     request<Task>(`/tasks/${id}/superpowers`, { method: 'PUT', ...json({ enabled }) }),
@@ -510,8 +518,25 @@ export const api = {
     request<ProjectTemplate>(`/admin/templates/${templateId}/scaffold`, {
       method: 'DELETE'
     }),
-  listActiveTemplates: () => request<ProjectTemplate[]>('/templates')
+  listActiveTemplates: () => request<ProjectTemplate[]>('/templates'),
+
+  getAppPreview: (projectId: string) => request<AppPreview>(`/projects/${projectId}/preview`),
+
+  /** Volta na hora com o build em BUILDING; acompanhe com getApkBuild. 409 com outro em andamento. */
+  startApkBuild: (projectId: string, variant: ApkVariant) =>
+    request<ApkBuild>(`/projects/${projectId}/apk-builds`, { method: 'POST', ...json({ variant }) }),
+  listApkBuilds: (projectId: string) => request<ApkBuild[]>(`/projects/${projectId}/apk-builds`),
+  getApkBuild: (projectId: string, buildId: string) =>
+    request<ApkBuild>(`/projects/${projectId}/apk-builds/${buildId}`),
+  /** Link assinado, válido por uma hora, para baixar o APK pelo celular (QR code). */
+  getApkLink: (projectId: string, buildId: string) =>
+    request<ApkLink>(`/projects/${projectId}/apk-builds/${buildId}/link`)
 };
+
+/** Link de download do APK (o token vai na query, como nos demais downloads). */
+export function apkDownloadUrl(build: ApkBuild): string {
+  return authedUrl(`/projects/${build.project_id}/apk-builds/${build.id}/download`);
+}
 
 /**
  * URL de /api para o que o navegador busca sozinho (EventSource, link de

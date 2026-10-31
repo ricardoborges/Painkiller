@@ -12,8 +12,10 @@ ARG UNREAL_AGENT_COMMIT=1b9f778453f411c029b39b85102aaefb95e7e48d
 
 # O DeepSeek recusa dois function_call_output com o mesmo call_id ("Duplicate
 # tool output"), que o runner manda quando uma ferramenta ainda rodava ao fim
-# de um turno. O patch manda o resultado tardio como mensagem do usuário;
-# ao atualizar o commit, confira se ele ainda se aplica.
+# de um turno. O patch manda o resultado tardio como mensagem do usuário e põe
+# o primeiro resultado de cada chamada logo depois dela: o DeepSeek também
+# recusa uma mensagem entre as duas ("No tool output found for tool call").
+# Ao atualizar o commit, confira se ele ainda se aplica.
 COPY docker/unreal-agent-late-tool-result.patch /tmp/late-tool-result.patch
 
 RUN git init -q /src/unreal-agent \

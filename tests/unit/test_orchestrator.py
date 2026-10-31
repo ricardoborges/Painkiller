@@ -73,6 +73,43 @@ async def test_dispatch_task_success(mock_tracker, mock_sandbox, mock_git):
 
 
 @pytest.mark.asyncio
+async def test_completed_task_promotes_the_app_preview(tmp_path, mock_tracker, mock_sandbox, mock_git):
+    from painkiller.core.preview import read_preview
+
+    project = Project(id="p1", name="App", repo_path=str(tmp_path), api_key="k")
+    task = Task(id="t1", project_id="p1", title="Tela de lista", description="Desc")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="Success")
+    staged = tmp_path / ".painkiller" / "preview-build"
+    staged.mkdir(parents=True)
+    (staged / "index.html").write_text("<html></html>")
+
+    await PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git).dispatch_task("t1")
+
+    assert read_preview(str(tmp_path))["task_title"] == "Tela de lista"
+
+
+@pytest.mark.asyncio
+async def test_failed_merge_does_not_promote_the_app_preview(tmp_path, mock_tracker, mock_sandbox, mock_git):
+    from painkiller.core.preview import read_preview
+
+    project = Project(id="p1", name="App", repo_path=str(tmp_path), api_key="k")
+    task = Task(id="t1", project_id="p1", title="Tela de lista", description="Desc")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="Success")
+    mock_git.merge_branch.return_value = (1, "conflict")
+    staged = tmp_path / ".painkiller" / "preview-build"
+    staged.mkdir(parents=True)
+    (staged / "index.html").write_text("<html></html>")
+
+    await PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git).dispatch_task("t1")
+
+    assert read_preview(str(tmp_path)) is None
+
+
+@pytest.mark.asyncio
 async def test_dispatch_task_treats_test_exit_code_5_as_success(mock_tracker, mock_sandbox, mock_git):
     project = Project(id="p1", name="App", repo_path="/repo", api_key="k")
     task = Task(id="t1", project_id="p1", title="Build HTML Page", description="Desc")
@@ -391,3 +428,34 @@ async def test_prompt_carries_android_environment_and_template_guidelines(mock_t
     assert "./gradlew testDebugUnitTest" in instructions
     assert "## Diretrizes técnicas do app" in instructions
     assert "Use Hilt para injeção de dependência." in instructions
+
+
+@pytest.mark.asyncio
+async def test_capacitor_project_gets_its_own_environment_and_guidelines(mock_tracker, mock_sandbox, mock_git):
+    from painkiller.core.domain.models import ProjectTemplate
+
+    project = Project(
+        id="p1", name="Clipes", repo_path="/repo", api_key="k",
+        template_id="capacitor-react", default_branch="trunk",
+    )
+    task = Task(id="t1", project_id="p1", title="Lista de clipes", description="Desc")
+    mock_tracker.get_task.return_value = task
+    mock_tracker.get_project.return_value = project
+    mock_tracker.list_clarifications.return_value = []
+    mock_tracker.get_project_template.return_value = ProjectTemplate(
+        id="capacitor-react", name="Capacitor", prompt="Use TanStack Query."
+    )
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+    mock_sandbox.run_tests.return_value = (0, "ok")
+
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+    await orchestrator.dispatch_task("t1")
+
+    instructions = mock_sandbox.run_task.call_args.args[2]
+    assert "React + Ionic" in instructions and "npm test" in instructions
+    assert "app Android nativo em Kotlin" not in instructions
+    assert "Use TanStack Query." in instructions
+    # As diretrizes vêm do template do projeto, não do Android nativo.
+    mock_tracker.get_project_template.assert_awaited_with("capacitor-react")
+    # A verificação compara a tarefa com a branch padrão do projeto.
+    assert mock_sandbox.run_tests.call_args.kwargs["base_branch"] == "trunk"

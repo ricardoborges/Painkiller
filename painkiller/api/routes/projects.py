@@ -24,7 +24,7 @@ from painkiller.core.domain.models import (
 )
 from painkiller.core.i18n import SUPPORTED_LOCALES, get_locale, translate
 from painkiller.core.naming import compose_project_identity
-from painkiller.core.android_template import ANDROID_TEMPLATE_ID, BUNDLED_SCAFFOLD_DIR, has_uploaded_scaffold
+from painkiller.core.templates import DEFAULT_TEMPLATE_ID, builtin_template, has_uploaded_scaffold
 from painkiller.core.scaffold import ScaffoldError, copy_scaffold_dir, extract_scaffold
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -142,10 +142,13 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
     effort = _checked_effort(req.harness, req.effort)
     language = _checked_language(req.language or get_locale())
 
-    # Todo projeto nasce do único template (app Android nativo): o .zip que o
-    # admin subiu ou, sem ele, o arcabouço embutido.
-    template = await tracker.get_project_template(req.template_id or ANDROID_TEMPLATE_ID)
-    if req.template_id and (not template or not template.is_active):
+    # Todo projeto nasce de um template embutido ativo (hoje só o Capacitor):
+    # o .zip que o admin subiu ou, sem ele, o arcabouço embutido.
+    template_id = req.template_id or DEFAULT_TEMPLATE_ID
+    if template_id != builtin_template(template_id).id:
+        raise HTTPException(status_code=400, detail="Template não encontrado")
+    template = await tracker.get_project_template(template_id)
+    if template is not None and not template.is_active:
         raise HTTPException(status_code=400, detail="Template não encontrado")
 
     identity = compose_project_identity(user, req.name)
@@ -164,13 +167,13 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
             if template and has_uploaded_scaffold(template):
                 await asyncio.to_thread(extract_scaffold, template.scaffold_path, base_repo_path)
             else:
-                await asyncio.to_thread(copy_scaffold_dir, BUNDLED_SCAFFOLD_DIR, base_repo_path)
+                await asyncio.to_thread(copy_scaffold_dir, builtin_template(template_id).scaffold_dir, base_repo_path)
         except ScaffoldError as e:
             if not req.repo_path:
                 shutil.rmtree(base_repo_path, ignore_errors=True)
             raise HTTPException(status_code=400, detail=f"O arcabouço do template é inválido: {e}")
         # Commit próprio, antes do push: o Gitea já nasce com a estrutura em main.
-        name = template.name if template else ANDROID_TEMPLATE_ID
+        name = template.name if template else template_id
         await git.commit_wip(base_repo_path, f"chore: scaffold from template {name}")
 
     repo_url = None
@@ -210,6 +213,7 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
         effort=effort,
         project_id=identity.project_id,
         language=language,
+        template_id=template_id,
     )
     return _format_project(project)
 
@@ -406,6 +410,7 @@ async def create_task(project_id: str, req: CreateTaskRequest, request: Request)
         acceptance_criteria=_clean(req.acceptance_criteria),
         dependencies=dependencies,
         session_id=req.session_id,
+        manual=True,
     )
 
     # Uma tarefa manual numa sessão ainda sem backlog dá a análise por cumprida.

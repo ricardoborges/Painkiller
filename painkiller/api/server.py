@@ -46,9 +46,12 @@ from painkiller.api.routes.usage import router as usage_router
 from painkiller.api.routes.sessions import router as sessions_router
 from painkiller.api.routes.deployments import router as deployments_router
 from painkiller.api.routes.gitea_proxy import router as gitea_proxy_router
-from painkiller.core.android_template import ensure_android_template
+from painkiller.core.templates import ensure_builtin_templates
 from painkiller.api.routes.admin_templates import router as admin_templates_router, public_router as templates_router
 from painkiller.api.routes.setup import router as setup_router
+from painkiller.api.routes.preview import router as preview_router, public_router as preview_public_router
+from painkiller.api.routes.apk import router as apk_router, public_router as apk_public_router
+from painkiller.engine.apk_builds import ApkBuildService
 from painkiller.core.i18n import normalize_locale, parse_accept_language, reset_locale, set_locale, translate
 
 
@@ -153,8 +156,8 @@ def create_app(
         # Startup
         tracker: SQLiteIssueTracker = app.state.tracker
         await tracker.init_db()
-        # O único template desta edição existe antes do primeiro formulário.
-        await ensure_android_template(tracker)
+        # Os templates embutidos existem antes do primeiro formulário.
+        await ensure_builtin_templates(tracker)
         # O que o admin salvou no wizard vence o .env; aplicado antes do 1º request.
         try:
             await app.state.platform.load()
@@ -234,6 +237,7 @@ def create_app(
     app.state.usage = usage
     app.state.deployment = deployment
     app.state.deployment_service = deployment_service
+    app.state.apk_builds = ApkBuildService(tracker=tracker, sandbox=sandbox)
     # Injetáveis para os testes não dependerem do catálogo do LiteLLM nem da rede.
     app.state.price_lookup = litellm_price
     app.state.balance_lookup = fetch_balances
@@ -259,6 +263,12 @@ def create_app(
     app.include_router(admin_templates_router, dependencies=signed_in)
     app.include_router(templates_router, dependencies=signed_in)
     app.include_router(setup_router, dependencies=signed_in)
+    app.include_router(preview_router, dependencies=signed_in)
+    app.include_router(apk_router, dependencies=signed_in)
+    # A prévia é carregada por um iframe, sem cabeçalhos: a chave na URL a autoriza.
+    app.include_router(preview_public_router)
+    # O APK do QR code é baixado pelo celular, sem sessão: idem, chave na URL.
+    app.include_router(apk_public_router)
 
     @app.get("/api/health")
     async def health_check():
@@ -283,6 +293,8 @@ def create_app(
                 or resource.startswith("api/")
                 or resource == "gitea"
                 or resource.startswith("gitea/")
+                or resource.startswith("preview/")
+                or resource.startswith("apk/")
             ):
                 raise HTTPException(status_code=404, detail="Not Found")
 

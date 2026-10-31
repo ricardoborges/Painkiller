@@ -67,8 +67,11 @@ export const EFFORT_LEVELS: { id: EffortLevel; label: string }[] = [
   }
 ];
 
-/** Esta edição só fabrica apps Android nativos: o único template é desse tipo. */
-export const PROJECT_TYPES = ['android_native'] as const;
+/** Esta edição só fabrica apps Android: web empacotado com Capacitor (o nativo em Kotlin está inativo). */
+export const PROJECT_TYPES = ['android_native', 'capacitor_react'] as const;
+
+/** Todo projeto novo nasce do Capacitor, o único template ativo. */
+export const DEFAULT_TEMPLATE_ID = 'capacitor-react';
 
 export type ProjectType = (typeof PROJECT_TYPES)[number];
 
@@ -79,6 +82,14 @@ export const PROJECT_TYPE_META: Record<ProjectType, { label: string; description
     },
     get description() {
       return t('projectType.android_native.description');
+    }
+  },
+  capacitor_react: {
+    get label() {
+      return t('projectType.capacitor_react.label');
+    },
+    get description() {
+      return t('projectType.capacitor_react.description');
     }
   }
 };
@@ -101,6 +112,18 @@ export interface ProjectTemplate {
   updated_at: string;
 }
 
+/** A prévia do app: o último build web incorporado, mostrado no smartphone do backlog. */
+export interface AppPreview {
+  /** Só um app web (Capacitor) tem prévia; o Kotlin nativo, não. */
+  supported: boolean;
+  available: boolean;
+  /** Carregada por iframe, sem cabeçalhos: a chave assinada já vem na URL. */
+  url: string | null;
+  task_id: string | null;
+  task_title: string | null;
+  built_at: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -120,6 +143,8 @@ export interface Project {
   effort?: EffortLevel | null;
   /** Idioma do agente: entrevista, specs, backlog, código e commits. */
   language?: 'pt-BR' | 'en-US';
+  /** Template de que o projeto nasceu; fixo depois da criação. */
+  template_id?: string;
   has_api_key?: boolean;
   masked_api_key?: string | null;
   created_at: string;
@@ -177,6 +202,8 @@ export interface Task {
   issue_url?: string | null;
   /** Desligado, o agente vai direto ao ponto, sem as skills do superpowers. */
   use_superpowers?: boolean;
+  /** Escrita à mão no backlog: só essas podem ser excluídas. */
+  manual?: boolean;
   /** Acumulado de todas as execuções: tempo de relógio e tokens do agente. */
   elapsed_seconds?: number;
   input_tokens?: number;
@@ -481,6 +508,34 @@ export interface ProviderBalance {
 
 export type EnvironmentType = 'test' | 'production';
 export type DeploymentStatus = 'PENDING' | 'BUILDING' | 'HEALTHY' | 'FAILED' | 'STOPPED';
+
+export type ApkVariant = 'debug' | 'release';
+export type ApkBuildStatus = 'BUILDING' | 'SUCCESS' | 'FAILED';
+
+/** APK gerado da branch padrão; o release sai assinado com a chave do projeto. */
+export interface ApkBuild {
+  id: string;
+  project_id: string;
+  variant: ApkVariant;
+  status: ApkBuildStatus;
+  branch: string;
+  commit_sha?: string | null;
+  size_bytes?: number | null;
+  logs?: string | null;
+  error?: string | null;
+  /** O arquivo ainda existe no disco (builds antigos são podados). */
+  available: boolean;
+  created_at: string;
+  finished_at?: string | null;
+}
+
+/** Link assinado e temporário do APK, para o QR code (o celular não tem sessão). */
+export interface ApkLink {
+  url: string;
+  expires_at: string;
+  /** A URL pública da plataforma é local (localhost): o celular não a alcança. */
+  local: boolean;
+}
 
 export interface DeploymentRecord {
   id: string;

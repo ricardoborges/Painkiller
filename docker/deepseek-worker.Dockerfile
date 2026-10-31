@@ -13,14 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Android: JDK 17 (Temurin, independente da versão do Debian da base) e o SDK
-# com cmdline-tools, platform e build-tools fixados — o agente compila o app e
-# a verificação roda ./gradlew testDebugUnitTest assembleDebug. Atualize junto
-# com o compileSdk do arcabouço embutido (painkiller/scaffolds/android-kotlin).
+# Android: JDK 21 (Temurin, independente da versão do Debian da base; o
+# Capacitor 8 exige 21, e o app Kotlin compila com ele também) e o SDK com
+# cmdline-tools, platform e build-tools fixados — o agente compila o app e a
+# verificação roda o Gradle. Atualize junto com o compileSdk dos arcabouços
+# embutidos (painkiller/scaffolds/android-kotlin e capacitor-react).
 ARG ANDROID_CMDLINE_TOOLS=13114758
 ARG ANDROID_PLATFORM=android-36
 ARG ANDROID_BUILD_TOOLS=36.0.0
-COPY --from=eclipse-temurin:17-jdk /opt/java/openjdk /opt/java/openjdk
+# O AGP do Capacitor 8 (8.13) pede o build-tools 35; sem ele aqui, cada
+# verificação o baixaria de novo num contêiner que é descartado.
+ARG ANDROID_CAPACITOR_BUILD_TOOLS=35.0.0
+COPY --from=eclipse-temurin:21-jdk /opt/java/openjdk /opt/java/openjdk
 ENV JAVA_HOME=/opt/java/openjdk \
     ANDROID_HOME=/opt/android-sdk \
     ANDROID_SDK_ROOT=/opt/android-sdk
@@ -33,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf
     && mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest" \
     && rm /tmp/cmdline-tools.zip \
     && yes | sdkmanager --licenses > /dev/null \
-    && sdkmanager --install "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" > /dev/null
+    && sdkmanager --install "platform-tools" "platforms;${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "build-tools;${ANDROID_CAPACITOR_BUILD_TOOLS}" > /dev/null
 
 # Instala o DeepSeek Harness nativo (dsh)
 # Versão fixada: acp-run depende do protocolo ACP e do formato do log de sessão.

@@ -47,6 +47,32 @@ async def stop_task(task_id: str, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.delete("/{task_id}")
+async def delete_task(task_id: str, request: Request):
+    """Delete a task the analyst added by hand, while it has not been merged."""
+    tracker = request.app.state.tracker
+    task = await tracker.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    # As importadas vêm da spec da análise; apagar uma deixaria spec e backlog divergentes.
+    if not task.manual:
+        raise HTTPException(status_code=409, detail="Só tarefas adicionadas manualmente podem ser excluídas")
+    if task.status == TaskStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="Pare a tarefa antes de excluí-la")
+    # Concluída já foi incorporada à branch padrão: excluir não desfaria o merge.
+    if task.status == TaskStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Tarefa concluída não pode ser excluída")
+    dependents = [
+        t for t in await tracker.list_tasks(project_id=task.project_id)
+        if task_id in t.dependencies
+    ]
+    if dependents:
+        titles = ", ".join(t.title for t in dependents)
+        raise HTTPException(status_code=409, detail=f"Outras tarefas dependem desta: {titles}")
+    await tracker.delete_task(task_id)
+    return {"deleted": task_id}
+
+
 class SuperpowersRequest(BaseModel):
     enabled: bool
 

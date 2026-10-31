@@ -60,6 +60,9 @@ class Task(BaseModel):
     #: Desligado, o agente vai direto ao ponto: sem as skills do superpowers
     #: (brainstorming, planos, TDD), para tarefas que o analista julga simples.
     use_superpowers: bool = True
+    #: Escrita à mão pelo analista ("Adicionar tarefa"): só essas podem ser
+    #: excluídas — as do backlog importado vêm da spec.
+    manual: bool = False
     #: Acumulado de todas as execuções da tarefa (pausas e novas tentativas
     #: somam): tempo de relógio do despacho e tokens que o agente reportou.
     elapsed_seconds: float = 0.0
@@ -94,8 +97,10 @@ class Task(BaseModel):
 
 
 class ProjectType(str, Enum):
-    """Categorias de projetos suportadas: esta edição só fabrica apps Android nativos."""
+    """Categorias de projetos suportadas: esta edição só fabrica apps Android."""
     ANDROID_NATIVE = "android_native"
+    # App web (React + Ionic) empacotado como Android pelo Capacitor.
+    CAPACITOR_REACT = "capacitor_react"
 
 
 class ProjectTemplate(BaseModel):
@@ -195,6 +200,9 @@ class Project(BaseModel):
     # Idioma do agente: entrevista, specs, backlog, código, commits e o que o
     # orquestrador grava na tarefa. Um de core.i18n.SUPPORTED_LOCALES.
     language: str = "pt-BR"
+    # Template de que o projeto nasceu (core.templates): decide o ambiente que os
+    # agentes recebem e como a tarefa é verificada. Fixo depois da criação.
+    template_id: str = "android-kotlin"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
@@ -237,6 +245,36 @@ class DeploymentRecord(BaseModel):
     logs: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ApkVariant(str, Enum):
+    """Which APK is built: debug (installable for testing) or release (signed, for publishing)."""
+    DEBUG = "debug"
+    RELEASE = "release"
+
+
+class ApkBuildStatus(str, Enum):
+    BUILDING = "BUILDING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
+class ApkBuild(BaseModel):
+    """One APK built from the project's default branch in a worker container."""
+    id: str
+    project_id: str
+    variant: ApkVariant = ApkVariant.DEBUG
+    status: ApkBuildStatus = ApkBuildStatus.BUILDING
+    branch: str = "main"
+    commit_sha: Optional[str] = None
+    size_bytes: Optional[int] = None
+    #: Cauda da saída do build (npm, Gradle, assinatura); o log inteiro não cabe.
+    logs: Optional[str] = None
+    error: Optional[str] = None
+    #: O arquivo ainda está no disco (builds antigos são podados).
+    available: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: Optional[datetime] = None
 
 
 class UserRole(str, Enum):

@@ -1,4 +1,4 @@
-"""The single Android template: seeded at startup, configured (never created) by the admin."""
+"""The built-in templates (Capacitor active, native Android inactive): seeded at startup, configured (never created) by the admin."""
 
 import io
 import zipfile
@@ -6,7 +6,13 @@ import zipfile
 import pytest
 from httpx import ASGITransport, AsyncClient
 from painkiller.api.server import create_app
-from painkiller.core.android_template import ANDROID_TEMPLATE_ID, DEFAULT_PROMPT, ensure_android_template
+from painkiller.core.templates import (
+    ANDROID_TEMPLATE,
+    ANDROID_TEMPLATE_ID,
+    CAPACITOR_TEMPLATE,
+    CAPACITOR_TEMPLATE_ID,
+    ensure_builtin_templates,
+)
 from tests.auth_helpers import admin_headers, user_headers
 
 
@@ -28,18 +34,19 @@ def _zip_bytes(entries: dict[str, str]) -> bytes:
     return buf.getvalue()
 
 
-async def test_android_template_is_seeded(app_and_client):
+async def test_builtin_templates_are_seeded(app_and_client):
     _, client = app_and_client
     res = await client.get("/api/admin/templates", headers=admin_headers())
     assert res.status_code == 200
-    templates = res.json()
-    assert [t["id"] for t in templates] == [ANDROID_TEMPLATE_ID]
-    tpl = templates[0]
-    assert tpl["project_type"] == "android_native"
-    assert tpl["coolify_compatible"] is False
-    assert tpl["is_active"] is True
-    assert tpl["prompt"] == DEFAULT_PROMPT
-    assert tpl["bundled_scaffold"] is True
+    templates = {t["id"]: t for t in res.json()}
+    assert set(templates) == {ANDROID_TEMPLATE_ID, CAPACITOR_TEMPLATE_ID}
+    for spec, project_type in ((ANDROID_TEMPLATE, "android_native"), (CAPACITOR_TEMPLATE, "capacitor_react")):
+        tpl = templates[spec.id]
+        assert tpl["project_type"] == project_type
+        assert tpl["coolify_compatible"] is False
+        assert tpl["is_active"] is spec.active
+        assert tpl["prompt"] == spec.prompt
+        assert tpl["bundled_scaffold"] is True
 
 
 async def test_seed_drops_other_templates_and_keeps_admin_edits(app_and_client):
@@ -52,11 +59,21 @@ async def test_seed_drops_other_templates_and_keeps_admin_edits(app_and_client):
     async with tracker.engine.begin() as conn:
         await conn.execute(text("UPDATE project_templates SET project_type='WEB_FULLSTACK' WHERE id='tpl-web'"))
 
-    await ensure_android_template(tracker)
+    await ensure_builtin_templates(tracker)
 
-    templates = await tracker.list_project_templates()
-    assert [t.id for t in templates] == [ANDROID_TEMPLATE_ID]
-    assert templates[0].prompt == "Use Hilt."
+    templates = {t.id: t for t in await tracker.list_project_templates()}
+    assert set(templates) == {ANDROID_TEMPLATE_ID, CAPACITOR_TEMPLATE_ID}
+    assert templates[ANDROID_TEMPLATE_ID].prompt == "Use Hilt."
+
+
+async def test_seed_keeps_native_android_inactive(app_and_client):
+    app, _ = app_and_client
+    tracker = app.state.tracker
+    # Um banco em que o nativo ainda estava ativo volta ao estado fixo.
+    await tracker.update_project_template(ANDROID_TEMPLATE_ID, is_active=True)
+    await ensure_builtin_templates(tracker)
+    assert (await tracker.get_project_template(ANDROID_TEMPLATE_ID)).is_active is False
+    assert (await tracker.get_project_template(CAPACITOR_TEMPLATE_ID)).is_active is True
 
 
 async def test_admin_cannot_create_or_delete_templates(app_and_client):
@@ -93,10 +110,10 @@ async def test_admin_authorization_required(app_and_client):
     res = await client.put(f"/api/admin/templates/{ANDROID_TEMPLATE_ID}", json={"prompt": "x"}, headers=u_headers)
     assert res.status_code == 403
 
-    # A listagem pública (formulário de projeto) mostra o template a todos.
+    # A listagem pública (formulário de projeto) mostra só o template ativo.
     pub = await client.get("/api/templates", headers=u_headers)
     assert pub.status_code == 200
-    assert [t["id"] for t in pub.json()] == [ANDROID_TEMPLATE_ID]
+    assert {t["id"] for t in pub.json()} == {CAPACITOR_TEMPLATE_ID}
 
 
 async def test_bundled_scaffold_downloads_as_zip(app_and_client):
@@ -107,6 +124,19 @@ async def test_bundled_scaffold_downloads_as_zip(app_and_client):
     assert "gradlew" in names
     assert "app/build.gradle.kts" in names
     assert not any(n.startswith(("build/", ".gradle/")) or n == "local.properties" for n in names)
+
+
+async def test_bundled_capacitor_scaffold_downloads_as_zip(app_and_client):
+    _, client = app_and_client
+    res = await client.get(f"/api/admin/templates/{CAPACITOR_TEMPLATE_ID}/scaffold/download", headers=admin_headers())
+    assert res.status_code == 200
+    assert 'filename="capacitor-react.zip"' in res.headers["content-disposition"]
+    archive = zipfile.ZipFile(io.BytesIO(res.content))
+    names = archive.namelist()
+    assert {"package.json", "capacitor.config.ts", "src/App.tsx", "android/settings.gradle"} <= set(names)
+    assert not any(n.startswith(("node_modules/", "dist/")) for n in names)
+    # O gradlew de android/ sai executável, como o da raiz no template nativo.
+    assert (archive.getinfo("android/gradlew").external_attr >> 16) & 0o111
 
 
 async def test_template_skill_and_scaffold_upload_download_delete(app_and_client):

@@ -48,6 +48,9 @@ from painkiller.core.domain.models import (
     DeploymentRecord,
     EnvironmentType,
     DeploymentStatus,
+    ApkBuild,
+    ApkBuildStatus,
+    ApkVariant,
 )
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
@@ -80,6 +83,7 @@ class ProjectRecord(Base):
     model = Column(String, nullable=True)
     effort = Column(String, nullable=True)
     language = Column(String, nullable=True)
+    template_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -120,6 +124,8 @@ class TaskRecord(Base):
     issue_url = Column(String, nullable=True)
     #: NULL nas linhas anteriores à coluna: vale como ligado.
     use_superpowers = Column(Boolean, nullable=True, default=True)
+    #: NULL nas linhas anteriores à coluna: vale como importada.
+    manual = Column(Boolean, nullable=True, default=False)
     elapsed_seconds = Column(Float, nullable=True, default=0.0)
     input_tokens = Column(Integer, nullable=True, default=0)
     output_tokens = Column(Integer, nullable=True, default=0)
@@ -214,6 +220,22 @@ class SettingRecord(Base):
     value = Column(Text, default="{}")
 
 
+class ApkBuildRow(Base):
+    __tablename__ = "apk_builds"
+
+    id = Column(String, primary_key=True)
+    project_id = Column(String, nullable=False, index=True)
+    variant = Column(String, nullable=False, default=ApkVariant.DEBUG.value)
+    status = Column(String, nullable=False, default=ApkBuildStatus.BUILDING.value)
+    branch = Column(String, default="main")
+    commit_sha = Column(String, nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    logs = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    finished_at = Column(DateTime, nullable=True)
+
+
 class DeploymentRecordRow(Base):
     __tablename__ = "deployments"
 
@@ -298,6 +320,19 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
                     col_type = col.type.compile(connection.dialect)
                     sql = f"ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type}"
                     connection.exec_driver_sql(sql)
+            # Tarefas anteriores à coluna `manual` ficam NULL. O backlog importado
+            # cria as tarefas da sessão de uma vez; "Adicionar tarefa" cria uma
+            # sozinha — é o que sobra para inferir. A correção de deploy também
+            # nasce sozinha, mas não foi escrita pelo analista. Linhas novas
+            # sempre gravam 0/1, então isto só toca as antigas.
+            if table_name == "tasks":
+                connection.exec_driver_sql(
+                    "UPDATE tasks SET manual = CASE WHEN description NOT LIKE '%deploy-fix:%' "
+                    "AND NOT EXISTS (SELECT 1 FROM tasks o WHERE o.id != tasks.id "
+                    "AND o.project_id = tasks.project_id AND o.session_id IS tasks.session_id "
+                    "AND ABS(julianday(o.created_at) - julianday(tasks.created_at)) * 86400 < 5) "
+                    "THEN 1 ELSE 0 END WHERE manual IS NULL"
+                )
             # Tarefas anteriores às colunas de tokens: o livro de uso já tem o gasto
             # de cada uma. O tempo não tem de onde sair e fica zerado.
             if table_name == "tasks" and "input_tokens" not in existing_cols:
@@ -330,6 +365,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         effort: Optional[str] = None,
         project_id: Optional[str] = None,
         language: Optional[str] = None,
+        template_id: Optional[str] = None,
     ) -> Project:
         proj_id = project_id or f"proj-{uuid.uuid4().hex[:8]}"
         harness_val = (harness.value if isinstance(harness, HarnessType) else harness) or HarnessType.AGY_SUPERPOWERS.value
@@ -350,6 +386,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             model=model or None,
             effort=effort or None,
             language=language or None,
+            template_id=template_id or None,
             created_at=datetime.now(timezone.utc),
         )
         async with self.session_factory() as session:
@@ -440,6 +477,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
                 await session.execute(delete(ClarificationRecord).where(ClarificationRecord.task_id.in_(task_ids)))
                 await session.execute(delete(TaskRecord).where(TaskRecord.project_id == project_id))
             await session.execute(delete(IterationSessionRecord).where(IterationSessionRecord.project_id == project_id))
+            await session.execute(delete(ApkBuildRow).where(ApkBuildRow.project_id == project_id))
             await session.execute(delete(ProjectRecord).where(ProjectRecord.id == project_id))
             await session.execute(
                 delete(SettingRecord).where(
@@ -470,6 +508,8 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             effort=getattr(record, "effort", None) or None,
             # Projetos anteriores ao campo ficam no idioma em que foram feitos.
             language=getattr(record, "language", None) or "pt-BR",
+            # Projetos anteriores à escolha de template são todos Android nativo.
+            template_id=getattr(record, "template_id", None) or "android-kotlin",
             created_at=record.created_at,
         )
 
@@ -625,6 +665,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         acceptance_criteria: Optional[Sequence[str]] = None,
         dependencies: Optional[Sequence[str]] = None,
         session_id: Optional[str] = None,
+        manual: bool = False,
     ) -> Task:
         task_id = f"task-{uuid.uuid4().hex[:8]}"
         # A tarefa nasce no modo da sessão (guiada ou direta); depois o analista
@@ -647,6 +688,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             status=TaskStatus.BACKLOG,
             session_id=session_id,
             use_superpowers=use_superpowers,
+            manual=manual,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -718,6 +760,14 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             await session.commit()
             res = await session.execute(select(TaskRecord).where(TaskRecord.id == task_id))
             return self._to_task_domain(res.scalar_one())
+
+    async def delete_task(self, task_id: str) -> None:
+        from sqlalchemy import delete
+        async with self.session_factory() as session:
+            await session.execute(delete(ClarificationRecord).where(ClarificationRecord.task_id == task_id))
+            await session.execute(delete(TaskCommentRecord).where(TaskCommentRecord.task_id == task_id))
+            await session.execute(delete(TaskRecord).where(TaskRecord.id == task_id))
+            await session.commit()
 
     async def set_task_superpowers(self, task_id: str, enabled: bool) -> Task:
         async with self.session_factory() as session:
@@ -877,6 +927,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             issue_number=getattr(record, "issue_number", None),
             issue_url=getattr(record, "issue_url", None),
             use_superpowers=getattr(record, "use_superpowers", None) is not False,
+            manual=bool(getattr(record, "manual", None)),
             elapsed_seconds=float(getattr(record, "elapsed_seconds", None) or 0.0),
             input_tokens=int(getattr(record, "input_tokens", None) or 0),
             output_tokens=int(getattr(record, "output_tokens", None) or 0),
@@ -1257,6 +1308,63 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             return [self._to_task_domain(r) for r in records]
 
     # ------------------------------------------------------------------
+    # APK builds
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _to_apk_build_domain(row: ApkBuildRow) -> ApkBuild:
+        return ApkBuild(
+            id=row.id,
+            project_id=row.project_id,
+            variant=ApkVariant(row.variant),
+            status=ApkBuildStatus(row.status),
+            branch=row.branch or "main",
+            commit_sha=row.commit_sha or None,
+            size_bytes=row.size_bytes,
+            logs=row.logs or None,
+            error=row.error or None,
+            created_at=row.created_at,
+            finished_at=row.finished_at,
+        )
+
+    async def save_apk_build(self, build: ApkBuild) -> ApkBuild:
+        values = dict(
+            project_id=build.project_id,
+            variant=build.variant.value,
+            status=build.status.value,
+            branch=build.branch,
+            commit_sha=build.commit_sha,
+            size_bytes=build.size_bytes,
+            logs=build.logs,
+            error=build.error,
+            created_at=build.created_at,
+            finished_at=build.finished_at,
+        )
+        async with self.session_factory() as session:
+            existing = await session.get(ApkBuildRow, build.id)
+            if existing:
+                for key, value in values.items():
+                    setattr(existing, key, value)
+            else:
+                session.add(ApkBuildRow(id=build.id, **values))
+            await session.commit()
+            return self._to_apk_build_domain(await session.get(ApkBuildRow, build.id))
+
+    async def get_apk_build(self, build_id: str) -> Optional[ApkBuild]:
+        async with self.session_factory() as session:
+            row = await session.get(ApkBuildRow, build_id)
+            return self._to_apk_build_domain(row) if row else None
+
+    async def list_apk_builds(self, project_id: str, limit: int = 50) -> list[ApkBuild]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(ApkBuildRow)
+                .where(ApkBuildRow.project_id == project_id)
+                .order_by(ApkBuildRow.created_at.desc())
+                .limit(limit)
+            )
+            return [self._to_apk_build_domain(r) for r in res.scalars().all()]
+
     # Deployments
     # ------------------------------------------------------------------
 

@@ -1,8 +1,8 @@
-"""Admin routes for the single project template (native Android app in Kotlin).
+"""Admin routes for the built-in project templates (native Kotlin, Capacitor + React).
 
-Esta edição tem um template só, semeado no startup (``ensure_android_template``):
-o admin não cria nem apaga templates, só configura o que existe e pode trocar o
-arcabouço embutido por um .zip próprio. Sem .zip, vale o embutido.
+Os templates são fixos, semeados no startup (``ensure_builtin_templates``): o
+admin não cria nem apaga templates, só configura os que existem e pode trocar o
+arcabouço embutido de cada um por um .zip próprio. Sem .zip, vale o embutido.
 """
 
 import os
@@ -16,11 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from painkiller.api.security import require_admin, current_user
-from painkiller.core.android_template import (
-    BUNDLED_SCAFFOLD_DIR,
-    BUNDLED_SCAFFOLD_FILENAME,
-    has_uploaded_scaffold,
-)
+from painkiller.core.templates import builtin_template, has_uploaded_scaffold
 from painkiller.core.domain.models import ProjectTemplate
 from painkiller.core.scaffold import zip_scaffold_dir
 
@@ -223,9 +219,10 @@ async def download_template_scaffold(template_id: str, request: Request, backgro
     # O embutido sai empacotado na hora: é o ponto de partida para o admin adaptar.
     fd, zip_path = tempfile.mkstemp(suffix=".zip")
     os.close(fd)
-    zip_scaffold_dir(BUNDLED_SCAFFOLD_DIR, zip_path)
+    bundled = builtin_template(template.id)
+    zip_scaffold_dir(bundled.scaffold_dir, zip_path)
     background.add_task(os.remove, zip_path)
-    return FileResponse(zip_path, filename=BUNDLED_SCAFFOLD_FILENAME, media_type="application/zip")
+    return FileResponse(zip_path, filename=bundled.scaffold_filename, media_type="application/zip")
 
 
 # ---- Public / General Endpoints (Para criação de projetos) ----

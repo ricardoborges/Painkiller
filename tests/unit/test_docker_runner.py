@@ -274,3 +274,74 @@ async def test_task_with_superpowers_runs_the_agent_directly():
     kwargs = mock_client.containers.run.call_args[1]
     assert kwargs["command"][0] == "maki"
     assert "PAINKILLER_SUPERPOWERS" not in kwargs["environment"]
+
+
+@pytest.mark.asyncio
+async def test_release_apk_is_signed_in_a_second_container_that_alone_sees_the_key(tmp_path):
+    (tmp_path / "settings.gradle.kts").write_text("")
+    mock_client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = [b"ok\n"]
+    mock_container.wait.return_value = {"StatusCode": 0}
+    mock_client.containers.run.return_value = mock_container
+
+    runner = DockerSandboxRunner(client=mock_client)
+    code, _ = await runner.build_apk(
+        project_id="p1", repo_path=str(tmp_path), build_id="apk-1",
+        variant="release", branch="main", app_name="App",
+    )
+
+    assert code == 0
+    build_call, sign_call = mock_client.containers.run.call_args_list
+    build_volumes = build_call.kwargs["volumes"]
+    sign_volumes = sign_call.kwargs["volumes"]
+    assert "painkiller-signing-p1" not in build_volumes
+    assert "assembleRelease" in build_call.kwargs["command"][2]
+    assert sign_volumes["painkiller-signing-p1"]["bind"] == "/signing"
+    assert not any(v["bind"] == "/workspace" for v in sign_volumes.values())
+    assert sign_call.kwargs["network_disabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_debug_apk_needs_no_signing_step(tmp_path):
+    (tmp_path / "settings.gradle.kts").write_text("")
+    mock_client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = [b"ok\n"]
+    mock_container.wait.return_value = {"StatusCode": 0}
+    mock_client.containers.run.return_value = mock_container
+
+    runner = DockerSandboxRunner(client=mock_client)
+    await runner.build_apk(
+        project_id="p1", repo_path=str(tmp_path), build_id="apk-2",
+        variant="debug", branch="main", app_name="App",
+    )
+    mock_client.containers.run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_apk_build_falls_back_to_any_present_worker_image(tmp_path):
+    import docker
+
+    (tmp_path / "settings.gradle.kts").write_text("")
+    mock_client = MagicMock()
+    mock_container = MagicMock()
+    mock_container.logs.return_value = [b"ok\n"]
+    mock_container.wait.return_value = {"StatusCode": 0}
+    mock_client.containers.run.return_value = mock_container
+
+    def get_image(name):
+        if name != "painkiller-worker:latest":
+            raise docker.errors.ImageNotFound(name)
+        return MagicMock()
+
+    mock_client.images.get.side_effect = get_image
+
+    runner = DockerSandboxRunner(client=mock_client)
+    code, _ = await runner.build_apk(
+        project_id="p1", repo_path=str(tmp_path), build_id="apk-3",
+        variant="debug", branch="main", app_name="App", harness="unreal_superpowers",
+    )
+
+    assert code == 0
+    assert mock_client.containers.run.call_args.args[0] == "painkiller-worker:latest"

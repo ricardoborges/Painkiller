@@ -1,0 +1,9 @@
+/* Tema do app: cores do Ionic. https://ionicframework.com/docs/theming/basics */
+:root {
+  --ion-color-primary: #3f51b5;
+  --ion-color-primary-rgb: 63, 81, 181;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-contrast-rgb: 255, 255, 255;
+  --ion-color-primary-shade: #37479f;
+  --ion-color-primary-tint: #5262bc;
+}

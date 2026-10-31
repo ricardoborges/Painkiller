@@ -17,6 +17,8 @@ export interface Toast {
   detail?: string;
   href?: string;
   hrefLabel?: string;
+  /** Ação dentro da própria página (ex.: abrir o celular simulado), no lugar de um link. */
+  action?: { label: string; run: () => void };
   duration: number;
 }
 
@@ -26,6 +28,7 @@ export interface ToastInput {
   detail?: string;
   href?: string;
   hrefLabel?: string;
+  action?: { label: string; run: () => void };
   /** Milissegundos até sumir. */
   duration?: number;
 }

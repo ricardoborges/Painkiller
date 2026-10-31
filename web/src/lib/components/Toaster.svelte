@@ -22,6 +22,19 @@
       <div class="text">
         <strong>{item.title}</strong>
         {#if item.detail}<span class="detail mono">{item.detail}</span>{/if}
+        {#if item.action}
+          {@const action = item.action}
+          <button
+            type="button"
+            class="link mono action"
+            onclick={() => {
+              action.run();
+              toast.dismiss(item.id);
+            }}
+          >
+            {action.label}
+          </button>
+        {/if}
         {#if item.href}
           <a href={item.href} target="_blank" rel="noopener noreferrer" class="link mono">
             {item.hrefLabel ?? item.href}
@@ -143,6 +156,14 @@
     color: var(--ink);
     text-decoration: underline;
     word-break: break-all;
+  }
+
+  .action {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
   }
 
   .close {

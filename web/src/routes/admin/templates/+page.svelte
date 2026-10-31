@@ -8,8 +8,9 @@
   import TemplateDialog from '$lib/components/TemplateDialog.svelte';
   import AdminTabs from '$lib/components/AdminTabs.svelte';
 
-  // Esta edição tem um template só (app Android nativo), semeado pelo backend:
-  // aqui o admin o configura, sem criar nem excluir.
+  // Os templates são fixos, semeados pelo backend: aqui o admin os configura,
+  // sem criar nem excluir. Só o Capacitor está ativo; o Android nativo segue
+  // listado (inativo) porque projetos antigos ainda nascem dele.
   let templates = $state<ProjectTemplate[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -73,7 +74,7 @@
   <div class="template-grid">
     {#each templates as tpl (tpl.id)}
       {@const meta = PROJECT_TYPE_META[tpl.project_type]}
-      <article class="template-card">
+      <article class="template-card" class:inactive={!tpl.is_active}>
         <header class="card-head">
           <div class="head-info">
             <h2 class="template-title">{tpl.name}</h2>
@@ -84,6 +85,9 @@
 
           <div class="head-badges">
             <span class="badge mono type-badge">{meta?.label || tpl.project_type}</span>
+            {#if !tpl.is_active}
+              <span class="badge mono" title={t('templates.inactiveHelp')}>{t('templates.inactive')}</span>
+            {/if}
           </div>
         </header>
 
@@ -169,6 +173,15 @@
     border: 1px solid var(--rule-2);
     background: var(--paper);
     transition: border-color var(--fast) var(--ease);
+  }
+
+  /* Inativo: legível, mas recuado; nenhuma cor nova, só o peso. */
+  .template-card.inactive {
+    border-style: dashed;
+  }
+
+  .template-card.inactive .template-title {
+    color: var(--ink-3);
   }
 
   .template-card:hover {

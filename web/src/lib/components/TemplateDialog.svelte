@@ -5,7 +5,7 @@
   import Modal from './Modal.svelte';
   import Icon from './Icon.svelte';
 
-  // Edita o único template (app Android nativo): não há criação nem tipo a escolher.
+  // Edita um template embutido (Android nativo ou Capacitor): não há criação nem tipo a escolher.
   let {
     open = $bindable(false),
     template,

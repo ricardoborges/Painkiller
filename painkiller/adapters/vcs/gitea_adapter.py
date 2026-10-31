@@ -548,6 +548,12 @@ class GiteaAdapter:
             if res.status_code != 200:
                 raise RuntimeError(f"Gitea issue labels failed: {res.status_code} - {res.text}")
 
+    async def delete_issue(self, owner: str, repo: str, number: int) -> None:
+        # A conta de serviço é admin do site: pode apagar issue de qualquer repo.
+        res = await self._api("DELETE", f"/repos/{owner}/{repo}/issues/{number}")
+        if res.status_code not in (204, 404):
+            raise RuntimeError(f"Gitea delete issue failed: {res.status_code} - {res.text}")
+
     async def comment_issue(self, owner: str, repo: str, number: int, body: str) -> None:
         res = await self._api("POST", f"/repos/{owner}/{repo}/issues/{number}/comments", json={"body": body})
         if res.status_code != 201:

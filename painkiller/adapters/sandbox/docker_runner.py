@@ -18,6 +18,15 @@ from painkiller.core.domain.models import (
     harness_effort,
     harness_model,
 )
+from painkiller.core.apk import (
+    OUT_MOUNT,
+    SIGNING_MOUNT,
+    build_apk_script,
+    build_dir,
+    sign_apk_script,
+    signing_env,
+    signing_volume,
+)
 from painkiller.core.i18n import tr
 from painkiller.core.test_plan import NO_TESTS_COLLECTED, build_test_script
 from painkiller.core.ports.sandbox import AgentEventCallback, SandboxPort
@@ -293,15 +302,38 @@ class DockerSandboxRunner(SandboxPort):
             return os.environ.get("PAINKILLER_WORKER_UNREAL_IMAGE") or "painkiller-worker-unreal:latest"
         return self.image_name
 
+    def _apk_image(self, harness_type: str) -> str:
+        """Worker image for an APK build: the project's harness, else any present one.
+
+        O build só usa o JDK e o SDK Android, que toda imagem de worker traz;
+        exigir a do harness do projeto falhava só porque ela não foi construída.
+        """
+        preferred = self._worker_image(harness_type)
+        candidates = [preferred] + [
+            self._worker_image(h)
+            for h in ("agy_superpowers", "deepseek_superpowers", "maki_superpowers", "unreal_superpowers")
+        ]
+        for image in dict.fromkeys(candidates):
+            try:
+                self.client.images.get(image)
+                return image
+            except docker.errors.ImageNotFound:
+                continue
+            except Exception:
+                # Sem como consultar o daemon: deixa o run reportar o erro real.
+                return preferred
+        return preferred
+
     async def run_tests(
         self,
         task: Task,
         repo_path: str,
         harness: Optional[str] = None,
         timeout_seconds: int = 900,
+        base_branch: str = "main",
     ) -> tuple[int, str]:
         """Run the repo's tests in a worker container, never in the API process."""
-        script = build_test_script(repo_path)
+        script = build_test_script(repo_path, base_branch=base_branch)
         if script is None:
             return (NO_TESTS_COLLECTED, tr("(Sem testes coletados no repositório)"))
         loop = asyncio.get_running_loop()
@@ -357,6 +389,113 @@ class DockerSandboxRunner(SandboxPort):
             return (1, f"Container execution error: {e}")
         finally:
             self._cleanup_container(task.id)
+
+    async def build_apk(
+        self,
+        project_id: str,
+        repo_path: str,
+        build_id: str,
+        variant: str,
+        branch: str,
+        app_name: str,
+        harness: Optional[Any] = None,
+        timeout_seconds: int = 2400,
+    ) -> tuple[int, str]:
+        """Build (and, for release, sign) the APK in worker containers."""
+        script = build_apk_script(repo_path, build_id, variant, branch)
+        if script is None:
+            return (1, tr("O repositório não tem um build Android (Gradle ou Capacitor)."))
+        loop = asyncio.get_running_loop()
+        context = contextvars.copy_context()
+        return await loop.run_in_executor(
+            None, context.run, self._build_apk_sync,
+            project_id, repo_path, build_id, variant, app_name, script, harness, timeout_seconds,
+        )
+
+    def _build_apk_sync(
+        self,
+        project_id: str,
+        repo_path: str,
+        build_id: str,
+        variant: str,
+        app_name: str,
+        script: str,
+        harness: Optional[Any],
+        timeout_seconds: int,
+    ) -> tuple[int, str]:
+        image = self._apk_image(getattr(harness, "value", harness) or "agy_superpowers")
+        code, logs = self._run_script_sync(
+            f"pk-apk-{build_id}",
+            image,
+            script,
+            volumes={
+                self._daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
+                package_cache_volume(project_id): {"bind": PACKAGE_CACHE_MOUNT, "mode": "rw"},
+            },
+            environment={"PAINKILLER_WORKSPACE": "/workspace", **PACKAGE_CACHE_ENV},
+            timeout_seconds=timeout_seconds,
+        )
+        if code != 0 or variant != "release":
+            return code, logs
+        # Só este contêiner vê a chave: ele roda o apksigner, nada do repositório.
+        sign_code, sign_logs = self._run_script_sync(
+            f"pk-apk-{build_id}-sign",
+            image,
+            sign_apk_script(),
+            volumes={
+                self._daemon_path(build_dir(repo_path, build_id)): {"bind": OUT_MOUNT, "mode": "rw"},
+                signing_volume(project_id): {"bind": SIGNING_MOUNT, "mode": "rw"},
+            },
+            environment=signing_env(app_name),
+            timeout_seconds=600,
+            network_disabled=True,
+        )
+        return sign_code, f"{logs}\n{sign_logs}"
+
+    def _run_script_sync(
+        self,
+        name: str,
+        image: str,
+        script: str,
+        volumes: dict,
+        environment: dict,
+        timeout_seconds: int,
+        network_disabled: bool = False,
+    ) -> tuple[int, str]:
+        """Run a shell script in a throwaway worker container; (exit code, output)."""
+        try:
+            container = self.client.containers.run(
+                image,
+                command=["sh", "-c", script],
+                name=name,
+                volumes=volumes,
+                environment=environment,
+                detach=True,
+                working_dir="/workspace",
+                network_disabled=network_disabled,
+                remove=False,
+            )
+        except docker.errors.ImageNotFound:
+            return (1, tr(
+                "A imagem do agente '{image}' não foi encontrada no Docker. "
+                "Construa as imagens dos harnesses com: docker compose --profile build build",
+                image=image,
+            ))
+        except Exception as e:
+            return (1, f"Container execution error: {e}")
+        self._running_containers[name] = container
+        timer = threading.Timer(timeout_seconds, self._kill_on_timeout, (container, name))
+        timer.daemon = True
+        timer.start()
+        try:
+            logs = self._follow_logs(container, None)
+            res = container.wait()
+            return (res.get("StatusCode", 1), logs)
+        except Exception as e:
+            return (1, f"Container execution error: {e}")
+        finally:
+            timer.cancel()
+            self._cleanup_container(name)
 
     @staticmethod
     def _ended_in_error(logs: str) -> bool:
@@ -526,7 +665,8 @@ class DockerSandboxRunner(SandboxPort):
         try:
             containers = await loop.run_in_executor(
                 None,
-                lambda: self.client.containers.list(all=True, filters={"name": "pk-task-"}),
+                lambda: self.client.containers.list(all=True, filters={"name": "pk-task-"})
+                + self.client.containers.list(all=True, filters={"name": "pk-apk-"}),
             )
             for c in containers:
                 status = getattr(c, "status", "")

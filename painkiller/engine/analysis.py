@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
-from painkiller.core.android_template import template_guidelines
+from painkiller.core.templates import project_type_of, template_guidelines
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
@@ -16,6 +16,7 @@ from painkiller.core.domain.models import (
     AnalysisStatus,
     HarnessType,
     Project,
+    ProjectType,
     Task,
     TaskStatus,
     UsageRecord,
@@ -57,6 +58,35 @@ DOCS_RELATIVE = "docs"
 #: Linguagem do bloco cercado que a UI troca por opções clicáveis. O mesmo nome
 #: está em web/src/lib/choices.ts — mudar aqui exige mudar lá.
 CHOICES_FENCE = "painkiller-choices"
+
+
+#: O que a entrevista sabe da plataforma, por tipo de projeto (pt-BR, en-US).
+#: A plataforma vem do template escolhido na criação: o agente não a rediscute.
+PLATFORM_NOTES: dict[ProjectType, tuple[str, str]] = {
+    ProjectType.ANDROID_NATIVE: (
+        "O produto é um app Android nativo em Kotlin (Jetpack Compose, Gradle), construído sobre o "
+        "arcabouço que já está no repositório. A plataforma está decidida: não proponha web, iOS nem "
+        "multiplataforma, e não pergunte sobre ela. A especificação e as tarefas tratam de telas, "
+        "navegação, dados, permissões e integrações do app.",
+        "The product is a native Android app in Kotlin (Jetpack Compose, Gradle), built on the scaffold "
+        "already in the repository. The platform is settled: do not propose web, iOS or cross-platform, "
+        "and do not ask about it. The specification and the tasks cover the app's screens, navigation, "
+        "data, permissions and integrations.",
+    ),
+    ProjectType.CAPACITOR_REACT: (
+        "O produto é um app Android feito em React + Ionic (TypeScript, Vite) e empacotado com Capacitor, "
+        "construído sobre o arcabouço que já está no repositório. A plataforma e a stack estão decididas: "
+        "não proponha Kotlin nativo, Flutter, React Native nem outro framework web, e não pergunte sobre "
+        "eles. Recursos do aparelho (câmera, arquivos, notificações) entram por plugins do Capacitor. A "
+        "especificação e as tarefas tratam de telas, navegação, dados, permissões e integrações do app.",
+        "The product is an Android app built with React + Ionic (TypeScript, Vite) and packaged with "
+        "Capacitor, on the scaffold already in the repository. The platform and the stack are settled: "
+        "do not propose native Kotlin, Flutter, React Native or another web framework, and do not ask "
+        "about them. Device features (camera, files, notifications) come through Capacitor plugins. The "
+        "specification and the tasks cover the app's screens, navigation, data, permissions and "
+        "integrations.",
+    ),
+}
 
 #: Pasta, dentro do repositório, onde caem os arquivos que o analista anexa ao
 #: chat. O agente os lê pelo bind mount; o exclude do git os mantém fora de
@@ -326,7 +356,7 @@ class AnalysisOrchestrator:
             previous_sessions=previous_sessions,
             previous_completed_tasks=previous_completed_tasks,
             guided=guided,
-            guidelines=await template_guidelines(self.tracker),
+            guidelines=await template_guidelines(self.tracker, project.template_id),
         )
         try:
             session.container_name = await self.agent.start(
@@ -1124,14 +1154,7 @@ def build_analysis_prompt(
         "",
         # Esta edição só fabrica apps Android: a entrevista não rediscute a plataforma.
         L("=== PLATAFORMA ===", "=== PLATFORM ==="),
-        L("O produto é um app Android nativo em Kotlin (Jetpack Compose, Gradle), construído sobre o "
-          "arcabouço que já está no repositório. A plataforma está decidida: não proponha web, iOS nem "
-          "multiplataforma, e não pergunte sobre ela. A especificação e as tarefas tratam de telas, "
-          "navegação, dados, permissões e integrações do app.",
-          "The product is a native Android app in Kotlin (Jetpack Compose, Gradle), built on the scaffold "
-          "already in the repository. The platform is settled: do not propose web, iOS or cross-platform, "
-          "and do not ask about it. The specification and the tasks cover the app's screens, navigation, "
-          "data, permissions and integrations."),
+        L(*PLATFORM_NOTES[project_type_of(project)]),
     ]
     if guidelines:
         parts.append(L("Diretrizes técnicas definidas pelo administrador (siga-as na spec e nas tarefas):",

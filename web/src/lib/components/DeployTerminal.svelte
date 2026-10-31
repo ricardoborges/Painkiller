@@ -12,7 +12,8 @@
     logs,
     active = false,
     failed = false,
-    branch = null
+    branch = null,
+    title = null
   }: {
     logs: string;
     /** Deploy ainda em andamento: pulso aceso e cursor no fim. */
@@ -20,6 +21,8 @@
     /** Deploy falhou: hachura na barra, nunca o acento. */
     failed?: boolean;
     branch?: string | null;
+    /** Rótulo da barra; o padrão é o dos deploys. */
+    title?: string | null;
   } = $props();
 
   type Kind = 'error' | 'step' | 'rule' | 'context' | 'plain';
@@ -60,7 +63,7 @@
 <div class="term" class:failed>
   <div class="term-bar">
     <span class="pulse" class:still={!active} aria-hidden="true"></span>
-    <span class="title">{t('backlog.deployLogs')}</span>
+    <span class="title">{title ?? t('backlog.deployLogs')}</span>
     {#if branch}
       <span class="sep">·</span>
       <span class="branch">{branch}</span>

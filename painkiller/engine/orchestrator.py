@@ -6,7 +6,8 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Optional, Any
-from painkiller.core.android_template import template_guidelines
+from painkiller.core.templates import project_type_of, template_guidelines
+from painkiller.core.preview import promote_preview
 from painkiller.core.domain.models import (
     AgentEvent,
     AgentEventType,
@@ -14,6 +15,7 @@ from painkiller.core.domain.models import (
     ClarificationStatus,
     ExecutionResult,
     Project,
+    ProjectType,
     SessionStatus,
     Task,
     TaskStatus,
@@ -49,6 +51,71 @@ TIMEOUT_MESSAGE = (
     "O trabalho parcial ficou na branch {branch}: use Repetir para continuar de onde parou "
     "ou aumente PAINKILLER_TASK_TIMEOUT."
 )
+
+
+#: Bloco "Ambiente" do prompt da tarefa, por tipo de projeto (pt-BR, en-US).
+#: Cada passo do agente é uma ida ao modelo: sondar o ambiente e recriar o
+#: projeto custava minutos por tarefa antes de qualquer código.
+ENVIRONMENT_NOTES: dict[ProjectType, tuple[str, str]] = {
+    ProjectType.ANDROID_NATIVE: (
+        "\n## Ambiente (já pronto, não verifique):\n"
+        "- O repositório é um app Android nativo em Kotlin (Jetpack Compose, Gradle com Kotlin DSL). "
+        "O contêiner já tem JDK 21, o Android SDK (ANDROID_HOME) com a plataforma e o build-tools, git, "
+        "Python 3 e Node.js 22. Não confira versões, rede nem SDK antes de trabalhar.\n"
+        "- Trabalhe dentro da estrutura que já existe: NÃO rode geradores (android create, assistentes "
+        "do Android Studio, gradle init) nem recrie o projeto. Use sempre o wrapper: ./gradlew.\n"
+        "- Para validar: ./gradlew testDebugUnitTest (testes unitários em app/src/test) e "
+        "./gradlew assembleDebug. Não há emulador nem dispositivo: testes instrumentados "
+        "(androidTest) não rodam aqui. Ao terminar, o Painkiller roda os dois comandos e a tarefa "
+        "só é aceita se ambos passarem.\n"
+        "- O cache do Gradle persiste entre tarefas: o primeiro build baixa as dependências, os "
+        "seguintes são rápidos. Passe --no-daemon para não deixar processos para trás.",
+        "\n## Environment (already set up, do not check):\n"
+        "- The repository is a native Android app in Kotlin (Jetpack Compose, Gradle with Kotlin DSL). "
+        "The container already has JDK 21, the Android SDK (ANDROID_HOME) with the platform and "
+        "build-tools, git, Python 3 and Node.js 22. Do not check versions, network or SDK before working.\n"
+        "- Work inside the existing structure: do NOT run generators (android create, Android Studio "
+        "wizards, gradle init) or recreate the project. Always use the wrapper: ./gradlew.\n"
+        "- To validate: ./gradlew testDebugUnitTest (unit tests in app/src/test) and "
+        "./gradlew assembleDebug. There is no emulator or device: instrumented tests (androidTest) "
+        "do not run here. When you finish, Painkiller runs both commands and the task is only "
+        "accepted if both pass.\n"
+        "- The Gradle cache persists across tasks: the first build downloads the dependencies, later "
+        "ones are fast. Pass --no-daemon so no process is left behind.",
+    ),
+    ProjectType.CAPACITOR_REACT: (
+        "\n## Ambiente (já pronto, não verifique):\n"
+        "- O repositório é um app Android feito em React + Ionic (TypeScript, Vite) e empacotado com "
+        "Capacitor: o código do app fica em src/, o projeto nativo em android/. O contêiner já tem "
+        "Node.js 22, npm, JDK 21, o Android SDK (ANDROID_HOME) com a plataforma e o build-tools, git e "
+        "Python 3. Não confira versões, rede nem SDK antes de trabalhar.\n"
+        "- Trabalhe dentro da estrutura que já existe: NÃO rode geradores (npm create, create-react-app, "
+        "npx cap init, npx cap add android) nem recrie o projeto. Instale dependências com npm install; "
+        "o node_modules e o cache do npm persistem entre tarefas.\n"
+        "- Para validar: npm test (Vitest) e npm run build (tsc + vite). Ao terminar, o Painkiller roda "
+        "os dois e a tarefa só é aceita se ambos passarem. Se a tarefa mexer em android/, em "
+        "capacitor.config.ts ou em plugins @capacitor/* do package.json, ele também roda "
+        "npx cap sync android e o APK de debug (cd android && sh ./gradlew --no-daemon assembleDebug), "
+        "que também precisa passar; rode-os você mesmo nesse caso. Não há emulador nem dispositivo.\n"
+        "- npm run dev não serve para validar: não há navegador aqui. Teste o comportamento com "
+        "Testing Library.",
+        "\n## Environment (already set up, do not check):\n"
+        "- The repository is an Android app built with React + Ionic (TypeScript, Vite) and packaged with "
+        "Capacitor: the app's code lives in src/, the native project in android/. The container already "
+        "has Node.js 22, npm, JDK 21, the Android SDK (ANDROID_HOME) with the platform and build-tools, "
+        "git and Python 3. Do not check versions, network or SDK before working.\n"
+        "- Work inside the existing structure: do NOT run generators (npm create, create-react-app, "
+        "npx cap init, npx cap add android) or recreate the project. Install dependencies with "
+        "npm install; node_modules and the npm cache persist across tasks.\n"
+        "- To validate: npm test (Vitest) and npm run build (tsc + vite). When you finish, Painkiller "
+        "runs both and the task is only accepted if both pass. If the task touches android/, "
+        "capacitor.config.ts or @capacitor/* plugins in package.json, it also runs npx cap sync android "
+        "and the debug APK (cd android && sh ./gradlew --no-daemon assembleDebug), which must pass too; "
+        "run them yourself in that case. There is no emulator or device.\n"
+        "- npm run dev is no way to validate: there is no browser here. Test behaviour with "
+        "Testing Library.",
+    ),
+}
 
 
 def task_timeout_seconds() -> int:
@@ -181,7 +248,7 @@ class PainkillerOrchestrator:
         history = await self._clarification_history(task.id)
         instructions = self._build_task_instructions(
             task, project, retrying=retrying, clarifications=history,
-            guidelines=await template_guidelines(self.tracker),
+            guidelines=await template_guidelines(self.tracker, project.template_id),
         )
 
         # Execute container
@@ -227,7 +294,8 @@ class PainkillerOrchestrator:
             self._note(task.id, tr("Executando a suíte de testes do repositório"))
             # No worker, nunca no processo da API: a suíte é código do agente.
             test_code, test_out = await self.sandbox.run_tests(
-                task, project.repo_path, harness=project.harness, timeout_seconds=timeout
+                task, project.repo_path, harness=project.harness, timeout_seconds=timeout,
+                base_branch=project.default_branch,
             )
             if test_code in (0, 5):
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
@@ -244,6 +312,7 @@ class PainkillerOrchestrator:
                     await self._push(project.repo_path, project.default_branch, task.id)
 
                     await self.tracker.update_task_status(task.id, TaskStatus.COMPLETED)
+                    await self._promote_preview(task, project)
                     comment = tr("✅ Tarefa concluída, testada e incorporada na {branch}.", branch=project.default_branch)
                     if test_code == 5 or "Sem testes" in test_out:
                         comment += " " + tr("(Sem testes coletados no repositório)")
@@ -296,6 +365,12 @@ class PainkillerOrchestrator:
 
         updated_task = await self.tracker.get_task(task.id)
         return updated_task or task
+
+    async def _promote_preview(self, task: Task, project: Project) -> None:
+        """Publish the web build the task's check left behind as the project's app preview."""
+        meta = await asyncio.to_thread(promote_preview, project.repo_path, task.id, task.title)
+        if meta:
+            self._note(task.id, tr("Prévia do app atualizada"))
 
     async def _record_usage(self, task: Task, result: ExecutionResult, project: Optional[Project] = None) -> None:
         """Book what the agent says it spent, whatever the exit code — a failed run still costs."""
@@ -419,34 +494,8 @@ class PainkillerOrchestrator:
               "Write messages, comments and any text meant for people in US English."),
         ]
         instructions.append(L(f"\n## Descrição:\n{task.description}", f"\n## Description:\n{task.description}"))
-        # Cada passo do agente é uma ida ao modelo: sondar o ambiente e recriar o
-        # projeto custava minutos por tarefa antes de qualquer código.
-        instructions.append(L(
-            "\n## Ambiente (já pronto, não verifique):\n"
-            "- O repositório é um app Android nativo em Kotlin (Jetpack Compose, Gradle com Kotlin DSL). "
-            "O contêiner já tem JDK 17, o Android SDK (ANDROID_HOME) com a plataforma e o build-tools, git, "
-            "Python 3 e Node.js 22. Não confira versões, rede nem SDK antes de trabalhar.\n"
-            "- Trabalhe dentro da estrutura que já existe: NÃO rode geradores (android create, assistentes "
-            "do Android Studio, gradle init) nem recrie o projeto. Use sempre o wrapper: ./gradlew.\n"
-            "- Para validar: ./gradlew testDebugUnitTest (testes unitários em app/src/test) e "
-            "./gradlew assembleDebug. Não há emulador nem dispositivo: testes instrumentados "
-            "(androidTest) não rodam aqui. Ao terminar, o Painkiller roda os dois comandos e a tarefa "
-            "só é aceita se ambos passarem.\n"
-            "- O cache do Gradle persiste entre tarefas: o primeiro build baixa as dependências, os "
-            "seguintes são rápidos. Passe --no-daemon para não deixar processos para trás.",
-            "\n## Environment (already set up, do not check):\n"
-            "- The repository is a native Android app in Kotlin (Jetpack Compose, Gradle with Kotlin DSL). "
-            "The container already has JDK 17, the Android SDK (ANDROID_HOME) with the platform and "
-            "build-tools, git, Python 3 and Node.js 22. Do not check versions, network or SDK before working.\n"
-            "- Work inside the existing structure: do NOT run generators (android create, Android Studio "
-            "wizards, gradle init) or recreate the project. Always use the wrapper: ./gradlew.\n"
-            "- To validate: ./gradlew testDebugUnitTest (unit tests in app/src/test) and "
-            "./gradlew assembleDebug. There is no emulator or device: instrumented tests (androidTest) "
-            "do not run here. When you finish, Painkiller runs both commands and the task is only "
-            "accepted if both pass.\n"
-            "- The Gradle cache persists across tasks: the first build downloads the dependencies, later "
-            "ones are fast. Pass --no-daemon so no process is left behind.",
-        ))
+        pt, en = ENVIRONMENT_NOTES[project_type_of(project)]
+        instructions.append(L(pt, en))
         if guidelines:
             instructions.append(L(
                 "\n## Diretrizes técnicas do app (definidas pelo administrador):\n",
@@ -576,6 +625,7 @@ class PainkillerOrchestrator:
         await self._push(project.repo_path, project.default_branch, task.id)
 
         await self.tracker.update_task_status(task.id, TaskStatus.COMPLETED)
+        await self._promote_preview(task, project)
         await self.tracker.add_comment(
             task.id,
             author="analyst",

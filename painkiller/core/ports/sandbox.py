@@ -39,11 +39,33 @@ class SandboxPort(ABC):
         repo_path: str,
         harness: Optional[Any] = None,
         timeout_seconds: int = 900,
+        base_branch: str = "main",
     ) -> tuple[int, str]:
         """Run the target repo's test suite in an isolated worker; return (exit code, output).
 
         Exit code 5 means no tests were collected. The suite is code the agent
-        wrote, so it must never run in the caller's own process.
+        wrote, so it must never run in the caller's own process. ``base_branch``
+        is what the task's changes are compared against, for checks that only
+        run when certain files changed.
+        """
+        pass
+
+    @abstractmethod
+    async def build_apk(
+        self,
+        project_id: str,
+        repo_path: str,
+        build_id: str,
+        variant: str,
+        branch: str,
+        app_name: str,
+        harness: Optional[Any] = None,
+        timeout_seconds: int = 2400,
+    ) -> tuple[int, str]:
+        """Build the APK of ``branch`` into ``core.apk.apk_path``; return (exit code, output).
+
+        A ``release`` build is signed with the project's own key in a separate
+        step that never runs the repo's code.
         """
         pass
 

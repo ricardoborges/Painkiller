@@ -1,8 +1,10 @@
-"""How a target repo's tests run: Gradle for the Android app, pytest as a fallback.
+"""How a target repo's tests run: Capacitor, Gradle for the Android app, pytest as a fallback.
 
 Esta edição fabrica apps Android: um repositório com build Gradle na raiz roda
 os testes unitários JVM e monta o APK de debug (não há emulador no worker, então
-androidTest fica de fora). Sem Gradle, vale a busca por suítes pytest abaixo.
+androidTest fica de fora). Um app Capacitor roda os testes e o build web e só
+monta o APK quando a tarefa mexeu na parte nativa. Sem nenhum dos dois, vale a
+busca por suítes pytest abaixo.
 
 The suite runs inside the worker image (the repo mounted at ``/workspace``),
 never in the API process: it is code the agent wrote. A repo whose tests sit
@@ -13,6 +15,8 @@ folder, or pytest walks up looking for a config and nothing imports.
 import os
 import shlex
 from typing import Optional
+
+from painkiller.core.preview import PREVIEW_STAGING_RELATIVE
 
 #: Pastas que nunca contêm a suíte do projeto (dependências, artefatos, estado do Painkiller).
 SKIP_DIRS = {
@@ -136,13 +140,76 @@ def build_gradle_script(repo_path: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build_test_script(repo_path: str) -> Optional[str]:
+#: Configuração do Capacitor na raiz: marca um app web empacotado como Android.
+CAPACITOR_MARKERS = ("capacitor.config.ts", "capacitor.config.json", "capacitor.config.js")
+
+#: Caminhos cuja mudança obriga a montar o APK: o projeto nativo e a configuração do Capacitor.
+CAPACITOR_NATIVE_PATHS = r"^(android/|capacitor\.config\.)"
+
+
+def is_capacitor_project(repo_path: str) -> bool:
+    return os.path.isfile(os.path.join(repo_path, "package.json")) and any(
+        os.path.isfile(os.path.join(repo_path, name)) for name in CAPACITOR_MARKERS
+    )
+
+
+def build_capacitor_script(base_branch: str = "main") -> str:
+    """POSIX sh script for a Capacitor app: web tests and build, the APK only when native code changed.
+
+    O Gradle custa minutos e gigabytes de RAM; a maioria das tarefas só mexe em
+    src/. Ele roda quando a tarefa tocou android/, capacitor.config.* ou um
+    plugin @capacitor/* do package.json, e também quando não há base para comparar.
+    """
+    base = shlex.quote(base_branch)
+    lines = [
+        f"cd {WORKSPACE}",
+        # Um bind mount vindo do Windows tem outro dono: o git recusaria o repositório.
+        f'g() {{ git -c safe.directory={WORKSPACE} "$@"; }}',
+        "echo '=== npm install'",
+        "npm install --no-audit --no-fund --loglevel=error || exit $?",
+        "echo '=== npm test'",
+        "npm test || exit $?",
+        "echo '=== npm run build'",
+        "npm run build || exit $?",
+        # Prévia para a UI: o mesmo app com caminhos relativos, servido sob um
+        # prefixo. Nunca reprova a tarefa; sem ela a UI só não se atualiza.
+        "echo '=== prévia web'",
+        f"rm -rf {PREVIEW_STAGING_RELATIVE}",
+        f"npx --no-install vite build --base ./ --outDir {PREVIEW_STAGING_RELATIVE} --emptyOutDir "
+        f"--logLevel warn || {{ rm -rf {PREVIEW_STAGING_RELATIVE}; echo 'aviso: prévia não montada'; }}",
+        f"base=$(g merge-base HEAD {base} 2>/dev/null)",
+        "native=0",
+        '[ -n "$base" ] || native=1',
+        f'{{ g diff --name-only "$base"; g ls-files --others --exclude-standard; }} 2>/dev/null '
+        f"| grep -Eq '{CAPACITOR_NATIVE_PATHS}' && native=1",
+        # Plugins comparados como conjunto: a vírgula que o npm acrescenta numa linha
+        # vizinha não é mudança nativa.
+        """caps() { grep -o '"@capacitor/[^"]*"[[:space:]]*:[[:space:]]*"[^"]*"' | sort; }""",
+        """[ "$(g show "$base:package.json" 2>/dev/null | caps)" = "$(caps < package.json)" ] || native=1""",
+        'if [ "$native" -eq 0 ]; then',
+        "  echo '=== android/ intocado: o APK não é montado nesta tarefa'",
+        "  exit 0",
+        "fi",
+        "echo '=== npx cap sync android'",
+        "npx cap sync android || exit $?",
+        "echo '=== gradle assembleDebug'",
+        "cd android || exit 1",
+        # sh ./gradlew: o bit de execução se perde num bind mount vindo do Windows.
+        "exec sh ./gradlew --no-daemon --console=plain --stacktrace assembleDebug",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def build_test_script(repo_path: str, base_branch: str = "main") -> Optional[str]:
     """POSIX sh script that runs the repo's tests, or None when it has none.
 
-    A Gradle build at the root wins outright. Otherwise every pytest root runs;
+    A Capacitor app or a Gradle build at the root wins outright, in that order
+    (the Capacitor app keeps its Gradle build under android/). Otherwise every pytest root runs;
     the script exits with the first real failure; a root that collects nothing (pytest's 5)
     does not fail the run, and the script exits 5 only when every root was empty.
     """
+    if is_capacitor_project(repo_path):
+        return build_capacitor_script(base_branch)
     if is_gradle_project(repo_path):
         return build_gradle_script(repo_path)
     roots = find_test_roots(repo_path)

@@ -82,6 +82,10 @@ def _walk_scaffold_dir(src: str):
             yield path, os.path.relpath(path, src).replace(os.sep, "/")
 
 
+def _is_gradlew(rel: str) -> bool:
+    return rel.rsplit("/", 1)[-1] == "gradlew"
+
+
 def copy_scaffold_dir(src: str, dest: str) -> list[str]:
     """Copy a scaffold folder (the bundled one) into ``dest``; same rules as the zip."""
     if not os.path.isdir(src):
@@ -91,8 +95,8 @@ def copy_scaffold_dir(src: str, dest: str) -> list[str]:
         target = os.path.join(dest, *rel.split("/"))
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copyfile(path, target)
-        # O checkout no Windows perde o bit de execução do gradlew.
-        if rel == "gradlew" or (os.name != "nt" and os.access(path, os.X_OK)):
+        # O checkout no Windows perde o bit de execução do gradlew (na raiz ou em android/).
+        if _is_gradlew(rel) or (os.name != "nt" and os.access(path, os.X_OK)):
             os.chmod(target, os.stat(target).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         written.append(rel)
     return written
@@ -103,7 +107,7 @@ def zip_scaffold_dir(src: str, zip_path: str) -> str:
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
         for path, rel in _walk_scaffold_dir(src):
             info = zipfile.ZipInfo.from_file(path, rel)
-            if rel == "gradlew":
+            if _is_gradlew(rel):
                 info.external_attr = (0o755 | stat.S_IFREG) << 16
             info.compress_type = zipfile.ZIP_DEFLATED
             with open(path, "rb") as f:

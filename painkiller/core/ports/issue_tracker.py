@@ -15,6 +15,7 @@ from painkiller.core.domain.models import (
     IterationSession,
     SessionStatus,
     DeploymentRecord,
+    ApkBuild,
     EnvironmentType,
 )
 
@@ -41,6 +42,7 @@ class IssueTrackerPort(ABC):
         effort: Optional[str] = None,
         project_id: Optional[str] = None,
         language: Optional[str] = None,
+        template_id: Optional[str] = None,
     ) -> Project:
         """Create or register a project."""
         pass
@@ -90,8 +92,14 @@ class IssueTrackerPort(ABC):
         acceptance_criteria: Optional[Sequence[str]] = None,
         dependencies: Optional[Sequence[str]] = None,
         session_id: Optional[str] = None,
+        manual: bool = False,
     ) -> Task:
-        """Create a new task."""
+        """Create a new task (``manual`` when the analyst wrote it by hand)."""
+        pass
+
+    @abstractmethod
+    async def delete_task(self, task_id: str) -> None:
+        """Delete a task with its comments and clarifications."""
         pass
 
     @abstractmethod
@@ -243,6 +251,21 @@ class IssueTrackerPort(ABC):
         target_session_id: str,
     ) -> list[Task]:
         """Move tasks to a target iteration session."""
+        pass
+
+    @abstractmethod
+    async def save_apk_build(self, build: ApkBuild) -> ApkBuild:
+        """Create or update an APK build record."""
+        pass
+
+    @abstractmethod
+    async def get_apk_build(self, build_id: str) -> Optional[ApkBuild]:
+        """Retrieve an APK build by ID."""
+        pass
+
+    @abstractmethod
+    async def list_apk_builds(self, project_id: str, limit: int = 50) -> list[ApkBuild]:
+        """List a project's APK builds, newest first."""
         pass
 
     @abstractmethod
