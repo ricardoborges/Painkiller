@@ -331,6 +331,7 @@ class DockerSandboxRunner(SandboxPort):
         harness: Optional[str] = None,
         timeout_seconds: int = 900,
         base_branch: str = "main",
+        extra_env: Optional[dict[str, str]] = None,
     ) -> tuple[int, str]:
         """Run the repo's tests in a worker container, never in the API process."""
         script = build_test_script(repo_path, base_branch=base_branch)
@@ -339,7 +340,8 @@ class DockerSandboxRunner(SandboxPort):
         loop = asyncio.get_running_loop()
         context = contextvars.copy_context()
         return await loop.run_in_executor(
-            None, context.run, self._run_tests_sync, task, repo_path, script, harness, timeout_seconds
+            None, context.run, self._run_tests_sync, task, repo_path, script, harness, timeout_seconds,
+            extra_env,
         )
 
     def _run_tests_sync(
@@ -349,6 +351,7 @@ class DockerSandboxRunner(SandboxPort):
         script: str,
         harness: Optional[str],
         timeout_seconds: int,
+        extra_env: Optional[dict[str, str]] = None,
     ) -> tuple[int, str]:
         harness_type = getattr(harness, "value", harness) or "agy_superpowers"
         image = self._worker_image(harness_type)
@@ -364,7 +367,7 @@ class DockerSandboxRunner(SandboxPort):
                     self._daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
                     package_cache_volume(task.project_id): {"bind": PACKAGE_CACHE_MOUNT, "mode": "rw"},
                 },
-                environment={"PAINKILLER_WORKSPACE": "/workspace", **PACKAGE_CACHE_ENV},
+                environment={"PAINKILLER_WORKSPACE": "/workspace", **PACKAGE_CACHE_ENV, **(extra_env or {})},
                 detach=True,
                 working_dir="/workspace",
                 remove=False,
@@ -400,6 +403,7 @@ class DockerSandboxRunner(SandboxPort):
         app_name: str,
         harness: Optional[Any] = None,
         timeout_seconds: int = 2400,
+        extra_env: Optional[dict[str, str]] = None,
     ) -> tuple[int, str]:
         """Build (and, for release, sign) the APK in worker containers."""
         script = build_apk_script(repo_path, build_id, variant, branch)
@@ -410,6 +414,7 @@ class DockerSandboxRunner(SandboxPort):
         return await loop.run_in_executor(
             None, context.run, self._build_apk_sync,
             project_id, repo_path, build_id, variant, app_name, script, harness, timeout_seconds,
+            extra_env,
         )
 
     def _build_apk_sync(
@@ -422,6 +427,7 @@ class DockerSandboxRunner(SandboxPort):
         script: str,
         harness: Optional[Any],
         timeout_seconds: int,
+        extra_env: Optional[dict[str, str]] = None,
     ) -> tuple[int, str]:
         image = self._apk_image(getattr(harness, "value", harness) or "agy_superpowers")
         code, logs = self._run_script_sync(
@@ -432,7 +438,8 @@ class DockerSandboxRunner(SandboxPort):
                 self._daemon_path(repo_path): {"bind": "/workspace", "mode": "rw"},
                 package_cache_volume(project_id): {"bind": PACKAGE_CACHE_MOUNT, "mode": "rw"},
             },
-            environment={"PAINKILLER_WORKSPACE": "/workspace", **PACKAGE_CACHE_ENV},
+            # Só o contêiner do build: o de assinatura não roda nada do app.
+            environment={"PAINKILLER_WORKSPACE": "/workspace", **PACKAGE_CACHE_ENV, **(extra_env or {})},
             timeout_seconds=timeout_seconds,
         )
         if code != 0 or variant != "release":

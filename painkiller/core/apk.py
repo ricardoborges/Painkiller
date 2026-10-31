@@ -55,6 +55,47 @@ def is_android_project(repo_path: str) -> bool:
     return is_capacitor_project(repo_path) or is_gradle_project(repo_path)
 
 
+#: Manifest só do build debug: libera HTTP (cleartext) para o backend de teste.
+DEBUG_CLEARTEXT_MANIFEST = (
+    '<?xml version="1.0" encoding="utf-8"?>\n'
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android"\n'
+    '    xmlns:tools="http://schemas.android.com/tools">\n'
+    '    <application android:usesCleartextTraffic="true"\n'
+    '        tools:replace="android:usesCleartextTraffic" />\n'
+    "</manifest>\n"
+)
+
+#: Liga android.allowMixedContent no capacitor.config.json que o cap sync gerou.
+_ALLOW_MIXED_CONTENT_JS = (
+    "const fs=require('fs');const f='android/app/src/main/assets/capacitor.config.json';"
+    "const c=JSON.parse(fs.readFileSync(f,'utf8'));"
+    "c.android=Object.assign({},c.android,{allowMixedContent:true});"
+    "fs.writeFileSync(f,JSON.stringify(c,null,2))"
+)
+
+
+def _debug_http_lines() -> list[str]:
+    """Let the debug APK call the test backend over plain HTTP.
+
+    O app roda em https://localhost dentro da WebView e o backend de teste do
+    Coolify responde em http://: sem isto o fetch é bloqueado como mixed content
+    (e, no Android 9+, como cleartext). Só no debug e só com backend/ no clone;
+    o release continua exigindo https. Mexe no clone em /tmp/src, nunca no repositório.
+    """
+    return [
+        "if [ -f backend/Dockerfile ]; then",
+        "  echo '=== debug: HTTP liberado para o backend de teste'",
+        f"  node -e {shlex.quote(_ALLOW_MIXED_CONTENT_JS)} || exit $?",
+        "  if [ -e android/app/src/debug/AndroidManifest.xml ]; then",
+        "    echo 'aviso: android/app/src/debug/AndroidManifest.xml já existe; cleartext não alterado'",
+        "  else",
+        "    mkdir -p android/app/src/debug",
+        f"    printf %s {shlex.quote(DEBUG_CLEARTEXT_MANIFEST)} > android/app/src/debug/AndroidManifest.xml",
+        "  fi",
+        "fi",
+    ]
+
+
 def build_apk_script(repo_path: str, build_id: str, variant: str, branch: str) -> Optional[str]:
     """POSIX sh script that builds the APK of ``branch``; None when the repo has no Android build.
 
@@ -84,6 +125,10 @@ def build_apk_script(repo_path: str, build_id: str, variant: str, branch: str) -
             "npm run build || exit $?",
             "echo '=== npx cap sync android'",
             "npx cap sync android || exit $?",
+        ]
+        if variant != "release":
+            lines += _debug_http_lines()
+        lines += [
             "cd android || exit 1",
         ]
     lines += [

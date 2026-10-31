@@ -6,6 +6,8 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Optional, Any
+from painkiller.core.backend import backend_build_env, has_backend
+from painkiller.core.secrets import redact, secret_names, secret_values, secrets_block
 from painkiller.core.templates import project_type_of, template_guidelines
 from painkiller.core.preview import promote_preview
 from painkiller.core.domain.models import (
@@ -13,9 +15,12 @@ from painkiller.core.domain.models import (
     AgentEventType,
     ClarificationRequest,
     ClarificationStatus,
+    EnvironmentType,
     ExecutionResult,
     Project,
+    ProjectSecret,
     ProjectType,
+    SecretScope,
     SessionStatus,
     Task,
     TaskStatus,
@@ -24,6 +29,7 @@ from painkiller.core.domain.models import (
     harness_model,
 )
 from painkiller.core.i18n import project_language, reset_locale, set_locale, tr, use_locale
+from painkiller.core.ports.deployment import DeploymentPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.sandbox import SandboxPort
 from painkiller.core.ports.git import GitPort
@@ -118,6 +124,45 @@ ENVIRONMENT_NOTES: dict[ProjectType, tuple[str, str]] = {
 }
 
 
+#: Complemento do bloco "Ambiente" quando o repositório tem backend/ (pt-BR, en-US).
+BACKEND_NOTES: tuple[str, str] = (
+    "\n## Backend (pasta backend/, já pronta):\n"
+    "- Ao lado do app há um backend em FastAPI (Python) em backend/: código em backend/app/, testes "
+    "em backend/tests/, dependências em backend/requirements.txt, publicado pelo backend/Dockerfile "
+    "na porta 8000. Não crie outro servidor, não troque de linguagem, não mude a porta nem remova o "
+    "GET /health (o deploy depende dele).\n"
+    "- Chaves de serviços pagos e qualquer segredo ficam SÓ no backend, lidos de variáveis de "
+    "ambiente (os.environ); o app chama o backend, nunca o serviço direto. Nunca escreva valores de "
+    "segredo em código, testes ou commits: documente o nome em backend/.env.example.\n"
+    "- Toda rota que gasta uma chave exige autenticação do usuário do app ou, no mínimo, o limite de "
+    "requisições que já existe (app/rate_limit.py): sem isso o backend vira um proxy aberto para a "
+    "conta do dono.\n"
+    "- O app acha o backend por import.meta.env.VITE_API_URL (definida pelo Painkiller em cada build: "
+    "backend de teste na verificação, na prévia e no APK de debug; de produção no APK de produção). "
+    "Nunca escreva o endereço no código; nos testes do app, simule o fetch.\n"
+    "- Para validar: cd backend && python3 -m pip install -r requirements.txt && python3 -m pytest "
+    "(use fastapi.testclient.TestClient; serviços externos sempre simulados nos testes). Se a "
+    "tarefa mexer em backend/, o Painkiller roda esse pytest ao terminar e ele também precisa passar.",
+    "\n## Backend (backend/ folder, already set up):\n"
+    "- Next to the app there is a FastAPI (Python) backend in backend/: code in backend/app/, tests in "
+    "backend/tests/, dependencies in backend/requirements.txt, deployed by backend/Dockerfile on port "
+    "8000. Do not create another server, switch languages, change the port or remove GET /health "
+    "(the deploy depends on it).\n"
+    "- Paid service keys and any secret live ONLY in the backend, read from environment variables "
+    "(os.environ); the app calls the backend, never the service directly. Never write secret values "
+    "in code, tests or commits: document the name in backend/.env.example.\n"
+    "- Every route that spends a key requires authentication of the app's user or, at the very least, "
+    "the existing rate limit (app/rate_limit.py): without it the backend becomes an open proxy to the "
+    "owner's account.\n"
+    "- The app finds the backend through import.meta.env.VITE_API_URL (set by Painkiller on every "
+    "build: the test backend for the check, the preview and the debug APK; production for the "
+    "production APK). Never hardcode the address; mock fetch in the app's tests.\n"
+    "- To validate: cd backend && python3 -m pip install -r requirements.txt && python3 -m pytest "
+    "(use fastapi.testclient.TestClient; external services always mocked in tests). If the task "
+    "touches backend/, Painkiller runs that pytest when you finish and it must pass too.",
+)
+
+
 def task_timeout_seconds() -> int:
     """`PAINKILLER_TASK_TIMEOUT` in seconds, falling back to the default on garbage."""
     try:
@@ -138,8 +183,11 @@ class PainkillerOrchestrator:
         vcs: Optional[Any] = None,
         usage: Optional[UsageLedgerPort] = None,
         activity: Optional[TaskActivityHub] = None,
+        deployment: Optional[DeploymentPort] = None,
     ):
         self.tracker = tracker
+        # Só para saber o endereço do backend de teste que o build do app recebe.
+        self.deployment = deployment
         self.sandbox = sandbox
         self.git = git
         self.vcs = vcs
@@ -249,6 +297,7 @@ class PainkillerOrchestrator:
         instructions = self._build_task_instructions(
             task, project, retrying=retrying, clarifications=history,
             guidelines=await template_guidelines(self.tracker, project.template_id),
+            secrets=await secret_names(self.tracker, project.id),
         )
 
         # Execute container
@@ -293,10 +342,15 @@ class PainkillerOrchestrator:
         elif result.exit_code == 0:
             self._note(task.id, tr("Executando a suíte de testes do repositório"))
             # No worker, nunca no processo da API: a suíte é código do agente.
+            # O build do app recebe os VITE_* e o backend de teste; o agente, não.
+            app_secrets = await secret_values(self.tracker, project.id, SecretScope.APP)
             test_code, test_out = await self.sandbox.run_tests(
                 task, project.repo_path, harness=project.harness, timeout_seconds=timeout,
                 base_branch=project.default_branch,
+                extra_env={**app_secrets, **backend_build_env(project, self.deployment, EnvironmentType.TEST)},
             )
+            # Um teste que imprime o ambiente não pode levar um valor ao banco e ao Gitea.
+            test_out = redact(test_out, app_secrets.values())
             if test_code in (0, 5):
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
                 await self._push(project.repo_path, branch_name, task.id)
@@ -482,6 +536,7 @@ class PainkillerOrchestrator:
         retrying: bool = False,
         clarifications: Optional[list[ClarificationRequest]] = None,
         guidelines: str = "",
+        secrets: Optional[list[ProjectSecret]] = None,
     ) -> str:
         english = project_language(project) == "en-US"
 
@@ -496,6 +551,10 @@ class PainkillerOrchestrator:
         instructions.append(L(f"\n## Descrição:\n{task.description}", f"\n## Description:\n{task.description}"))
         pt, en = ENVIRONMENT_NOTES[project_type_of(project)]
         instructions.append(L(pt, en))
+        if has_backend(project.repo_path):
+            instructions.append(L(*BACKEND_NOTES))
+        if project_type_of(project) is ProjectType.CAPACITOR_REACT:
+            instructions.append(secrets_block(secrets or [], english))
         if guidelines:
             instructions.append(L(
                 "\n## Diretrizes técnicas do app (definidas pelo administrador):\n",

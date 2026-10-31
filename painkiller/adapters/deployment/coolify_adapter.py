@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from typing import Optional, Any
 import httpx
 
+from painkiller.core.backend import BACKEND_DIR
 from painkiller.core.domain.models import (
     Project,
+    DeploymentComponent,
     DeploymentRecord,
     DeploymentStatus,
     EnvironmentType,
@@ -66,6 +68,22 @@ def format_deployment_logs(raw: Any) -> str:
     return "\n".join(lines)
 
 
+def split_wildcard(domain: str) -> tuple[str, str]:
+    """``("https", "apps.example.com")`` from ``https://apps.example.com``; http when no scheme.
+
+    Com https, o Coolify pede o certificado (Let's Encrypt) para cada domínio —
+    exige DNS público. O APK release só aceita backend em https.
+    """
+    value = domain.strip()
+    scheme = "http"
+    for prefix in ("https://", "http://"):
+        if value.lower().startswith(prefix):
+            scheme = prefix[:-3]
+            value = value[len(prefix):]
+            break
+    return scheme, value.strip("/").strip(".")
+
+
 class CoolifyAdapter(DeploymentPort):
     """Integrates with Coolify v4 REST API to provision and deploy test and production environments."""
 
@@ -86,7 +104,7 @@ class CoolifyAdapter(DeploymentPort):
         # Token, servidor e domínio vêm das configurações da plataforma (configure()).
         self.api_token = api_token or ""
         self.server_uuid = server_uuid or ""
-        self.wildcard_domain = (wildcard_domain or "127.0.0.1.nip.io").strip(".")
+        self.wildcard_scheme, self.wildcard_domain = split_wildcard(wildcard_domain or "127.0.0.1.nip.io")
         self.gitea_internal_url = (
             gitea_internal_url
             or os.environ.get("COOLIFY_GITEA_URL")
@@ -107,7 +125,7 @@ class CoolifyAdapter(DeploymentPort):
         if server_uuid is not None:
             self.server_uuid = server_uuid
         if wildcard_domain:
-            self.wildcard_domain = wildcard_domain.strip().strip(".")
+            self.wildcard_scheme, self.wildcard_domain = split_wildcard(wildcard_domain)
 
     def set_gitea_external_url(self, url: str) -> None:
         self.gitea_external_url = url.rstrip("/")
@@ -183,11 +201,30 @@ class CoolifyAdapter(DeploymentPort):
         clean_name = "".join(c if c.isalnum() else "-" for c in project.name.lower()).strip("-")
         return clean_name or "app"
 
-    def _generate_fqdn(self, project: Project, environment: EnvironmentType) -> str:
+    @staticmethod
+    def _suffix(environment: EnvironmentType, component: DeploymentComponent) -> str:
+        """``-test`` for the app, ``-api-test`` for its backend: two apps, two hosts."""
+        prefix = "-api" if component == DeploymentComponent.BACKEND else ""
+        return f"{prefix}-{environment.value}"
+
+    def _generate_fqdn(
+        self,
+        project: Project,
+        environment: EnvironmentType,
+        component: DeploymentComponent = DeploymentComponent.APP,
+    ) -> str:
         slug = self._resolve_slug(project)
-        max_label_len = 63 - len(f"-{environment.value}")
-        clean_label = slug[:max_label_len].rstrip("-")
-        return f"http://{clean_label}-{environment.value}.{self.wildcard_domain}"
+        suffix = self._suffix(environment, component)
+        clean_label = slug[: 63 - len(suffix)].rstrip("-")
+        return f"{self.wildcard_scheme}://{clean_label}{suffix}.{self.wildcard_domain}"
+
+    def environment_url(
+        self,
+        project: Project,
+        environment: EnvironmentType,
+        component: DeploymentComponent = DeploymentComponent.APP,
+    ) -> Optional[str]:
+        return self._generate_fqdn(project, environment, component)
 
     def _resolve_repo_url(self, project: Project) -> str:
         """Resolve the Git repository URL that Coolify can reach."""
@@ -304,6 +341,25 @@ class CoolifyAdapter(DeploymentPort):
                 return servers[0].get("uuid", "0")
         return "0"
 
+    def _app_settings(self, project: Project, component: DeploymentComponent) -> dict[str, Any]:
+        """Build settings sent on create and realigned on every deploy.
+
+        O backend é sempre o Dockerfile de backend/ na porta 8000 — a raiz do
+        repositório tem o package.json do app, que o nixpacks publicaria. Sem
+        health check do Coolify: ele roda curl/wget dentro do contêiner, que a
+        imagem slim do Python não tem.
+        """
+        if component == DeploymentComponent.BACKEND:
+            return {
+                "build_pack": "dockerfile",
+                "is_static": False,
+                "base_directory": f"/{BACKEND_DIR}",
+                "dockerfile_location": "/Dockerfile",
+                "ports_exposes": "8000",
+            }
+        build_pack, is_static = self._detect_build_pack(project)
+        return {"build_pack": build_pack, "is_static": is_static}
+
     def _detect_build_pack(self, project: Project) -> tuple[str, bool]:
         """Detect the build pack and whether it's static."""
         repo_path = project.repo_path
@@ -327,9 +383,11 @@ class CoolifyAdapter(DeploymentPort):
         branch: str,
         task_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        component: DeploymentComponent = DeploymentComponent.APP,
+        env_vars: Optional[dict[str, str]] = None,
     ) -> DeploymentRecord:
         deployment_id = f"dep-{uuid.uuid4().hex[:10]}"
-        fqdn = self._generate_fqdn(project, environment)
+        fqdn = self._generate_fqdn(project, environment, component)
         now = datetime.now(timezone.utc)
 
         # Se o token não estiver configurado, registra como mock / dev local com URL prevista
@@ -341,6 +399,7 @@ class CoolifyAdapter(DeploymentPort):
                 task_id=task_id,
                 session_id=session_id,
                 environment=environment,
+                component=component,
                 branch=branch,
                 status=DeploymentStatus.HEALTHY,
                 coolify_app_uuid=f"mock-app-{project.id}-{environment.value}",
@@ -361,19 +420,10 @@ class CoolifyAdapter(DeploymentPort):
 
                 # 2. Localizar se aplicação já existe no Coolify
                 slug = self._resolve_slug(project)
-                app_name = f"{slug}-{environment.value}"
-                app_uuid: Optional[str] = None
+                app_name = f"{slug}{self._suffix(environment, component)}"
+                app_uuid = await self._find_app(client, app_name, fqdn)
 
-                apps_resp = await client.get(f"{self.api_url}/api/v1/applications", headers=self._headers())
-                if apps_resp.is_success:
-                    apps_data = apps_resp.json()
-                    apps_list = apps_data if isinstance(apps_data, list) else apps_data.get("applications", [])
-                    for a in apps_list:
-                        if a.get("name") == app_name or a.get("fqdn") == fqdn:
-                            app_uuid = a.get("uuid")
-                            break
-
-                build_pack, is_static = self._detect_build_pack(project)
+                settings = self._app_settings(project, component)
 
                 # 3. Criar aplicação se não existir
                 if not app_uuid:
@@ -384,10 +434,9 @@ class CoolifyAdapter(DeploymentPort):
                         "name": app_name,
                         "git_repository": repo_url,
                         "git_branch": branch,
-                        "build_pack": build_pack,
-                        "is_static": is_static,
                         "ports_exposes": "80",
                         "domains": fqdn,
+                        **settings,
                     }
                     endpoint = "public"
                     # Repositório do nosso Gitea: privado (FORCE_PRIVATE), então
@@ -417,6 +466,7 @@ class CoolifyAdapter(DeploymentPort):
                             task_id=task_id,
                             session_id=session_id,
                             environment=environment,
+                            component=component,
                             branch=branch,
                             status=DeploymentStatus.FAILED,
                             url=fqdn,
@@ -434,8 +484,7 @@ class CoolifyAdapter(DeploymentPort):
                         json={
                             "git_branch": branch,
                             "domains": fqdn,
-                            "build_pack": build_pack,
-                            "is_static": is_static,
+                            **settings,
                         },
                     )
                     if not patch_resp.is_success:
@@ -447,11 +496,32 @@ class CoolifyAdapter(DeploymentPort):
                             task_id=task_id,
                             session_id=session_id,
                             environment=environment,
+                            component=component,
                             branch=branch,
                             status=DeploymentStatus.FAILED,
                             coolify_app_uuid=app_uuid,
                             url=fqdn,
                             logs=f"Falha ao apontar a aplicação do Coolify para a branch {branch}: {error_text}",
+                            created_at=now,
+                            updated_at=now,
+                        )
+
+                # Segredos do backend: gravados antes do build, ou a aplicação sobe sem eles.
+                if env_vars:
+                    error = await self._push_envs(client, app_uuid, env_vars)
+                    if error:
+                        return DeploymentRecord(
+                            id=deployment_id,
+                            project_id=project.id,
+                            task_id=task_id,
+                            session_id=session_id,
+                            environment=environment,
+                            component=component,
+                            branch=branch,
+                            status=DeploymentStatus.FAILED,
+                            coolify_app_uuid=app_uuid,
+                            url=fqdn,
+                            logs=f"Falha ao gravar as variáveis do backend no Coolify: {error}",
                             created_at=now,
                             updated_at=now,
                         )
@@ -484,6 +554,7 @@ class CoolifyAdapter(DeploymentPort):
                     task_id=task_id,
                     session_id=session_id,
                     environment=environment,
+                    component=component,
                     branch=branch,
                     status=status,
                     coolify_app_uuid=app_uuid,
@@ -502,6 +573,7 @@ class CoolifyAdapter(DeploymentPort):
                     task_id=task_id,
                     session_id=session_id,
                     environment=environment,
+                    component=component,
                     branch=branch,
                     status=DeploymentStatus.FAILED,
                     url=fqdn,
@@ -509,6 +581,58 @@ class CoolifyAdapter(DeploymentPort):
                     created_at=now,
                     updated_at=now,
                 )
+
+    async def _find_app(self, client: httpx.AsyncClient, app_name: str, fqdn: Optional[str] = None) -> Optional[str]:
+        apps_resp = await client.get(f"{self.api_url}/api/v1/applications", headers=self._headers())
+        if apps_resp.is_success:
+            apps_data = apps_resp.json()
+            apps_list = apps_data if isinstance(apps_data, list) else apps_data.get("applications", [])
+            for a in apps_list:
+                if a.get("name") == app_name or (fqdn and a.get("fqdn") == fqdn):
+                    return a.get("uuid")
+        return None
+
+    async def _push_envs(self, client: httpx.AsyncClient, app_uuid: str, env_vars: dict[str, str]) -> Optional[str]:
+        """Upsert the variables in the application; the error text, or None."""
+        # is_literal: o Coolify não interpola $ dentro do valor (chaves de API têm de tudo).
+        data = [
+            {"key": key, "value": value, "is_preview": False, "is_literal": True}
+            for key, value in sorted(env_vars.items())
+        ]
+        resp = await client.patch(
+            f"{self.api_url}/api/v1/applications/{app_uuid}/envs/bulk",
+            headers=self._headers(),
+            json={"data": data},
+        )
+        if resp.is_success:
+            return None
+        # Nunca o corpo do pedido: ele tem os valores.
+        return f"{resp.status_code} {resp.text[:500]}"
+
+    async def remove_env(
+        self,
+        project: Project,
+        environment: EnvironmentType,
+        component: DeploymentComponent,
+        name: str,
+    ) -> None:
+        if not self.api_token:
+            return
+        app_name = f"{self._resolve_slug(project)}{self._suffix(environment, component)}"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            app_uuid = await self._find_app(client, app_name)
+            if not app_uuid:
+                return
+            resp = await client.get(f"{self.api_url}/api/v1/applications/{app_uuid}/envs", headers=self._headers())
+            if not resp.is_success:
+                raise RuntimeError(f"{resp.status_code} {resp.text[:300]}")
+            items = resp.json()
+            for item in items if isinstance(items, list) else []:
+                if item.get("key") == name and item.get("uuid"):
+                    await client.delete(
+                        f"{self.api_url}/api/v1/applications/{app_uuid}/envs/{item['uuid']}",
+                        headers=self._headers(),
+                    )
 
     async def get_deployment_status(self, record: DeploymentRecord) -> DeploymentRecord:
         if not self.api_token or not record.coolify_deployment_uuid:

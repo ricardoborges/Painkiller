@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from painkiller.api.security import issue_apk_key, require_project, verify_apk_key, visible_project
 from painkiller.core.apk import apk_path
 from painkiller.core.domain.models import ApkBuild, ApkBuildStatus, ApkVariant
-from painkiller.engine.apk_builds import ApkBuildBusyError, NotAndroidProjectError
+from painkiller.engine.apk_builds import ApkBuildBusyError, NotAndroidProjectError, ReleaseBackendError
 
 router = APIRouter(
     prefix="/api/projects/{project_id}/apk-builds",
@@ -40,7 +40,7 @@ async def start_apk_build(project_id: str, body: StartApkBuildRequest, request: 
     project = await visible_project(request, project_id)
     try:
         return await request.app.state.apk_builds.start(project, body.variant)
-    except ApkBuildBusyError as e:
+    except (ApkBuildBusyError, ReleaseBackendError) as e:
         raise HTTPException(status_code=409, detail=str(e))
     except NotAndroidProjectError as e:
         raise HTTPException(status_code=400, detail=str(e))

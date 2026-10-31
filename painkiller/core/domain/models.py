@@ -229,6 +229,12 @@ class DeploymentStatus(str, Enum):
     STOPPED = "STOPPED"
 
 
+class DeploymentComponent(str, Enum):
+    """What a deploy publishes: the web build of the app, or its backend/ (FastAPI)."""
+    APP = "app"
+    BACKEND = "backend"
+
+
 class DeploymentRecord(BaseModel):
     """Record of a project environment deployment on Coolify."""
     id: str
@@ -236,6 +242,8 @@ class DeploymentRecord(BaseModel):
     task_id: Optional[str] = None
     session_id: Optional[str] = None
     environment: EnvironmentType = EnvironmentType.TEST
+    # Cada componente é uma aplicação própria no Coolify ({slug}-{env} e {slug}-api-{env}).
+    component: DeploymentComponent = DeploymentComponent.APP
     branch: str = "main"
     commit_sha: Optional[str] = None
     status: DeploymentStatus = DeploymentStatus.PENDING
@@ -257,6 +265,21 @@ class ApkBuildStatus(str, Enum):
     BUILDING = "BUILDING"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
+
+
+class SecretScope(str, Enum):
+    """Where a project secret goes: baked into the app's build, or only into its backend."""
+    # VITE_*: entra no bundle do app — legível por qualquer um dentro do APK.
+    APP = "app"
+    # Só no ambiente do backend (Coolify); nunca chega ao app nem ao agente.
+    SERVER = "server"
+
+
+class ProjectSecret(BaseModel):
+    """A project secret as anyone may see it: the name and scope, never the value."""
+    name: str
+    scope: SecretScope
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ApkBuild(BaseModel):

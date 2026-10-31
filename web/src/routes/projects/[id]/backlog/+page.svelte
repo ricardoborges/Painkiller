@@ -425,11 +425,25 @@
       );
       deploys.track(record);
       showDeployment(record.id);
+      if (data.project.has_backend) void deployBackendTest();
       await loadEnvStatus();
     } catch (e) {
       alert(e instanceof Error ? e.message : t('backlog.deployTestFailed'));
     } finally {
       deployingEnv = null;
+    }
+  }
+
+  /* O backend vai junto, como aplicação própria no Coolify; o modal segue o app,
+     e o fim do backend chega como toast. */
+  async function deployBackendTest() {
+    if (deploys.active(data.project.id, 'test', 'backend')) return;
+    try {
+      deploys.track(
+        await api.triggerDeploy(data.project.id, 'test', undefined, activeSession?.id, 'backend')
+      );
+    } catch (e) {
+      alert(e instanceof Error ? e.message : t('backlog.deployTestFailed'));
     }
   }
 

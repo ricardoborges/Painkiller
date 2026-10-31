@@ -202,6 +202,39 @@ EN_US: dict[str, str] = {
     "O arcabouço da aplicação deve ser um arquivo .zip": "The application scaffold must be a .zip file",
     "O arcabouço do template é inválido: {error}": "The template's scaffold is invalid: {error}",
     "Informe o nome do template": "Enter the template's name",
+    # ---- backend do app ----
+    "Só apps Capacitor podem ter backend.": "Only Capacitor apps can have a backend.",
+    "O repositório do projeto não existe.": "The project's repository does not exist.",
+    "O projeto já tem a pasta backend/.": "The project already has a backend/ folder.",
+    "Há uma tarefa em execução: adicione o backend quando ela terminar.":
+        "A task is running: add the backend once it finishes.",
+    "Não foi possível trocar para {branch}: {error}": "Could not switch to {branch}: {error}",
+    "O projeto não tem backend.": "The project has no backend.",
+    # ---- segredos do projeto ----
+    "Nome de segredo inválido: use letras maiúsculas, números e _ (ex.: OPENAI_API_KEY).":
+        "Invalid secret name: use uppercase letters, digits and _ (e.g. OPENAI_API_KEY).",
+    "{name} é definido pelo Painkiller e não pode ser um segredo.":
+        "{name} is set by Painkiller and cannot be a secret.",
+    "Segredos do app começam com VITE_: só assim o build os inclui.":
+        "App secrets start with VITE_: only then does the build include them.",
+    "Segredos do backend não podem começar com VITE_: esse prefixo vai para o app.":
+        "Backend secrets cannot start with VITE_: that prefix goes into the app.",
+    "Informe o valor do segredo.": "Enter the secret's value.",
+    "Valor grande demais para um segredo.": "Value too large for a secret.",
+    "Segredo não encontrado": "Secret not found",
+    "Publique o backend em produção antes de gerar o APK de produção: o app "
+    "precisa de um backend no ar para funcionar.":
+        "Deploy the backend to production before building the production APK: the app "
+        "needs a live backend to work.",
+    "O backend de produção está em http: o APK de produção só fala com https. "
+    "Configure o domínio do Coolify com https:// (Admin → Configurações) e "
+    "publique o backend de novo.":
+        "The production backend is on http: the production APK only talks to https. "
+        "Set the Coolify domain with https:// (Admin → Settings) and deploy the backend again.",
+    "Quem falhou foi o backend: a imagem é construída a partir de backend/Dockerfile, "
+    "com backend/ como contexto.":
+        "The backend is what failed: its image is built from backend/Dockerfile, "
+        "with backend/ as the context.",
     # ---- análise ----
     "Falha ao iniciar o agente: {error}": "Failed to start the agent: {error}",
     "Mensagem vazia": "Empty message",

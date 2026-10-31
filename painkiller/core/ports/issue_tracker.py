@@ -16,6 +16,7 @@ from painkiller.core.domain.models import (
     SessionStatus,
     DeploymentRecord,
     ApkBuild,
+    DeploymentComponent,
     EnvironmentType,
 )
 
@@ -287,9 +288,12 @@ class IssueTrackerPort(ABC):
 
     @abstractmethod
     async def get_latest_deployment(
-        self, project_id: str, environment: EnvironmentType
+        self,
+        project_id: str,
+        environment: EnvironmentType,
+        component: DeploymentComponent = DeploymentComponent.APP,
     ) -> Optional[DeploymentRecord]:
-        """Get the most recent deployment record for a project environment."""
+        """Get the most recent deployment record of a component in a project environment."""
         pass
 
     @abstractmethod

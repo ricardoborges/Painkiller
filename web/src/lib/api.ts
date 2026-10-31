@@ -20,6 +20,9 @@ import type {
   ProjectPrices,
   UsageSummary,
   User,
+  DeploymentComponent,
+  ProjectSecret,
+  SecretScope,
   DeploymentRecord,
   EnvironmentType,
   EnvironmentStatusResponse,
@@ -404,6 +407,25 @@ export const api = {
 
   mergeTask: (id: string) => request<Task>(`/tasks/${id}/merge`, { method: 'POST' }),
 
+  /** Copia o backend (FastAPI) para backend/ no branch padrão e o publica no Gitea. */
+  addBackend: (projectId: string) =>
+    request<Project>(`/projects/${projectId}/backend`, { method: 'POST' }),
+
+  /** Segredos do projeto: só nomes e escopos voltam; o valor é só de escrita. */
+  listSecrets: (projectId: string) => request<ProjectSecret[]>(`/projects/${projectId}/secrets`),
+
+  putSecret: (projectId: string, name: string, scope: SecretScope, value: string) =>
+    request<ProjectSecret>(`/projects/${projectId}/secrets/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      ...json({ scope, value })
+    }),
+
+  deleteSecret: (projectId: string, name: string) =>
+    request<{ status: string; name: string }>(
+      `/projects/${projectId}/secrets/${encodeURIComponent(name)}`,
+      { method: 'DELETE' }
+    ),
+
   /** Cria no Gitea as issues que faltam e realinha as existentes. */
   syncIssues: (projectId: string) =>
     request<{ enabled: boolean; created: number; updated: number }>(
@@ -459,11 +481,12 @@ export const api = {
     projectId: string,
     environment: EnvironmentType,
     taskId?: string,
-    sessionId?: string
+    sessionId?: string,
+    component: DeploymentComponent = 'app'
   ) =>
     request<DeploymentRecord>(`/projects/${projectId}/deploy`, {
       method: 'POST',
-      ...json({ environment, task_id: taskId, session_id: sessionId })
+      ...json({ environment, task_id: taskId, session_id: sessionId, component })
     }),
 
   listDeployments: (projectId: string, limit = 20) =>

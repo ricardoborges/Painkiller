@@ -16,6 +16,7 @@ import os
 import shlex
 from typing import Optional
 
+from painkiller.core.backend import BACKEND_DIR, has_backend
 from painkiller.core.preview import PREVIEW_STAGING_RELATIVE
 
 #: Pastas que nunca contêm a suíte do projeto (dependências, artefatos, estado do Painkiller).
@@ -153,12 +154,39 @@ def is_capacitor_project(repo_path: str) -> bool:
     )
 
 
-def build_capacitor_script(base_branch: str = "main") -> str:
+def _backend_lines(repo_path: str) -> list[str]:
+    """pytest of ``backend/``, only when the task touched it (``$changed``/``$base`` already set)."""
+    folder = os.path.join(repo_path, BACKEND_DIR)
+    lines = [
+        "back=0",
+        '[ -n "$base" ] || back=1',
+        f"printf '%s\\n' \"$changed\" | grep -q '^{BACKEND_DIR}/' && back=1",
+        'if [ "$back" -eq 1 ]; then',
+        f"  echo '=== pytest em {BACKEND_DIR}'",
+        f"  cd {WORKSPACE}/{BACKEND_DIR} || exit 1",
+    ]
+    for command in _install_deps(folder):
+        lines.append(f"  {command} || echo 'aviso: falha ao instalar dependências em {BACKEND_DIR}'")
+    lines += [
+        "  python3 -m pytest -p no:cacheprovider --rootdir=. ; code=$?",
+        # Nada coletado (5) não reprova: um backend recém-criado pode não ter testes ainda.
+        f'  if [ "$code" -ne 0 ] && [ "$code" -ne {NO_TESTS_COLLECTED} ]; then exit "$code"; fi',
+        f"  cd {WORKSPACE}",
+        "else",
+        f"  echo '=== {BACKEND_DIR}/ intocado: pytest não roda nesta tarefa'",
+        "fi",
+    ]
+    return lines
+
+
+def build_capacitor_script(base_branch: str = "main", repo_path: Optional[str] = None) -> str:
     """POSIX sh script for a Capacitor app: web tests and build, the APK only when native code changed.
 
     O Gradle custa minutos e gigabytes de RAM; a maioria das tarefas só mexe em
     src/. Ele roda quando a tarefa tocou android/, capacitor.config.* ou um
     plugin @capacitor/* do package.json, e também quando não há base para comparar.
+    Com backend (``backend/``), o pytest dele roda antes dessa decisão, só quando
+    a tarefa mexeu lá — o fim do script (``exit 0`` ou o Gradle) não volta.
     """
     base = shlex.quote(base_branch)
     lines = [
@@ -178,10 +206,15 @@ def build_capacitor_script(base_branch: str = "main") -> str:
         f"npx --no-install vite build --base ./ --outDir {PREVIEW_STAGING_RELATIVE} --emptyOutDir "
         f"--logLevel warn || {{ rm -rf {PREVIEW_STAGING_RELATIVE}; echo 'aviso: prévia não montada'; }}",
         f"base=$(g merge-base HEAD {base} 2>/dev/null)",
+        # Arquivos que a tarefa mudou, rastreados ou novos, contra a base.
+        'changed=$({ g diff --name-only "$base"; g ls-files --others --exclude-standard; } 2>/dev/null)',
+    ]
+    if repo_path and has_backend(repo_path):
+        lines += _backend_lines(repo_path)
+    lines += [
         "native=0",
         '[ -n "$base" ] || native=1',
-        f'{{ g diff --name-only "$base"; g ls-files --others --exclude-standard; }} 2>/dev/null '
-        f"| grep -Eq '{CAPACITOR_NATIVE_PATHS}' && native=1",
+        f"printf '%s\\n' \"$changed\" | grep -Eq '{CAPACITOR_NATIVE_PATHS}' && native=1",
         # Plugins comparados como conjunto: a vírgula que o npm acrescenta numa linha
         # vizinha não é mudança nativa.
         """caps() { grep -o '"@capacitor/[^"]*"[[:space:]]*:[[:space:]]*"[^"]*"' | sort; }""",
@@ -209,7 +242,7 @@ def build_test_script(repo_path: str, base_branch: str = "main") -> Optional[str
     does not fail the run, and the script exits 5 only when every root was empty.
     """
     if is_capacitor_project(repo_path):
-        return build_capacitor_script(base_branch)
+        return build_capacitor_script(base_branch, repo_path)
     if is_gradle_project(repo_path):
         return build_gradle_script(repo_path)
     roots = find_test_roots(repo_path)

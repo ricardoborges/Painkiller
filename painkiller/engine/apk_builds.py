@@ -14,10 +14,22 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from painkiller.core.apk import KEEP_BUILDS, apk_path, is_android_project, parse_commit, prune_builds
-from painkiller.core.domain.models import ApkBuild, ApkBuildStatus, ApkVariant, Project
+from painkiller.core.backend import API_URL_ENV, backend_build_env, has_backend
+from painkiller.core.domain.models import (
+    ApkBuild,
+    ApkBuildStatus,
+    ApkVariant,
+    DeploymentComponent,
+    DeploymentStatus,
+    EnvironmentType,
+    Project,
+    SecretScope,
+)
 from painkiller.core.i18n import project_language, tr, use_locale
+from painkiller.core.ports.deployment import DeploymentPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.sandbox import SandboxPort
+from painkiller.core.secrets import redact, secret_values
 
 logger = logging.getLogger(__name__)
 
@@ -33,15 +45,22 @@ class NotAndroidProjectError(Exception):
     """The repository has no Gradle or Capacitor build."""
 
 
+class ReleaseBackendError(Exception):
+    """A release of an app with a backend needs that backend live in production, over https."""
+
+
 class ApkBuildService:
     def __init__(
         self,
         tracker: IssueTrackerPort,
         sandbox: SandboxPort,
         timeout_seconds: Optional[int] = None,
+        deployment: Optional[DeploymentPort] = None,
     ):
         self.tracker = tracker
         self.sandbox = sandbox
+        # Endereço do backend que o app recebe no build (VITE_API_URL).
+        self.deployment = deployment
         self.timeout_seconds = timeout_seconds or int(os.environ.get("PAINKILLER_APK_TIMEOUT", "2400"))
         self._jobs: dict[str, asyncio.Task] = {}
 
@@ -54,6 +73,7 @@ class ApkBuildService:
                     raise ApkBuildBusyError("Já há um APK sendo gerado para este projeto.")
         if not is_android_project(project.repo_path):
             raise NotAndroidProjectError("O repositório não tem um build Android (Gradle ou Capacitor).")
+        env = await self._build_env(project, variant)
 
         build = await self.tracker.save_apk_build(ApkBuild(
             id=f"apk-{uuid.uuid4().hex[:10]}",
@@ -61,12 +81,40 @@ class ApkBuildService:
             variant=variant,
             branch=project.default_branch or "main",
         ))
-        job = asyncio.create_task(self._run(project, build))
+        job = asyncio.create_task(self._run(project, build, env))
         self._jobs[build.id] = job
         job.add_done_callback(lambda _: self._jobs.pop(build.id, None))
         return build
 
-    async def _run(self, project: Project, build: ApkBuild) -> None:
+    async def _build_env(self, project: Project, variant: ApkVariant) -> dict[str, str]:
+        """The app's VITE_* secrets plus the backend address: test for debug, production for release.
+
+        Um release vai para a loja e não tem como ser corrigido no aparelho: ele
+        só sai com um backend de produção no ar e em https (a WebView roda em
+        https://localhost e bloqueia http; o debug libera, o release não).
+        """
+        secrets = await secret_values(self.tracker, project.id, SecretScope.APP)
+        if variant != ApkVariant.RELEASE:
+            return {**secrets, **backend_build_env(project, self.deployment, EnvironmentType.TEST)}
+        if not has_backend(project.repo_path):
+            return secrets
+        latest = await self.tracker.get_latest_deployment(
+            project.id, EnvironmentType.PRODUCTION, DeploymentComponent.BACKEND
+        )
+        if latest is None or latest.status != DeploymentStatus.HEALTHY or not latest.url:
+            raise ReleaseBackendError(
+                "Publique o backend em produção antes de gerar o APK de produção: o app "
+                "precisa de um backend no ar para funcionar."
+            )
+        if not latest.url.lower().startswith("https://"):
+            raise ReleaseBackendError(
+                "O backend de produção está em http: o APK de produção só fala com https. "
+                "Configure o domínio do Coolify com https:// (Admin → Configurações) e "
+                "publique o backend de novo."
+            )
+        return {**secrets, API_URL_ENV: latest.url}
+
+    async def _run(self, project: Project, build: ApkBuild, env: Optional[dict[str, str]] = None) -> None:
         # Fora de qualquer requisição: o erro gravado sai no idioma do projeto.
         with use_locale(project_language(project)):
             try:
@@ -79,6 +127,7 @@ class ApkBuildService:
                     app_name=project.name,
                     harness=project.harness,
                     timeout_seconds=self.timeout_seconds,
+                    extra_env=env or None,
                 )
             except Exception as e:  # noqa: BLE001 — o registro não pode ficar BUILDING
                 logger.exception("APK build %s crashed", build.id)
@@ -86,7 +135,9 @@ class ApkBuildService:
 
             path = apk_path(project.repo_path, build.id)
             build.commit_sha = parse_commit(logs)
-            build.logs = (logs or "")[-LOG_TAIL_CHARS:]
+            secrets = [v for k, v in (env or {}).items() if k != API_URL_ENV]
+            # Antes do corte: um valor partido ao meio pela cauda escaparia.
+            build.logs = (redact(logs, secrets) or "")[-LOG_TAIL_CHARS:]
             build.finished_at = datetime.now(timezone.utc)
             if code == 0 and os.path.isfile(path):
                 build.status = ApkBuildStatus.SUCCESS

@@ -272,7 +272,7 @@
       <label for="c-wildcard">{t('coolify.wildcard')}</label>
       <input id="c-wildcard" class="input mono" bind:value={wildcard} placeholder={coolify.suggested_wildcard_domain} />
       <p class="help">
-        {t('coolify.wildcardHelpA')} <span class="mono">{t('coolify.wildcardExample')}.{wildcard || coolify.suggested_wildcard_domain}</span>.
+        {t('coolify.wildcardHelpA')} <span class="mono">{t('coolify.wildcardExample')}.{(wildcard || coolify.suggested_wildcard_domain).replace(/^https?:\/\//i, '')}</span>.
         {@html t('coolify.wildcardHelpB')}
       </p>
     </div>

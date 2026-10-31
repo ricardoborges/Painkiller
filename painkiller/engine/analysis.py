@@ -31,6 +31,8 @@ from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
 from painkiller.core.usage import parse_agent_usage
 from painkiller.core.attachment_reader import extract_attachment_text
+from painkiller.core.backend import BackendError, add_backend, has_backend
+from painkiller.core.secrets import secret_names, secrets_block
 from painkiller.core.i18n import DEFAULT_LOCALE, use_locale
 from painkiller.engine.brainstorming_doc import update_brainstorming_document
 
@@ -85,6 +87,43 @@ PLATFORM_NOTES: dict[ProjectType, tuple[str, str]] = {
         "about them. Device features (camera, files, notifications) come through Capacitor plugins. The "
         "specification and the tasks cover the app's screens, navigation, data, permissions and "
         "integrations.",
+    ),
+}
+
+
+#: Backend do app na análise (pt-BR, en-US), conforme o repositório já tem ou não backend/.
+BACKEND_ANALYSIS_NOTES: dict[bool, tuple[str, str]] = {
+    False: (
+        "Backend: o app pode ganhar um backend em FastAPI (Python) no mesmo repositório, em backend/, "
+        "publicado pelo Painkiller. Proponha-o quando a solução precisar de: chave de serviço pago ou "
+        "secreto (nunca no app: tudo que vai no APK é legível), dados compartilhados entre usuários ou "
+        "aparelhos, autenticação de usuários, ou regra que não pode ficar no aparelho. Não proponha "
+        "backend por hábito: um app que guarda os dados no próprio aparelho não precisa. Explique ao "
+        "analista por que ele é necessário e confirme antes. Com o backend aprovado, acrescente "
+        "\"backend\": true ao objeto de topo do JSON do backlog (ao lado de \"tasks\"): o Painkiller "
+        "cria backend/ antes das tarefas. As tarefas de backend descrevem rotas e testes em backend/; "
+        "o app chama o backend por import.meta.env.VITE_API_URL, e toda rota que gasta uma chave "
+        "exige autenticação ou limite de requisições.",
+        "Backend: the app can get a FastAPI (Python) backend in the same repository, under backend/, "
+        "published by Painkiller. Propose it when the solution needs: a paid or secret service key "
+        "(never in the app: everything in the APK is readable), data shared between users or devices, "
+        "user authentication, or a rule that cannot live on the device. Do not propose a backend out of "
+        "habit: an app that keeps its data on the device does not need one. Explain to the analyst why "
+        "it is needed and confirm first. Once the backend is approved, add \"backend\": true to the "
+        "top-level object of the backlog JSON (next to \"tasks\"): Painkiller creates backend/ before "
+        "the tasks. Backend tasks describe routes and tests in backend/; the app calls the backend "
+        "through import.meta.env.VITE_API_URL, and every route that spends a key requires "
+        "authentication or a rate limit.",
+    ),
+    True: (
+        "Backend: o projeto já tem um backend em backend/ (FastAPI, Python, porta 8000), publicado "
+        "pelo Painkiller. Use-o para chaves secretas, dados compartilhados e autenticação; não proponha "
+        "outro servidor nem outra stack, e não grave \"backend\" no JSON do backlog. Tarefas de backend "
+        "mexem em backend/; o app o chama por import.meta.env.VITE_API_URL.",
+        "Backend: the project already has a backend in backend/ (FastAPI, Python, port 8000), published "
+        "by Painkiller. Use it for secret keys, shared data and authentication; do not propose another "
+        "server or stack, and do not write \"backend\" in the backlog JSON. Backend tasks change "
+        "backend/; the app calls it through import.meta.env.VITE_API_URL.",
     ),
 }
 
@@ -357,6 +396,7 @@ class AnalysisOrchestrator:
             previous_completed_tasks=previous_completed_tasks,
             guided=guided,
             guidelines=await template_guidelines(self.tracker, project.template_id),
+            secrets=await secret_names(self.tracker, project.id),
         )
         try:
             session.container_name = await self.agent.start(
@@ -968,7 +1008,28 @@ class AnalysisOrchestrator:
         except Exception as e:
             logger.warning(f"Erro ao parar agente após commit do backlog ({session_id}): {e}")
 
+        if data.get("backend") is True:
+            await self._add_backend(run)
+
         return created
+
+    async def _add_backend(self, run: AnalysisRun) -> None:
+        """Scaffold ``backend/`` when the analysis decided the app needs one.
+
+        Roda depois de parar o agente, para não trocar de branch debaixo dele.
+        Falhar aqui não desfaz a importação: as tarefas de backend continuam no
+        backlog e o analista pode adicionar o backend pelo painel.
+        """
+        if self.git is None or has_backend(run.repo_path):
+            return
+        try:
+            project = await self.tracker.get_project(run.session.project_id)
+            if project is not None:
+                await add_backend(self.git, self.tracker, project)
+        except BackendError as e:
+            logger.warning(f"Backend não adicionado ao importar {run.session.id}: {e}")
+        except Exception as e:
+            logger.warning(f"Erro ao adicionar o backend ao importar {run.session.id}: {e}")
 
 
 def build_analysis_prompt(
@@ -979,6 +1040,7 @@ def build_analysis_prompt(
     previous_completed_tasks: Optional[list[Task]] = None,
     guided: bool = True,
     guidelines: str = "",
+    secrets: Optional[list] = None,
 ) -> str:
     """Compose the kickoff prompt handed to the containerized agent, in the project's language.
 
@@ -1126,14 +1188,13 @@ def build_analysis_prompt(
           "access to this conversation: the description has to be self-contained."),
         L("   Escreva títulos, descrições e critérios de aceitação em português do Brasil.",
           "   Write titles, descriptions and acceptance criteria in US English."),
-        L("   A aplicação será publicada automaticamente ao fim do backlog; inclua na primeira "
-          "tarefa o esqueleto do projeto pronto para rodar em produção (Dockerfile na raiz ou "
-          "projeto detectável pelo Nixpacks, porta única, configuração por variáveis de ambiente "
-          "com padrões seguros).",
-          "   The application will be published automatically at the end of the backlog; make "
-          "the first task include the project skeleton ready to run in production (a Dockerfile "
-          "at the root or a project Nixpacks can detect, a single port, configuration through "
-          "environment variables with safe defaults)."),
+        # O arcabouço já está no repositório e o Painkiller publica o app (APK e teste):
+        # um Dockerfile na raiz mudaria o que o Coolify constrói.
+        L("   O esqueleto do app já está no repositório e o Painkiller cuida da publicação (APK e "
+          "ambiente de teste): não crie tarefa para recriar o projeto nem Dockerfile na raiz.",
+          "   The app's skeleton is already in the repository and Painkiller handles publishing "
+          "(APK and test environment): do not create a task to recreate the project, nor a "
+          "Dockerfile at the root."),
         L(f"{2 if direct else 3}. Na mensagem final confirmando a gravação do backlog, liste "
           "resumidamente as tarefas e termine OBRIGATORIAMENTE com o bloco de alternativas para "
           "o analista seguir:",
@@ -1156,6 +1217,9 @@ def build_analysis_prompt(
         L("=== PLATAFORMA ===", "=== PLATFORM ==="),
         L(*PLATFORM_NOTES[project_type_of(project)]),
     ]
+    if project_type_of(project) is ProjectType.CAPACITOR_REACT:
+        parts.append(L(*BACKEND_ANALYSIS_NOTES[has_backend(project.repo_path)]))
+        parts.append(secrets_block(secrets or [], english, in_task=False).strip())
     if guidelines:
         parts.append(L("Diretrizes técnicas definidas pelo administrador (siga-as na spec e nas tarefas):",
                        "Technical guidelines set by the administrator (follow them in the spec and the tasks):"))

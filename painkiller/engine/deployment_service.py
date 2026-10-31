@@ -3,8 +3,12 @@
 import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
+from painkiller.core.backend import backend_build_env, has_backend
 from painkiller.core.domain.models import (
+    DeploymentComponent,
     Project,
+    ProjectSecret,
+    SecretScope,
     Task,
     TaskStatus,
     DeploymentRecord,
@@ -16,6 +20,7 @@ from painkiller.core.i18n import project_language, tr
 from painkiller.core.ports.deployment import DeploymentPort
 from painkiller.core.ports.git import GitPort
 from painkiller.core.ports.issue_tracker import IssueTrackerPort
+from painkiller.core.secrets import redact, secret_values
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,10 @@ class BranchUnavailableError(Exception):
 
 class BranchPushError(Exception):
     """The branch to deploy could not be sent to Gitea, so Coolify cannot clone it."""
+
+
+class BackendMissingError(Exception):
+    """A backend deploy was asked for a project without ``backend/``."""
 
 
 class DeploymentNotFailedError(Exception):
@@ -79,11 +88,14 @@ class DeploymentService:
         environment: EnvironmentType,
         task_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        component: DeploymentComponent = DeploymentComponent.APP,
     ) -> DeploymentRecord:
-        """Trigger deployment of test or production environment."""
+        """Trigger deployment of test or production environment of the app or its backend."""
         project = await self.tracker.get_project(project_id)
         if not project:
             raise ValueError(f"Projeto {project_id} não encontrado")
+        if component == DeploymentComponent.BACKEND and not has_backend(project.repo_path):
+            raise BackendMissingError("O projeto não tem backend.")
 
         # Resolução da branch:
         # Para TESTE:
@@ -123,25 +135,68 @@ class DeploymentService:
         if self.prepare is not None:
             await self.prepare()
 
+        extra = {}
+        env_vars = await self._deploy_env(project, environment, component)
+        if env_vars:
+            extra["env_vars"] = env_vars
         record = await self.deployment.deploy_environment(
             project=project,
             environment=environment,
             branch=branch,
             task_id=task_id,
             session_id=session_id,
+            component=component,
+            **extra,
         )
 
         # Salva o registro inicial no banco
         saved = await self.tracker.save_deployment(record)
 
-        # Atualiza a URL do projeto
-        if saved.url:
+        # As URLs do projeto são as do app; as do backend ficam nos registros.
+        if saved.url and component == DeploymentComponent.APP:
             if environment == EnvironmentType.TEST:
                 await self.tracker.update_project_deployment_urls(project_id, test_url=saved.url)
             elif environment == EnvironmentType.PRODUCTION:
                 await self.tracker.update_project_deployment_urls(project_id, production_url=saved.url)
 
         return saved
+
+    async def _deploy_env(
+        self, project: Project, environment: EnvironmentType, component: DeploymentComponent
+    ) -> dict[str, str]:
+        """Variables set on the Coolify application before its build.
+
+        O backend recebe os segredos do servidor; o app web, os VITE_* e o
+        endereço do backend do mesmo ambiente — o build do Vite os embute.
+        """
+        if component == DeploymentComponent.BACKEND:
+            return await secret_values(self.tracker, project.id, SecretScope.SERVER)
+        return {
+            **await secret_values(self.tracker, project.id, SecretScope.APP),
+            **backend_build_env(project, self.deployment, environment),
+        }
+
+    async def _redact(self, record: DeploymentRecord) -> DeploymentRecord:
+        """Hide the project's secret values in a log read back from Coolify."""
+        if record.logs:
+            values = (await secret_values(self.tracker, record.project_id)).values()
+            record.logs = redact(record.logs, values)
+        return record
+
+    async def remove_secret(self, project: Project, secret: ProjectSecret) -> None:
+        """Drop a deleted secret from the Coolify applications it was pushed to.
+
+        Sem isto a variável continuaria no Coolify e voltaria no próximo build.
+        Falhas só são registradas: o segredo já saiu do Painkiller.
+        """
+        component = (
+            DeploymentComponent.BACKEND if secret.scope == SecretScope.SERVER else DeploymentComponent.APP
+        )
+        for environment in (EnvironmentType.TEST, EnvironmentType.PRODUCTION):
+            try:
+                await self.deployment.remove_env(project, environment, component, secret.name)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"{secret.name} não foi removido do Coolify ({environment.value}): {e}")
 
     async def _publish_branch(self, project: Project, branch: str) -> None:
         """Push the branch to Gitea before Coolify clones it.
@@ -178,7 +233,7 @@ class DeploymentService:
         if record.status in (DeploymentStatus.PENDING, DeploymentStatus.BUILDING) or _settling(record):
             # O adapter altera o registro no lugar: compara com uma cópia, ou
             # nada mudaria nunca e o banco ficaria parado.
-            updated = await self.deployment.get_deployment_status(record.model_copy())
+            updated = await self._redact(await self.deployment.get_deployment_status(record.model_copy()))
             if updated.status != record.status or updated.logs != record.logs:
                 record = await self.tracker.save_deployment(updated)
 
@@ -212,13 +267,22 @@ class DeploymentService:
         lang = project_language(project)
         env = tr("teste" if record.environment == EnvironmentType.TEST else "produção", lang)
         tail = (record.logs or "")[-FIX_LOG_TAIL_CHARS:].replace("```", "'''")
-        description = "\n\n".join([
+        parts = [
             tr(
                 "O deploy de {env} da branch {branch} falhou no Coolify. Descubra a causa no "
                 "log abaixo e corrija o código para que a imagem seja construída e a "
                 "aplicação suba.",
                 lang, env=env, branch=record.branch,
             ),
+        ]
+        if record.component == DeploymentComponent.BACKEND:
+            parts.append(tr(
+                "Quem falhou foi o backend: a imagem é construída a partir de backend/Dockerfile, "
+                "com backend/ como contexto.",
+                lang,
+            ))
+        description = "\n\n".join([
+            *parts,
             tr(
                 "Não há Docker no seu ambiente: reproduza localmente os passos do Dockerfile "
                 "que falharam (por exemplo, a instalação de dependências e o build) e só "
@@ -243,37 +307,43 @@ class DeploymentService:
         return await self.tracker.list_project_deployments(project_id, limit=limit)
 
     async def get_project_environment_status(self, project_id: str) -> dict[str, Any]:
-        """Return status and URLs for both test and production environments."""
+        """Return status and URLs of test and production, plus the backend's when it exists."""
         project = await self.tracker.get_project(project_id)
         if not project:
             raise ValueError(f"Projeto {project_id} não encontrado")
 
-        latest_test = await self.tracker.get_latest_deployment(project_id, EnvironmentType.TEST)
-        latest_prod = await self.tracker.get_latest_deployment(project_id, EnvironmentType.PRODUCTION)
-
-        # Atualiza status se estava em building
-        if latest_test and latest_test.status in (DeploymentStatus.PENDING, DeploymentStatus.BUILDING):
-            latest_test = await self.deployment.get_deployment_status(latest_test)
-            await self.tracker.save_deployment(latest_test)
-
-        if latest_prod and latest_prod.status in (DeploymentStatus.PENDING, DeploymentStatus.BUILDING):
-            latest_prod = await self.deployment.get_deployment_status(latest_prod)
-            await self.tracker.save_deployment(latest_prod)
-
-        return {
+        status: dict[str, Any] = {
             "project_id": project_id,
-            "test": {
-                "url": (latest_test.url if latest_test else None) or project.test_url,
-                "status": latest_test.status if latest_test else None,
-                "branch": latest_test.branch if latest_test else None,
-                "updated_at": latest_test.updated_at if latest_test else None,
-                "deployment_id": latest_test.id if latest_test else None,
-            },
-            "production": {
-                "url": (latest_prod.url if latest_prod else None) or project.production_url,
-                "status": latest_prod.status if latest_prod else None,
-                "branch": latest_prod.branch if latest_prod else None,
-                "updated_at": latest_prod.updated_at if latest_prod else None,
-                "deployment_id": latest_prod.id if latest_prod else None,
-            },
+            "test": await self._environment(project_id, EnvironmentType.TEST, project.test_url),
+            "production": await self._environment(
+                project_id, EnvironmentType.PRODUCTION, project.production_url
+            ),
+            "backend": None,
+        }
+        if has_backend(project.repo_path):
+            backend = DeploymentComponent.BACKEND
+            status["backend"] = {
+                "test": await self._environment(project_id, EnvironmentType.TEST, None, backend),
+                "production": await self._environment(project_id, EnvironmentType.PRODUCTION, None, backend),
+            }
+        return status
+
+    async def _environment(
+        self,
+        project_id: str,
+        environment: EnvironmentType,
+        fallback_url: Optional[str],
+        component: DeploymentComponent = DeploymentComponent.APP,
+    ) -> dict[str, Any]:
+        latest = await self.tracker.get_latest_deployment(project_id, environment, component)
+        # Atualiza status se estava em building
+        if latest and latest.status in (DeploymentStatus.PENDING, DeploymentStatus.BUILDING):
+            latest = await self._redact(await self.deployment.get_deployment_status(latest))
+            await self.tracker.save_deployment(latest)
+        return {
+            "url": (latest.url if latest else None) or fallback_url,
+            "status": latest.status if latest else None,
+            "branch": latest.branch if latest else None,
+            "updated_at": latest.updated_at if latest else None,
+            "deployment_id": latest.id if latest else None,
         }

@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from painkiller.api.security import current_user, visible_project
-from painkiller.core.domain.models import User, EnvironmentType, DeploymentRecord
+from painkiller.core.domain.models import DeploymentComponent, DeploymentRecord, EnvironmentType, User
 from painkiller.engine.deployment_service import (
+    BackendMissingError,
     BranchPushError,
     BranchUnavailableError,
     DeploymentNotFailedError,
@@ -19,6 +20,8 @@ class TriggerDeployRequest(BaseModel):
     environment: EnvironmentType
     task_id: Optional[str] = None
     session_id: Optional[str] = None
+    # O app (build web) ou o backend/: cada um é uma aplicação no Coolify.
+    component: DeploymentComponent = DeploymentComponent.APP
 
 
 @router.post("/api/projects/{project_id}/deploy", response_model=DeploymentRecord)
@@ -38,8 +41,11 @@ async def trigger_deploy(
             environment=body.environment,
             task_id=body.task_id,
             session_id=body.session_id,
+            component=body.component,
         )
         return record
+    except BackendMissingError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except BranchUnavailableError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except BranchPushError as e:

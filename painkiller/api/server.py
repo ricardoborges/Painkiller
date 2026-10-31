@@ -43,6 +43,7 @@ from painkiller.api.routes.interrogation import router as interrogation_router
 from painkiller.api.routes.analysis import router as analysis_router
 from painkiller.api.routes.usage import project_router as project_usage_router
 from painkiller.api.routes.usage import router as usage_router
+from painkiller.api.routes.secrets import router as secrets_router
 from painkiller.api.routes.sessions import router as sessions_router
 from painkiller.api.routes.deployments import router as deployments_router
 from painkiller.api.routes.gitea_proxy import router as gitea_proxy_router
@@ -213,13 +214,13 @@ def create_app(
     llm = LiteLLMAdapter(usage=usage)
     agent = DockerAgentSession(image_name=agent_image)
 
+    deployment = deployment_adapter or CoolifyAdapter(vcs=vcs)
     orchestrator = PainkillerOrchestrator(
-        tracker=tracker, sandbox=sandbox, git=git, vcs=vcs, usage=usage
+        tracker=tracker, sandbox=sandbox, git=git, vcs=vcs, usage=usage, deployment=deployment
     )
     wizard = InterrogationWizard(llm=llm, tracker=tracker)
     analysis = AnalysisOrchestrator(agent=agent, tracker=tracker, usage=usage, git=git)
 
-    deployment = deployment_adapter or CoolifyAdapter(vcs=vcs)
     deployment_service = DeploymentService(
         tracker=tracker, deployment=deployment, git=git, prepare=vcs.ensure_deploy_network
     )
@@ -237,7 +238,7 @@ def create_app(
     app.state.usage = usage
     app.state.deployment = deployment
     app.state.deployment_service = deployment_service
-    app.state.apk_builds = ApkBuildService(tracker=tracker, sandbox=sandbox)
+    app.state.apk_builds = ApkBuildService(tracker=tracker, sandbox=sandbox, deployment=deployment)
     # Injetáveis para os testes não dependerem do catálogo do LiteLLM nem da rede.
     app.state.price_lookup = litellm_price
     app.state.balance_lookup = fetch_balances
@@ -265,6 +266,7 @@ def create_app(
     app.include_router(setup_router, dependencies=signed_in)
     app.include_router(preview_router, dependencies=signed_in)
     app.include_router(apk_router, dependencies=signed_in)
+    app.include_router(secrets_router, dependencies=signed_in)
     # A prévia é carregada por um iframe, sem cabeçalhos: a chave na URL a autoriza.
     app.include_router(preview_public_router)
     # O APK do QR code é baixado pelo celular, sem sessão: idem, chave na URL.

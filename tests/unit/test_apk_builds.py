@@ -1,6 +1,9 @@
 """APK builds: scripts, the background service and the routes (docker is faked)."""
 
+import json
 import os
+import shutil
+import subprocess
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -39,6 +42,37 @@ def test_release_script_leaves_the_apk_unsigned_for_the_signing_step(tmp_path):
     assert f"/workspace/.painkiller/apks/apk-2/{UNSIGNED_FILE}" in script
     # A chave nunca entra no contêiner que roda o código do repositório.
     assert "/signing" not in script
+
+
+def test_only_the_debug_script_opens_http_for_the_backend(tmp_path):
+    repo = _capacitor_repo(tmp_path)
+    assert "allowMixedContent" in build_apk_script(repo, "apk-3", "debug", "main")
+    assert "allowMixedContent" not in build_apk_script(repo, "apk-4", "release", "main")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+@pytest.mark.parametrize("backend", [True, False])
+def test_debug_http_lines_patch_the_synced_config(tmp_path, backend):
+    from painkiller.core.apk import _debug_http_lines
+
+    assets = tmp_path / "android" / "app" / "src" / "main" / "assets"
+    assets.mkdir(parents=True)
+    (assets / "capacitor.config.json").write_text('{"appId": "x", "android": {"path": "android"}}')
+    if backend:
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "Dockerfile").write_text("FROM python\n")
+
+    proc = subprocess.run(["sh", "-c", "\n".join(_debug_http_lines())], cwd=tmp_path, capture_output=True, text=True)
+
+    assert proc.returncode == 0, proc.stderr
+    config = json.loads((assets / "capacitor.config.json").read_text())
+    manifest = tmp_path / "android" / "app" / "src" / "debug" / "AndroidManifest.xml"
+    if backend:
+        assert config["android"] == {"path": "android", "allowMixedContent": True}
+        assert 'android:usesCleartextTraffic="true"' in manifest.read_text()
+    else:
+        assert "allowMixedContent" not in config["android"]
+        assert not manifest.exists()
 
 
 def test_native_gradle_repo_builds_at_the_root(tmp_path):
@@ -224,3 +258,97 @@ def test_expired_apk_key_is_refused(monkeypatch):
     assert security.verify_apk_key("p", "b", key)
     assert not security.verify_apk_key("p", "c", key)
     assert not security.verify_apk_key("p", "b", "lixo")
+
+
+# ---- backend: VITE_API_URL e o release ------------------------------------------------
+
+
+def _add_backend(project):
+    folder = os.path.join(project.repo_path, "backend")
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "Dockerfile"), "w") as f:
+        f.write("FROM python:3.13-slim\n")
+
+
+async def _save_backend_deploy(app, project, url, status="HEALTHY"):
+    from painkiller.core.domain.models import (
+        DeploymentComponent,
+        DeploymentRecord,
+        DeploymentStatus,
+        EnvironmentType,
+    )
+
+    await app.state.tracker.save_deployment(DeploymentRecord(
+        id=f"dep-{status}", project_id=project.id, environment=EnvironmentType.PRODUCTION,
+        component=DeploymentComponent.BACKEND, status=DeploymentStatus(status), url=url,
+    ))
+
+
+async def test_debug_apk_gets_the_test_backend_url(env):
+    app, client, project, sandbox = env
+    _add_backend(project)
+    res = await client.post(f"/api/projects/{project.id}/apk-builds", json={}, headers=admin_headers())
+    assert res.status_code == 200
+    await app.state.apk_builds.drain()
+    assert sandbox.calls[0]["extra_env"]["VITE_API_URL"].endswith("-api-test.127.0.0.1.nip.io")
+
+
+async def test_release_without_a_production_backend_is_refused(env):
+    app, client, project, sandbox = env
+    _add_backend(project)
+    url = f"/api/projects/{project.id}/apk-builds"
+
+    res = await client.post(url, json={"variant": "release"}, headers=admin_headers())
+    assert res.status_code == 409
+    assert "Publique o backend" in res.json()["detail"]
+
+    await _save_backend_deploy(app, project, "http://app-api-production.local")
+    res = await client.post(url, json={"variant": "release"}, headers={**admin_headers(), "Accept-Language": "en-US"})
+    assert res.status_code == 409
+    assert res.json()["detail"].startswith("The production backend is on http")
+    assert sandbox.calls == []
+
+
+async def test_release_gets_the_production_backend_url(env):
+    app, client, project, sandbox = env
+    _add_backend(project)
+    await _save_backend_deploy(app, project, "https://app-api-production.example.com")
+
+    res = await client.post(
+        f"/api/projects/{project.id}/apk-builds", json={"variant": "release"}, headers=admin_headers()
+    )
+    assert res.status_code == 200
+    await app.state.apk_builds.drain()
+    assert sandbox.calls[0]["extra_env"] == {"VITE_API_URL": "https://app-api-production.example.com"}
+
+
+async def test_release_without_backend_needs_nothing(env):
+    app, client, project, sandbox = env
+    res = await client.post(
+        f"/api/projects/{project.id}/apk-builds", json={"variant": "release"}, headers=admin_headers()
+    )
+    assert res.status_code == 200
+    await app.state.apk_builds.drain()
+    assert sandbox.calls[0]["extra_env"] is None
+
+
+async def test_apk_build_gets_app_secrets_and_its_log_hides_them(env):
+    from painkiller.core.domain.models import SecretScope
+
+    app, client, project, sandbox = env
+    value = "AIzaMapsPublicKey123"
+    await app.state.tracker.put_secret(project.id, "VITE_MAPS_KEY", SecretScope.APP, value)
+    await app.state.tracker.put_secret(project.id, "OPENAI_API_KEY", SecretScope.SERVER, "sk-never-in-the-app")
+    original = sandbox.build_apk
+
+    async def leaky(**kwargs):
+        code, logs = await original(**kwargs)
+        return code, f"{logs}\nVITE_MAPS_KEY={value}"
+
+    sandbox.build_apk = leaky
+    res = await client.post(f"/api/projects/{project.id}/apk-builds", json={}, headers=admin_headers())
+    await app.state.apk_builds.drain()
+
+    assert sandbox.calls[0]["extra_env"] == {"VITE_MAPS_KEY": value}
+    build = (await client.get(f"/api/projects/{project.id}/apk-builds/{res.json()['id']}", headers=admin_headers())).json()
+    assert value not in (build.get("logs") or "")

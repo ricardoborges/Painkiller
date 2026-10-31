@@ -108,7 +108,7 @@ def _capacitor_repo(tmp_path):
 def _run_capacitor(tmp_path, repo, failing=""):
     """Run the script against fake npm/npx; returns (exit code, recorded calls)."""
     bin_dir = tmp_path / "bin"
-    for tool in ("npm", "npx"):
+    for tool in ("npm", "npx", "python3"):
         _touch(
             bin_dir / tool,
             f'#!/bin/sh\necho {tool} "$@" >> "$CALLS"\n'
@@ -194,6 +194,75 @@ def test_capacitor_non_capacitor_dependency_skips_the_apk(tmp_path):
 
     assert code == 0
     assert not any(c.startswith(("npx cap", "gradlew")) for c in calls)
+
+
+def _with_backend(repo):
+    """Commit a backend/ on main, then come back to the task branch."""
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(git + ["checkout", "-q", "main"], cwd=repo, check=True)
+    _touch(repo / "backend" / "Dockerfile", "FROM python:3.13-slim\n")
+    _touch(repo / "backend" / "requirements.txt", "fastapi\n")
+    _touch(repo / "backend" / "app" / "main.py", "app = None\n")
+    subprocess.run(git + ["add", "-A"], cwd=repo, check=True)
+    subprocess.run(git + ["commit", "-qm", "backend"], cwd=repo, check=True)
+    subprocess.run(git + ["checkout", "-q", "feature/t1"], cwd=repo, check=True)
+    subprocess.run(git + ["merge", "-q", "main"], cwd=repo, check=True)
+
+
+PYTEST = "python3 -m pytest -p no:cacheprovider --rootdir=."
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_capacitor_backend_change_runs_its_pytest_before_skipping_the_apk(tmp_path):
+    repo = _capacitor_repo(tmp_path)
+    _with_backend(repo)
+    _touch(repo / "backend" / "app" / "main.py", "app = 1\n")
+
+    code, calls = _run_capacitor(tmp_path, repo)
+
+    assert code == 0
+    assert calls.index(PYTEST) > calls.index("npm run build")
+    # Os requirements do backend são reinstalados antes: o contêiner do agente morreu.
+    assert calls[calls.index(PYTEST) - 1].startswith("python3 -m pip install")
+    assert not any(c.startswith("gradlew") for c in calls)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_capacitor_app_only_change_skips_the_backend(tmp_path):
+    repo = _capacitor_repo(tmp_path)
+    _with_backend(repo)
+    _touch(repo / "src" / "App.tsx", "export const y = 2\n")
+
+    code, calls = _run_capacitor(tmp_path, repo)
+
+    assert code == 0
+    assert not any(c.startswith("python3") for c in calls)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_capacitor_failing_backend_tests_fail_the_task(tmp_path):
+    repo = _capacitor_repo(tmp_path)
+    _with_backend(repo)
+    _touch(repo / "backend" / "tests" / "test_x.py", "def test_x(): pass\n")
+
+    code, calls = _run_capacitor(tmp_path, repo, failing="python3 -m")
+
+    assert code == 3
+    assert calls[-1] == PYTEST
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_capacitor_backend_change_still_builds_the_apk_when_native_changed(tmp_path):
+    repo = _capacitor_repo(tmp_path)
+    _with_backend(repo)
+    _touch(repo / "backend" / "app" / "main.py", "app = 1\n")
+    _touch(repo / "capacitor.config.ts", "export default { appId: 'x' }\n")
+
+    code, calls = _run_capacitor(tmp_path, repo)
+
+    assert code == 0
+    assert calls.index(PYTEST) < calls.index("npx cap sync android")
+    assert calls[-1].startswith("gradlew")
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")

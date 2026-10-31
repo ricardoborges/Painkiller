@@ -45,7 +45,10 @@ from painkiller.core.domain.models import (
     SessionStatus,
     User,
     UserRole,
+    DeploymentComponent,
     DeploymentRecord,
+    ProjectSecret,
+    SecretScope,
     EnvironmentType,
     DeploymentStatus,
     ApkBuild,
@@ -57,6 +60,7 @@ from painkiller.core.ports.usage_ledger import UsageLedgerPort
 from painkiller.core.ports.user_directory import UserDirectoryPort
 from painkiller.core.ports.platform_settings import PlatformSettingsPort
 from painkiller.adapters.issue_trackers.secret_box import SecretBox
+from painkiller.core.ports.project_secrets import ProjectSecretsPort
 
 Base = declarative_base()
 
@@ -220,6 +224,17 @@ class SettingRecord(Base):
     value = Column(Text, default="{}")
 
 
+class ProjectSecretRow(Base):
+    __tablename__ = "project_secrets"
+
+    project_id = Column(String, primary_key=True)
+    name = Column(String, primary_key=True)
+    scope = Column(String, nullable=False)
+    # Cifrado com a chave da instalação (SecretBox), como os segredos da plataforma.
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class ApkBuildRow(Base):
     __tablename__ = "apk_builds"
 
@@ -244,6 +259,8 @@ class DeploymentRecordRow(Base):
     task_id = Column(String, nullable=True, index=True)
     session_id = Column(String, nullable=True, index=True)
     environment = Column(SQLEnum(EnvironmentType), nullable=False)
+    # NULL nas linhas anteriores à coluna: eram todas do app.
+    component = Column(String, nullable=True)
     branch = Column(String, default="main")
     commit_sha = Column(String, nullable=True)
     status = Column(SQLEnum(DeploymentStatus), default=DeploymentStatus.PENDING)
@@ -294,7 +311,9 @@ def _prices_key(project_id: str) -> str:
     return f"usage:prices:{project_id}"
 
 
-class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, PlatformSettingsPort):
+class SQLiteIssueTracker(
+    IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, PlatformSettingsPort, ProjectSecretsPort
+):
     """Asynchronous SQLite implementation of the tracker, usage ledger and user directory ports."""
 
     def __init__(self, db_url: str = "sqlite+aiosqlite:///painkiller.db"):
@@ -478,6 +497,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
                 await session.execute(delete(TaskRecord).where(TaskRecord.project_id == project_id))
             await session.execute(delete(IterationSessionRecord).where(IterationSessionRecord.project_id == project_id))
             await session.execute(delete(ApkBuildRow).where(ApkBuildRow.project_id == project_id))
+            await session.execute(delete(ProjectSecretRow).where(ProjectSecretRow.project_id == project_id))
             await session.execute(delete(ProjectRecord).where(ProjectRecord.id == project_id))
             await session.execute(
                 delete(SettingRecord).where(
@@ -1149,6 +1169,59 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
         await self._write_setting(PLATFORM_SETTINGS_KEY, sealed.model_dump_json())
         return settings
 
+    # Segredos do projeto
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _to_secret_domain(row: ProjectSecretRow) -> ProjectSecret:
+        return ProjectSecret(name=row.name, scope=SecretScope(row.scope), updated_at=row.updated_at)
+
+    async def list_secrets(self, project_id: str) -> list[ProjectSecret]:
+        async with self.session_factory() as session:
+            res = await session.execute(
+                select(ProjectSecretRow)
+                .where(ProjectSecretRow.project_id == project_id)
+                .order_by(ProjectSecretRow.name)
+            )
+            return [self._to_secret_domain(r) for r in res.scalars().all()]
+
+    async def get_secret_values(
+        self, project_id: str, scope: Optional[SecretScope] = None
+    ) -> dict[str, str]:
+        query = select(ProjectSecretRow).where(ProjectSecretRow.project_id == project_id)
+        if scope is not None:
+            query = query.where(ProjectSecretRow.scope == scope.value)
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).scalars().all()
+        box = await self._secret_box()
+        values = {r.name: box.open(r.value) for r in rows}
+        # Ilegível (a chave da instalação mudou): fica de fora, como campo não configurado.
+        return {name: value for name, value in values.items() if value}
+
+    async def put_secret(self, project_id: str, name: str, scope: SecretScope, value: str) -> ProjectSecret:
+        sealed = (await self._secret_box()).seal(value)
+        now = datetime.now(timezone.utc)
+        async with self.session_factory() as session:
+            row = await session.get(ProjectSecretRow, (project_id, name))
+            if row is None:
+                row = ProjectSecretRow(project_id=project_id, name=name)
+                session.add(row)
+            row.scope = scope.value
+            row.value = sealed
+            row.updated_at = now
+            await session.commit()
+            return ProjectSecret(name=name, scope=scope, updated_at=now)
+
+    async def delete_secret(self, project_id: str, name: str) -> Optional[ProjectSecret]:
+        async with self.session_factory() as session:
+            row = await session.get(ProjectSecretRow, (project_id, name))
+            if row is None:
+                return None
+            removed = self._to_secret_domain(row)
+            await session.delete(row)
+            await session.commit()
+            return removed
+
     async def get_project_budget(self, project_id: str) -> Optional[float]:
         value = await self._read_setting(_budget_key(project_id))
         if value is None:
@@ -1375,6 +1448,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             task_id=record.task_id or None,
             session_id=record.session_id or None,
             environment=record.environment,
+            component=record.component or DeploymentComponent.APP,
             branch=record.branch or "main",
             commit_sha=record.commit_sha or None,
             status=record.status,
@@ -1414,6 +1488,7 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
                     task_id=deployment.task_id,
                     session_id=deployment.session_id,
                     environment=deployment.environment,
+                    component=deployment.component.value,
                     branch=deployment.branch,
                     commit_sha=deployment.commit_sha,
                     status=deployment.status,
@@ -1455,14 +1530,21 @@ class SQLiteIssueTracker(IssueTrackerPort, UsageLedgerPort, UserDirectoryPort, P
             return [self._to_deployment_domain(r) for r in records]
 
     async def get_latest_deployment(
-        self, project_id: str, environment: EnvironmentType
+        self,
+        project_id: str,
+        environment: EnvironmentType,
+        component: DeploymentComponent = DeploymentComponent.APP,
     ) -> Optional[DeploymentRecord]:
+        same_component = DeploymentRecordRow.component == component.value
+        if component == DeploymentComponent.APP:
+            same_component = or_(same_component, DeploymentRecordRow.component.is_(None))
         async with self.session_factory() as session:
             res = await session.execute(
                 select(DeploymentRecordRow)
                 .where(
                     DeploymentRecordRow.project_id == project_id,
                     DeploymentRecordRow.environment == environment,
+                    same_component,
                 )
                 .order_by(DeploymentRecordRow.created_at.desc())
                 .limit(1)

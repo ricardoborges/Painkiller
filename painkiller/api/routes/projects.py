@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from painkiller.api.routes.auth import ensure_gitea_account
 from painkiller.api.security import current_user, require_project, visible_project
 from painkiller.core.attachment_reader import extract_attachment_text
+from painkiller.core.backend import BackendError, add_backend, has_backend
 from painkiller.core.domain.models import (
     EFFORT_HARNESSES,
     EFFORT_LEVELS,
@@ -105,6 +106,7 @@ def _format_project(p) -> dict:
     data.pop("api_key", None)
     data["has_api_key"] = bool(p.api_key)
     data["masked_api_key"] = p.masked_api_key
+    data["has_backend"] = has_backend(p.repo_path)
     return data
 
 
@@ -284,6 +286,20 @@ async def delete_project(project_id: str, request: Request):
         # Docker bloqueante: fora do loop, e falha não impede a exclusão.
         await asyncio.get_running_loop().run_in_executor(None, remove_cache, project_id)
     return {"status": "deleted", "project_id": project_id}
+
+
+@router.post("/{project_id}/backend", dependencies=[Depends(require_project)])
+async def create_backend(project_id: str, request: Request):
+    """Add the FastAPI backend scaffold under ``backend/`` on the default branch."""
+    tracker = request.app.state.tracker
+    project = await tracker.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto não encontrado")
+    try:
+        await add_backend(request.app.state.git, tracker, project)
+    except BackendError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _format_project(project)
 
 
 @router.post("/{project_id}/issues/sync", dependencies=[Depends(require_project)])

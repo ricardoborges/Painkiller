@@ -147,6 +147,8 @@ export interface Project {
   template_id?: string;
   has_api_key?: boolean;
   masked_api_key?: string | null;
+  /** O repositório tem backend/ (FastAPI) ao lado do app. */
+  has_backend?: boolean;
   created_at: string;
 }
 
@@ -537,12 +539,26 @@ export interface ApkLink {
   local: boolean;
 }
 
+/** Para onde vai um segredo do projeto: o build do app (VITE_*) ou só o backend. */
+export type SecretScope = 'app' | 'server';
+
+/** Segredo como a API o mostra: nunca o valor. */
+export interface ProjectSecret {
+  name: string;
+  scope: SecretScope;
+  updated_at: string;
+}
+
+/** O que o deploy publica: o build web do app ou o backend/ (cada um é uma aplicação no Coolify). */
+export type DeploymentComponent = 'app' | 'backend';
+
 export interface DeploymentRecord {
   id: string;
   project_id: string;
   task_id?: string | null;
   session_id?: string | null;
   environment: EnvironmentType;
+  component?: DeploymentComponent;
   branch: string;
   commit_sha?: string | null;
   status: DeploymentStatus;
@@ -554,22 +570,20 @@ export interface DeploymentRecord {
   updated_at: string;
 }
 
+export interface EnvironmentStatus {
+  url: string | null;
+  status: DeploymentStatus | null;
+  branch: string | null;
+  updated_at: string | null;
+  deployment_id: string | null;
+}
+
 export interface EnvironmentStatusResponse {
   project_id: string;
-  test: {
-    url: string | null;
-    status: DeploymentStatus | null;
-    branch: string | null;
-    updated_at: string | null;
-    deployment_id: string | null;
-  };
-  production: {
-    url: string | null;
-    status: DeploymentStatus | null;
-    branch: string | null;
-    updated_at: string | null;
-    deployment_id: string | null;
-  };
+  test: EnvironmentStatus;
+  production: EnvironmentStatus;
+  /** Só quando o projeto tem backend/. */
+  backend?: { test: EnvironmentStatus; production: EnvironmentStatus } | null;
 }
 
 

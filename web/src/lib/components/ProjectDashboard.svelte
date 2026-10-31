@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { api, authedUrl } from '$lib/api';
   import type {
+    DeploymentComponent,
     DeploymentRecord,
     DeploymentStatus,
     EnvironmentStatusResponse,
@@ -13,6 +14,7 @@
     Task,
     UsageSummary
   } from '$lib/types';
+  import { DEFAULT_TEMPLATE_ID } from '$lib/types';
   import Icon from '$lib/components/Icon.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
   import ApkSection from '$lib/components/ApkSection.svelte';
@@ -26,6 +28,24 @@
   let { project }: { project: Project } = $props();
 
   const base = $derived(`/projects/${project.id}`);
+
+  // O projeto vem do layout; depois de adicionar, vale a resposta da API.
+  let backendAdded = $state(false);
+  let addingBackend = $state(false);
+  let backendError = $state<string | null>(null);
+  const hasBackend = $derived(!!project.has_backend || backendAdded);
+
+  async function addBackend() {
+    addingBackend = true;
+    backendError = null;
+    try {
+      backendAdded = !!(await api.addBackend(project.id)).has_backend;
+    } catch (e) {
+      backendError = e instanceof Error ? e.message : String(e);
+    } finally {
+      addingBackend = false;
+    }
+  }
   const sessionStore = $derived(getProjectSessionStore(project.id));
 
   let usage = $state<UsageSummary | null>(null);
@@ -50,11 +70,12 @@
       if (project.id !== id) return;
       usage = u;
       env = e;
-      deployments = d.filter((r) => r.environment === 'test');
+      // Produção do app não existe nesta edição; a do backend, sim.
+      deployments = d.filter((r) => r.environment === 'test' || r.component === 'backend');
       tasks = t;
       ready = true;
       // Um deploy disparado antes de um F5 (ou no backlog) continua sendo acompanhado.
-      for (const s of [e?.test, e?.production]) {
+      for (const s of [e?.test, e?.production, e?.backend?.test, e?.backend?.production]) {
         if (s?.deployment_id && (s.status === 'PENDING' || s.status === 'BUILDING')) {
           deploys.resume(s.deployment_id);
         }
@@ -108,32 +129,54 @@
   });
 
   /* O status do Coolify manda; sem registro de deploy, vale a URL fixa do projeto. */
-  // Só o ambiente de teste: a entrega de produção é o APK release (ver ApkSection).
+  // Do app, só o teste: a entrega de produção é o APK release (ver ApkSection).
+  // O backend tem teste e produção — o APK release fala com o de produção.
   const environments = $derived([
     {
       key: 'test' as EnvironmentType,
+      component: 'app' as DeploymentComponent,
       label: t('dashboard.test'),
       url: env?.test.url ?? project.test_url ?? null,
       status: env?.test.status ?? null,
       branch: env?.test.branch ?? null,
       updated: env?.test.updated_at ?? null
-    }
+    },
+    ...(hasBackend
+      ? (['test', 'production'] as EnvironmentType[]).map((key) => ({
+          key,
+          component: 'backend' as DeploymentComponent,
+          label: t(key === 'test' ? 'dashboard.backendTest' : 'dashboard.backendProduction'),
+          url: env?.backend?.[key].url ?? null,
+          status: env?.backend?.[key].status ?? null,
+          branch: env?.backend?.[key].branch ?? null,
+          updated: env?.backend?.[key].updated_at ?? null
+        }))
+      : [])
   ]);
+
+  const envId = (e: { key: EnvironmentType; component: DeploymentComponent }) => `${e.component}-${e.key}`;
 
   /* ---- publicar ---- */
 
-  let triggering = $state<EnvironmentType | null>(null);
+  /** `${component}-${ambiente}` sendo disparado. */
+  let triggering = $state<string | null>(null);
 
   let deployError = $state<string | null>(null);
 
   /* Teste: o backend escolhe a branch da última tarefa concluída da sessão aberta
      (ou a branch padrão). Produção: sempre a branch padrão, com confirmação. */
-  async function deploy(environment: EnvironmentType) {
-    if (deploys.active(project.id, environment)) return;
-    triggering = environment;
+  async function deploy(environment: EnvironmentType, component: DeploymentComponent = 'app') {
+    if (deploys.active(project.id, environment, component)) return;
+    triggering = `${component}-${environment}`;
     deployError = null;
     try {
-      const record = await api.triggerDeploy(project.id, environment, undefined, openSession?.id);
+      const record = await api.triggerDeploy(
+        project.id,
+        environment,
+        undefined,
+        openSession?.id,
+        component
+      );
       deploys.track(record);
       env = await api.getEnvironmentStatus(project.id).catch(() => env);
     } catch (e) {
@@ -266,17 +309,17 @@
 
       <!-- Ambientes publicados -->
       <section class="panel rise" style="--i: 1">
-        <h2 class="label">{t('dashboard.testEnvironment')}</h2>
+        <h2 class="label">{hasBackend ? t('dashboard.environments') : t('dashboard.testEnvironment')}</h2>
         {#if !ready}
           <Skeleton rows={2} />
         {:else}
           <ul class="envs">
-            {#each environments as e (e.key)}
-              {@const running = deploys.active(project.id, e.key)}
+            {#each environments as e (envId(e))}
+              {@const running = deploys.active(project.id, e.key, e.component)}
               <li class="env env-{e.key}" class:hatch={e.status === 'FAILED'} class:empty={!e.url}>
                 <div class="env-head">
                   <span class="env-ico">
-                    <Icon name="flask" size={16} />
+                    <Icon name={e.component === 'backend' ? 'globe' : 'flask'} size={16} />
                   </span>
                   <span class="env-name label">{e.label}</span>
                   {#if e.status}
@@ -286,7 +329,12 @@
                     </span>
                   {/if}
                 </div>
-                {#if e.url}
+                {#if e.url && e.component === 'backend'}
+                  <a class="env-url mono truncate" href={e.url} target="_blank" rel="noopener noreferrer" title={e.url}>
+                    {host(e.url)}
+                  </a>
+                {/if}
+                {#if e.url && e.component === 'app'}
                   <button
                     type="button"
                     class="env-url mono truncate"
@@ -306,20 +354,33 @@
                   <button
                     type="button"
                     class="btn btn-line btn-sm"
-                    onclick={() => deploy(e.key)}
+                    onclick={() => deploy(e.key, e.component)}
                     disabled={!!running || triggering !== null}
-                    title={t('dashboard.deployTestTitle', { branch: project.default_branch })}
+                    title={e.key === 'production'
+                      ? t('dashboard.deployBackendTitle', { branch: project.default_branch })
+                      : t('dashboard.deployTestTitle', { branch: project.default_branch })}
                   >
                     {#if running}
                       {t('dashboard.deploy.BUILDING')} <span class="mono tabular">{deploys.elapsed(running)}</span>
-                    {:else if triggering === e.key}
+                    {:else if triggering === envId(e)}
                       {t('dashboard.deploying')}
                     {:else}
                       <Icon name="upload" size={10} />
-                      {t('dashboard.deployTest')}
+                      {e.key === 'production' ? t('dashboard.deployBackendProduction') : t('dashboard.deployTest')}
                     {/if}
                   </button>
-                  {#if e.url}
+                  {#if e.url && e.component === 'backend'}
+                    <a
+                      class="btn btn-line btn-sm"
+                      href={e.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={t('dashboard.openBackendTitle')}
+                    >
+                      <Icon name="external" size={10} /> {t('common.open')}
+                    </a>
+                  {/if}
+                  {#if e.url && e.component === 'app'}
                     <button
                       type="button"
                       class="btn btn-line btn-sm"
@@ -344,7 +405,13 @@
             {#each deployments as d (d.id)}
               <li class="deploy" class:hatch={d.status === 'FAILED'}>
                 <span class="mono faint">{when(d.created_at)}</span>
-                <span class="label">{d.environment === 'production' ? t('deploys.env.production') : t('dashboard.test')}</span>
+                <span class="label">
+                  {#if d.component === 'backend'}
+                    {d.environment === 'production' ? t('dashboard.backendProduction') : t('dashboard.backendTest')}
+                  {:else}
+                    {d.environment === 'production' ? t('deploys.env.production') : t('dashboard.test')}
+                  {/if}
+                </span>
                 <span class="mono truncate branch" title={d.branch}>{d.branch}</span>
                 <span class="mono" class:live={d.status === 'HEALTHY'}>{DEPLOY_LABEL[d.status]}</span>
               </li>
@@ -453,8 +520,26 @@
         {/if}
       </section>
 
+      <!-- Backend do app -->
+      {#if project.template_id === DEFAULT_TEMPLATE_ID}
+        <section class="panel rise" style="--i: 4">
+          <h2 class="label">{t('dashboard.backend')}</h2>
+          {#if hasBackend}
+            <p class="faint small">{t('dashboard.backendPresent')}</p>
+          {:else}
+            <p class="faint small">{t('dashboard.backendNone')}</p>
+            <button type="button" class="btn btn-line btn-sm" onclick={addBackend} disabled={addingBackend}>
+              {addingBackend ? t('dashboard.backendAdding') : t('dashboard.backendAdd')}
+            </button>
+            {#if backendError}
+              <p class="err" role="alert">{backendError}</p>
+            {/if}
+          {/if}
+        </section>
+      {/if}
+
       <!-- Repositório -->
-      <section class="panel rise" style="--i: 4">
+      <section class="panel rise" style="--i: 5">
         <h2 class="label">{t('projectNav.repository')}</h2>
         <a
           class="btn btn-line btn-sm download"

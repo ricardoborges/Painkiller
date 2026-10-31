@@ -1,6 +1,6 @@
 import { t } from '$lib/i18n/index.svelte';
 import { api } from '$lib/api';
-import type { DeploymentRecord, DeploymentStatus, EnvironmentType } from '$lib/types';
+import type { DeploymentComponent, DeploymentRecord, DeploymentStatus, EnvironmentType } from '$lib/types';
 import { toast } from '$lib/stores/toast.svelte';
 import { testDevice } from '$lib/stores/testDevice.svelte';
 
@@ -41,8 +41,15 @@ export function deployStage(status: DeploymentStatus): string {
   return t(STAGE_KEYS[status]);
 }
 
-function envLabel(env: EnvironmentType): string {
-  return env === 'test' ? t('deploys.env.test') : t('deploys.env.production');
+function isBackend(r: DeploymentRecord): boolean {
+  return r.component === 'backend';
+}
+
+function envLabel(r: DeploymentRecord): string {
+  if (isBackend(r)) {
+    return r.environment === 'test' ? t('deploys.env.backendTest') : t('deploys.env.backendProduction');
+  }
+  return r.environment === 'test' ? t('deploys.env.test') : t('deploys.env.production');
 }
 
 /** O SQLite devolve datas sem fuso; o backend grava em UTC. */
@@ -80,18 +87,27 @@ class DeployTracker {
   private finishedAt = new Map<string, number>();
   private clock: ReturnType<typeof setInterval> | null = null;
 
-  /** Deploy mais recente acompanhado de um projeto (e ambiente, se dado). */
-  latest(projectId: string, env?: EnvironmentType): DeploymentRecord | null {
+  /** Deploy mais recente acompanhado de um projeto (e ambiente, se dado), do app ou do backend. */
+  latest(
+    projectId: string,
+    env?: EnvironmentType,
+    component: DeploymentComponent = 'app'
+  ): DeploymentRecord | null {
     let best: DeploymentRecord | null = null;
     for (const r of Object.values(this.records)) {
       if (r.project_id !== projectId || (env && r.environment !== env)) continue;
+      if ((r.component ?? 'app') !== component) continue;
       if (!best || this.started(r) > this.started(best)) best = r;
     }
     return best;
   }
 
-  active(projectId: string, env?: EnvironmentType): DeploymentRecord | null {
-    const r = this.latest(projectId, env);
+  active(
+    projectId: string,
+    env?: EnvironmentType,
+    component: DeploymentComponent = 'app'
+  ): DeploymentRecord | null {
+    const r = this.latest(projectId, env, component);
     return isDeployActive(r) ? r : null;
   }
 
@@ -171,7 +187,7 @@ class DeployTracker {
         if (this.now - this.started(current) > GIVE_UP_MS) {
           toast.show({
             tone: 'failed',
-            title: t('deploys.noResponse', { env: envLabel(current.environment) }),
+            title: t('deploys.noResponse', { env: envLabel(current) }),
             detail: t('deploys.noResponseDetail'),
             duration: 12000
           });
@@ -223,9 +239,17 @@ class DeployTracker {
   private finish(r: DeploymentRecord) {
     this.finishedAt.set(r.id, Date.now());
     this.settled++;
-    const env = envLabel(r.environment);
+    const env = envLabel(r);
     const took = this.elapsed(r);
-    if (r.status === 'HEALTHY') {
+    if (r.status === 'HEALTHY' && isBackend(r)) {
+      // O backend é uma API: nada a abrir no celular simulado.
+      toast.show({
+        tone: 'done',
+        title: t('deploys.testReady', { env }),
+        detail: `${t('deploys.branch', { branch: r.branch })} · ${took}`,
+        duration: 9000
+      });
+    } else if (r.status === 'HEALTHY') {
       toast.show({
         tone: 'done',
         title: r.environment === 'test' ? t('deploys.testReady', { env }) : t('deploys.productionDone'),

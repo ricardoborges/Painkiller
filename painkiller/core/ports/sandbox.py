@@ -40,13 +40,15 @@ class SandboxPort(ABC):
         harness: Optional[Any] = None,
         timeout_seconds: int = 900,
         base_branch: str = "main",
+        extra_env: Optional[dict[str, str]] = None,
     ) -> tuple[int, str]:
         """Run the target repo's test suite in an isolated worker; return (exit code, output).
 
         Exit code 5 means no tests were collected. The suite is code the agent
         wrote, so it must never run in the caller's own process. ``base_branch``
         is what the task's changes are compared against, for checks that only
-        run when certain files changed.
+        run when certain files changed. ``extra_env`` reaches the build (e.g. the
+        backend's ``VITE_API_URL``).
         """
         pass
 
@@ -61,6 +63,7 @@ class SandboxPort(ABC):
         app_name: str,
         harness: Optional[Any] = None,
         timeout_seconds: int = 2400,
+        extra_env: Optional[dict[str, str]] = None,
     ) -> tuple[int, str]:
         """Build the APK of ``branch`` into ``core.apk.apk_path``; return (exit code, output).
 

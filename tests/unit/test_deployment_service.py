@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock
 from painkiller.core.domain.models import (
+    DeploymentComponent,
     Project,
     Task,
     TaskStatus,
@@ -53,6 +54,7 @@ async def test_deployment_service_test_branch_resolution():
         branch="feature/task-10",
         task_id="task-10",
         session_id=None,
+        component=DeploymentComponent.APP,
     )
     mock_tracker.update_project_deployment_urls.assert_called_once_with("proj-1", test_url="http://app-test.local")
 
@@ -170,6 +172,7 @@ async def test_deployment_service_production_always_uses_main():
         branch="main",
         task_id="task-ignored",
         session_id=None,
+        component=DeploymentComponent.APP,
     )
     mock_tracker.update_project_deployment_urls.assert_called_once_with("proj-1", production_url="http://app-prod.local")
 
