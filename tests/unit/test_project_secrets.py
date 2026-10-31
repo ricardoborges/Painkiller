@@ -254,6 +254,8 @@ async def test_coolify_receives_the_variables_before_the_build(tmp_path):
         MagicMock(is_success=True, json=lambda: [{"name": "painkiller-p1", "uuid": "pu"}]),
         MagicMock(is_success=True, json=lambda: [{"name": "test"}]),
         MagicMock(is_success=True, json=lambda: [{"name": "app-api-test", "uuid": "app-uuid"}]),
+        # O volume já existe: nada a criar.
+        MagicMock(is_success=True, json=lambda: {"persistent_storages": [{"mount_path": "/data"}]}),
     ]
     patches = [MagicMock(is_success=True), MagicMock(is_success=False, status_code=422, text="bad")]
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as get, \
@@ -269,7 +271,7 @@ async def test_coolify_receives_the_variables_before_the_build(tmp_path):
     envs_call = patch_.call_args_list[1]
     assert envs_call.args[0].endswith("/applications/app-uuid/envs/bulk")
     assert envs_call.kwargs["json"]["data"] == [
-        {"key": "OPENAI_API_KEY", "value": SERVER_KEY, "is_preview": False, "is_literal": True}
+        {"key": "OPENAI_API_KEY", "value": SERVER_KEY, "is_preview": False, "is_literal": True, "is_shown_once": True}
     ]
     # Sem as variáveis o backend subiria quebrado: o deploy nem é disparado.
     post.assert_not_called()

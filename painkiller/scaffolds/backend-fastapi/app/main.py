@@ -11,6 +11,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.db import init_db
 from app.rate_limit import RateLimitMiddleware
 
 
@@ -20,6 +21,7 @@ def _cors_origins() -> list[str]:
 
 
 def create_app() -> FastAPI:
+    init_db()
     app = FastAPI(title="Backend")
     # A prévia do app roda numa origem opaca ("null") e o APK em
     # https://localhost: em produção, restrinja a essas origens.

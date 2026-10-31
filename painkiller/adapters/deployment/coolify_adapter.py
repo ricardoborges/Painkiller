@@ -84,6 +84,10 @@ def split_wildcard(domain: str) -> tuple[str, str]:
     return scheme, value.strip("/").strip(".")
 
 
+#: Onde o backend guarda o SQLite (DATA_DIR do arcabouço): o volume persistente.
+BACKEND_DATA_MOUNT = "/data"
+
+
 class CoolifyAdapter(DeploymentPort):
     """Integrates with Coolify v4 REST API to provision and deploy test and production environments."""
 
@@ -506,6 +510,26 @@ class CoolifyAdapter(DeploymentPort):
                             updated_at=now,
                         )
 
+                # O banco do backend vive no volume: sem ele, cada deploy apagaria os dados.
+                if component == DeploymentComponent.BACKEND:
+                    error = await self._ensure_data_volume(client, app_uuid, app_name)
+                    if error:
+                        return DeploymentRecord(
+                            id=deployment_id,
+                            project_id=project.id,
+                            task_id=task_id,
+                            session_id=session_id,
+                            environment=environment,
+                            component=component,
+                            branch=branch,
+                            status=DeploymentStatus.FAILED,
+                            coolify_app_uuid=app_uuid,
+                            url=fqdn,
+                            logs=f"Falha ao criar o volume de dados do backend no Coolify: {error}",
+                            created_at=now,
+                            updated_at=now,
+                        )
+
                 # Segredos do backend: gravados antes do build, ou a aplicação sobe sem eles.
                 if env_vars:
                     error = await self._push_envs(client, app_uuid, env_vars)
@@ -595,8 +619,9 @@ class CoolifyAdapter(DeploymentPort):
     async def _push_envs(self, client: httpx.AsyncClient, app_uuid: str, env_vars: dict[str, str]) -> Optional[str]:
         """Upsert the variables in the application; the error text, or None."""
         # is_literal: o Coolify não interpola $ dentro do valor (chaves de API têm de tudo).
+        # is_shown_once: o valor some da interface e da API do Coolify depois de gravado.
         data = [
-            {"key": key, "value": value, "is_preview": False, "is_literal": True}
+            {"key": key, "value": value, "is_preview": False, "is_literal": True, "is_shown_once": True}
             for key, value in sorted(env_vars.items())
         ]
         resp = await client.patch(
@@ -608,6 +633,26 @@ class CoolifyAdapter(DeploymentPort):
             return None
         # Nunca o corpo do pedido: ele tem os valores.
         return f"{resp.status_code} {resp.text[:500]}"
+
+    async def _ensure_data_volume(self, client: httpx.AsyncClient, app_uuid: str, app_name: str) -> Optional[str]:
+        """Make sure the backend has its persistent volume at /data; the error text, or None.
+
+        Um volume por aplicação, logo por ambiente: teste e produção nunca
+        dividem dados. Excluir o projeto não o apaga (como a chave de assinatura).
+        """
+        resp = await client.get(f"{self.api_url}/api/v1/applications/{app_uuid}/storages", headers=self._headers())
+        if not resp.is_success:
+            return f"{resp.status_code} {resp.text[:500]}"
+        body = resp.json()
+        storages = body.get("persistent_storages", []) if isinstance(body, dict) else []
+        if any(s.get("mount_path") == BACKEND_DATA_MOUNT for s in storages):
+            return None
+        created = await client.post(
+            f"{self.api_url}/api/v1/applications/{app_uuid}/storages",
+            headers=self._headers(),
+            json={"type": "persistent", "name": f"{app_name}-data", "mount_path": BACKEND_DATA_MOUNT},
+        )
+        return None if created.is_success else f"{created.status_code} {created.text[:500]}"
 
     async def remove_env(
         self,

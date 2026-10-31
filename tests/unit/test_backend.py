@@ -213,9 +213,12 @@ async def test_backend_deploy_creates_its_own_dockerfile_app(tmp_path):
         MagicMock(is_success=True, json=lambda: [{"name": "test"}]),
         # O app web já existe: o backend não pode reaproveitá-lo.
         MagicMock(is_success=True, json=lambda: [{"name": "app-test", "uuid": "web-uuid", "fqdn": "http://app-test.coolify.local"}]),
+        # Aplicação nova: ainda sem volume.
+        MagicMock(is_success=True, json=lambda: {"persistent_storages": [], "file_storages": []}),
     ]
     posts = [
         MagicMock(is_success=True, json=lambda: {"uuid": "api-uuid"}),
+        MagicMock(is_success=True, json=lambda: {"uuid": "storage-1"}),
         MagicMock(is_success=True, json=lambda: {"deployment_uuid": "d-1"}),
     ]
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as get, \
@@ -232,6 +235,11 @@ async def test_backend_deploy_creates_its_own_dockerfile_app(tmp_path):
     assert payload["build_pack"] == "dockerfile"
     assert payload["base_directory"] == "/backend"
     assert payload["ports_exposes"] == "8000"
+    storage = post.call_args_list[1]
+    assert storage.args[0].endswith("/applications/api-uuid/storages")
+    assert storage.kwargs["json"]["type"] == "persistent"
+    assert storage.kwargs["json"]["mount_path"] == "/data"
+    assert storage.kwargs["json"]["name"].endswith("-api-test-data")
     assert record.component == DeploymentComponent.BACKEND
     assert record.coolify_app_uuid == "api-uuid"
     assert record.url.endswith("-api-test.coolify.local")
@@ -386,3 +394,46 @@ def test_native_analysis_prompt_has_no_backend(tmp_path):
 
     prompt = build_analysis_prompt(_project(tmp_path, template_id=LEGACY_TEMPLATE_ID))
     assert '"backend": true' not in prompt
+
+
+async def test_backend_deploy_fails_without_its_data_volume(tmp_path):
+    from unittest.mock import MagicMock, patch
+
+    from painkiller.core.domain.models import DeploymentComponent, DeploymentStatus, EnvironmentType
+
+    project = _project(_repo_with_backend(tmp_path))
+    gets = [
+        MagicMock(is_success=True, json=lambda: [{"name": "painkiller-proj-1", "uuid": "p-uuid"}]),
+        MagicMock(is_success=True, json=lambda: [{"name": "production"}]),
+        MagicMock(is_success=True, json=lambda: []),
+        MagicMock(is_success=True, json=lambda: {"persistent_storages": []}),
+    ]
+    posts = [
+        MagicMock(is_success=True, json=lambda: {"uuid": "api-uuid"}),
+        MagicMock(is_success=False, status_code=422, text="name taken"),
+    ]
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as post:
+        get.side_effect = gets
+        post.side_effect = posts
+        record = await _coolify().deploy_environment(
+            project=project, environment=EnvironmentType.PRODUCTION, branch="main",
+            component=DeploymentComponent.BACKEND,
+        )
+
+    # Sem volume, o deploy apagaria os dados na próxima publicação: nem é disparado.
+    assert post.call_count == 2
+    assert record.status == DeploymentStatus.FAILED
+    assert "volume de dados" in record.logs
+
+
+def test_task_prompt_explains_where_backend_data_lives(tmp_path):
+    from painkiller.engine.orchestrator import PainkillerOrchestrator
+
+    _repo_with_backend(tmp_path)
+    orchestrator = PainkillerOrchestrator(tracker=AsyncMock(), sandbox=AsyncMock(), git=AsyncMock())
+    instructions = orchestrator._build_task_instructions(
+        Task(id="t1", project_id="proj-1", title="Notas", description="d"), _project(tmp_path)
+    )
+    assert "backend/app/db.py" in instructions and "/data" in instructions
+    assert "ALTER TABLE ... ADD COLUMN" in instructions

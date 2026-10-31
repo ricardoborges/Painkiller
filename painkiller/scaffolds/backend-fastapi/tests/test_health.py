@@ -22,3 +22,15 @@ def test_rate_limit_blocks_after_the_limit(monkeypatch):
     assert client.get("/ping").status_code == 429
     # O health check do deploy nunca é limitado.
     assert client.get("/health").status_code == 200
+
+
+def test_database_lives_in_data_dir(data_dir):
+    from app.db import connect, init_db
+
+    init_db()
+    with connect() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)")
+        conn.execute("INSERT INTO notes (body) VALUES (?)", ("oi",))
+    with connect() as conn:
+        assert conn.execute("SELECT body FROM notes").fetchone()["body"] == "oi"
+    assert (data_dir / "app.db").exists()

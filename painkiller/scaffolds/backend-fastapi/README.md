@@ -10,3 +10,6 @@ pytest
 ```
 
 Segredos chegam como variáveis de ambiente; veja `.env.example`.
+
+Dados persistem só em `DATA_DIR` (SQLite em `app/db.py`); no deploy é `/data`,
+um volume que sobrevive às publicações. Mudanças de esquema são sempre aditivas.

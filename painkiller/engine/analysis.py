@@ -101,7 +101,8 @@ BACKEND_ANALYSIS_NOTES: dict[bool, tuple[str, str]] = {
         "backend por hábito: um app que guarda os dados no próprio aparelho não precisa. Explique ao "
         "analista por que ele é necessário e confirme antes. Com o backend aprovado, acrescente "
         "\"backend\": true ao objeto de topo do JSON do backlog (ao lado de \"tasks\"): o Painkiller "
-        "cria backend/ antes das tarefas. As tarefas de backend descrevem rotas e testes em backend/; "
+        "cria backend/ antes das tarefas. Os dados do backend ficam num SQLite persistente (sem outro "
+        "banco). As tarefas de backend descrevem rotas e testes em backend/; "
         "o app chama o backend por import.meta.env.VITE_API_URL, e toda rota que gasta uma chave "
         "exige autenticação ou limite de requisições.",
         "Backend: the app can get a FastAPI (Python) backend in the same repository, under backend/, "
@@ -111,17 +112,18 @@ BACKEND_ANALYSIS_NOTES: dict[bool, tuple[str, str]] = {
         "habit: an app that keeps its data on the device does not need one. Explain to the analyst why "
         "it is needed and confirm first. Once the backend is approved, add \"backend\": true to the "
         "top-level object of the backlog JSON (next to \"tasks\"): Painkiller creates backend/ before "
-        "the tasks. Backend tasks describe routes and tests in backend/; the app calls the backend "
+        "the tasks. The backend's data lives in a persistent SQLite (no other database). Backend tasks "
+        "describe routes and tests in backend/; the app calls the backend "
         "through import.meta.env.VITE_API_URL, and every route that spends a key requires "
         "authentication or a rate limit.",
     ),
     True: (
-        "Backend: o projeto já tem um backend em backend/ (FastAPI, Python, porta 8000), publicado "
-        "pelo Painkiller. Use-o para chaves secretas, dados compartilhados e autenticação; não proponha "
+        "Backend: o projeto já tem um backend em backend/ (FastAPI, Python, porta 8000, dados num SQLite "
+        "persistente), publicado pelo Painkiller. Use-o para chaves secretas, dados compartilhados e autenticação; não proponha "
         "outro servidor nem outra stack, e não grave \"backend\" no JSON do backlog. Tarefas de backend "
         "mexem em backend/; o app o chama por import.meta.env.VITE_API_URL.",
-        "Backend: the project already has a backend in backend/ (FastAPI, Python, port 8000), published "
-        "by Painkiller. Use it for secret keys, shared data and authentication; do not propose another "
+        "Backend: the project already has a backend in backend/ (FastAPI, Python, port 8000, data in a "
+        "persistent SQLite), published by Painkiller. Use it for secret keys, shared data and authentication; do not propose another "
         "server or stack, and do not write \"backend\" in the backlog JSON. Backend tasks change "
         "backend/; the app calls it through import.meta.env.VITE_API_URL.",
     ),
