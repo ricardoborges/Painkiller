@@ -592,3 +592,83 @@ async def test_recover_interrupted_fails_tasks_left_running(mock_tracker, mock_s
     call = mock_tracker.update_task_status.call_args
     assert call.args == ("t1", TaskStatus.FAILED)
     assert "reiniciada" in call.kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_failed_check_sends_the_agent_back_to_fix_it(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(id="t1", project_id="p1", title="Tela", description="D")
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+    mock_sandbox.run_tests.side_effect = [(1, "FAIL src/App.test.tsx > abre a lista"), (0, "ok")]
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    await orchestrator.dispatch_task("t1")
+
+    assert mock_sandbox.run_task.call_count == 2
+    fix_prompt = mock_sandbox.run_task.call_args_list[1].args[2]
+    assert "Verificação reprovada" in fix_prompt and "abre a lista" in fix_prompt
+    mock_git.merge_branch.assert_called_once()
+    mock_tracker.update_task_status.assert_any_call("t1", TaskStatus.COMPLETED)
+
+
+@pytest.mark.asyncio
+async def test_check_still_failing_after_the_fix_fails_the_task_in_plain_words(
+    mock_tracker, mock_sandbox, mock_git, monkeypatch
+):
+    mock_tracker.get_task.return_value = Task(id="t1", project_id="p1", title="Tela", description="D")
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+    mock_sandbox.run_tests.return_value = (1, "1 failed")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    await orchestrator.dispatch_task("t1")
+
+    # Uma tentativa de correção por padrão, depois a tarefa falha.
+    assert mock_sandbox.run_task.call_count == 2
+    error = mock_tracker.update_task_status.call_args.kwargs["error"]
+    head, _, rest = error.partition("\n\n")
+    assert "mesmo depois de ele tentar corrigir" in head and "Repetir" in head
+    assert rest == "1 failed"
+    mock_git.merge_branch.assert_not_called()
+
+    # Desligado por ambiente: falha direto, sem segunda execução.
+    monkeypatch.setenv("PAINKILLER_TEST_FIX_ATTEMPTS", "0")
+    mock_sandbox.run_task.reset_mock()
+    await orchestrator.dispatch_task("t1")
+    assert mock_sandbox.run_task.call_count == 1
+    assert "mesmo depois" not in mock_tracker.update_task_status.call_args.kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_question_during_the_fix_pauses_for_the_analyst(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(id="t1", project_id="p1", title="Tela", description="D")
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    question = ClarificationRequest(id="c1", task_id="t1", question="Qual cor?", context_summary="")
+    mock_sandbox.run_task.side_effect = [
+        ExecutionResult(exit_code=0, logs="ok"),
+        ExecutionResult(exit_code=42, logs="", clarification=question),
+    ]
+    mock_sandbox.run_tests.return_value = (1, "1 failed")
+    mock_git.push.return_value = (0, "")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    await orchestrator.dispatch_task("t1")
+
+    mock_tracker.update_task_status.assert_any_call(
+        "t1", TaskStatus.AWAITING_ANALYST, assigned_branch="feature/t1"
+    )
+    assert mock_sandbox.run_tests.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_merge_conflict_error_says_what_to_do(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(id="t1", project_id="p1", title="Tela", description="D")
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+    mock_git.merge_branch.return_value = (1, "CONFLICT (content): src/App.tsx")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    await orchestrator.dispatch_task("t1")
+
+    error = mock_tracker.update_task_status.call_args.kwargs["error"]
+    assert error.startswith("A tarefa passou na verificação") and "CONFLICT" in error

@@ -57,6 +57,29 @@ RESTART_MESSAGE = (
     "branch {branch}: use Repetir para continuar de onde parou."
 )
 
+#: Quantas vezes o agente é chamado de volta para corrigir uma verificação
+#: reprovada antes de a tarefa falhar (`PAINKILLER_TEST_FIX_ATTEMPTS`, 0 desliga).
+DEFAULT_TEST_FIX_ATTEMPTS = 1
+
+#: Quanto da saída da verificação volta ao agente no pedido de correção.
+TEST_FIX_OUTPUT_TAIL = 6_000
+
+TESTS_FAILED_MESSAGE = (
+    "A verificação automática (testes e build) reprovou o trabalho do agente. Use Repetir para "
+    "ele continuar de onde parou; se falhar de novo, divida a tarefa em passos menores."
+)
+
+TESTS_FAILED_AFTER_FIX_MESSAGE = (
+    "A verificação automática (testes e build) reprovou o trabalho do agente, mesmo depois de ele "
+    "tentar corrigir. Use Repetir para ele continuar de onde parou; se falhar de novo, divida a "
+    "tarefa em passos menores."
+)
+
+MERGE_CONFLICT_MESSAGE = (
+    "A tarefa passou na verificação, mas o código dela conflita com o que já foi incorporado na "
+    "{branch}. Use Repetir: o agente resolve o conflito e a tarefa é verificada de novo."
+)
+
 BUSY_MESSAGE = (
     "Já há uma tarefa em execução neste projeto ({title}). Aguarde ela terminar ou pare-a "
     "antes de iniciar outra."
@@ -114,7 +137,10 @@ ENVIRONMENT_NOTES: dict[ProjectType, tuple[str, str]] = {
         "npx cap sync android e o APK de debug (cd android && sh ./gradlew --no-daemon assembleDebug), "
         "que também precisa passar; rode-os você mesmo nesse caso. Não há emulador nem dispositivo.\n"
         "- npm run dev não serve para validar: não há navegador aqui. Teste o comportamento com "
-        "Testing Library.",
+        "Testing Library.\n"
+        "- O nome e o identificador do app (appId/appName no capacitor.config.ts, applicationId no "
+        "android/app/build.gradle) já estão definidos e não mudam: o identificador é o que a loja e o "
+        "celular usam para reconhecer o app. O namespace do Gradle é outro, de propósito.",
         "\n## Environment (already set up, do not check):\n"
         "- The repository is an Android app built with React + Ionic (TypeScript, Vite) and packaged with "
         "Capacitor: the app's code lives in src/, the native project in android/. The container already "
@@ -129,7 +155,10 @@ ENVIRONMENT_NOTES: dict[ProjectType, tuple[str, str]] = {
         "and the debug APK (cd android && sh ./gradlew --no-daemon assembleDebug), which must pass too; "
         "run them yourself in that case. There is no emulator or device.\n"
         "- npm run dev is no way to validate: there is no browser here. Test behaviour with "
-        "Testing Library.",
+        "Testing Library.\n"
+        "- The app's name and id (appId/appName in capacitor.config.ts, applicationId in "
+        "android/app/build.gradle) are already set and never change: the id is how the store and the "
+        "phone recognise the app. The Gradle namespace differs on purpose.",
     ),
 }
 
@@ -182,6 +211,15 @@ BACKEND_NOTES: tuple[str, str] = (
     "(use fastapi.testclient.TestClient; external services always mocked in tests). If the task "
     "touches backend/, Painkiller runs that pytest when you finish and it must pass too.",
 )
+
+
+def test_fix_attempts() -> int:
+    """`PAINKILLER_TEST_FIX_ATTEMPTS`, falling back to the default on garbage."""
+    try:
+        value = int(os.environ.get("PAINKILLER_TEST_FIX_ATTEMPTS", "") or DEFAULT_TEST_FIX_ATTEMPTS)
+    except ValueError:
+        return DEFAULT_TEST_FIX_ATTEMPTS
+    return max(0, value)
 
 
 def task_timeout_seconds() -> int:
@@ -344,19 +382,28 @@ class PainkillerOrchestrator:
         # Execute container
         self._note(task.id, tr("Iniciando contêiner na branch {branch}", branch=branch_name))
         timeout = task_timeout_seconds()
-        result = await self.sandbox.run_task(
-            task,
-            project.repo_path,
-            instructions,
-            timeout_seconds=timeout,
-            on_event=self.activity.publisher(task.id, asyncio.get_running_loop()),
-            harness=project.harness,
-            api_key=project.api_key,
-            model=project.model,
-            effort=project.effort,
-        )
-        self._note(task.id, tr("Agente encerrou com código {code}", code=result.exit_code))
-        await self._record_usage(task, result, project)
+        result = await self._run_agent(task, project, instructions, timeout)
+
+        # Verificação, e o agente de volta para corrigir o que ela reprovar: a
+        # maioria das reprovações é um teste ou um erro de tipo que ele mesmo
+        # resolve lendo a saída, sem o analista precisar clicar em Repetir.
+        test_code, test_out, fixes = 0, "", 0
+        if result.exit_code == 0:
+            test_code, test_out = await self._verify(task, project, timeout)
+            while (
+                test_code not in (0, 5)
+                and fixes < test_fix_attempts()
+                and task.id not in self._stop_requested
+            ):
+                fixes += 1
+                self._note(task.id, tr("Verificação reprovada: o agente vai corrigir (tentativa {n})", n=fixes))
+                result = await self._run_agent(
+                    task, project, instructions + self._fix_block(test_out, project), timeout
+                )
+                if result.exit_code != 0:
+                    break
+                test_code, test_out = await self._verify(task, project, timeout)
+
         if result.exit_code != 0:
             # Pausa (o commit WIP do `painkiller ask`) ou falha: o que o agente
             # fez fica commitado na branch e visível no Gitea, em vez de sobrar
@@ -383,17 +430,6 @@ class PainkillerOrchestrator:
                 comment=tr("🤖 Pausada para esclarecimento: {question}", question=result.clarification.question),
             )
         elif result.exit_code == 0:
-            self._note(task.id, tr("Executando a suíte de testes do repositório"))
-            # No worker, nunca no processo da API: a suíte é código do agente.
-            # O build do app recebe os VITE_* e o backend de teste; o agente, não.
-            app_secrets = await secret_values(self.tracker, project.id, SecretScope.APP)
-            test_code, test_out = await self.sandbox.run_tests(
-                task, project.repo_path, harness=project.harness, timeout_seconds=timeout,
-                base_branch=project.default_branch,
-                extra_env={**app_secrets, **backend_build_env(project, self.deployment, EnvironmentType.TEST)},
-            )
-            # Um teste que imprime o ambiente não pode levar um valor ao banco e ao Gitea.
-            test_out = redact(test_out, app_secrets.values())
             if test_code in (0, 5):
                 await self.git.commit_wip(project.repo_path, f"feat: implement {task.title}")
                 await self._push(project.repo_path, branch_name, task.id)
@@ -423,7 +459,7 @@ class PainkillerOrchestrator:
                         task.id,
                         TaskStatus.FAILED,
                         assigned_branch=branch_name,
-                        error=tr("Falha ao realizar merge na {branch}:", branch=project.default_branch) + f"\n{out_m}",
+                        error=tr(MERGE_CONFLICT_MESSAGE, branch=project.default_branch) + f"\n\n{out_m}",
                     )
                     await self.tracker.add_comment(
                         task.id,
@@ -434,11 +470,16 @@ class PainkillerOrchestrator:
                 # O que o agente deixou sem commit fica na branch desta tarefa.
                 await self._commit_leftovers(project, task)
                 await self._push(project.repo_path, branch_name, task.id)
+                if task.id in self._stop_requested:
+                    head = tr(STOPPED_MESSAGE, branch=branch_name)
+                else:
+                    head = tr(TESTS_FAILED_AFTER_FIX_MESSAGE if fixes else TESTS_FAILED_MESSAGE)
                 await self.tracker.update_task_status(
                     task.id,
                     TaskStatus.FAILED,
                     assigned_branch=branch_name,
-                    error=test_out,
+                    # Primeiro o que aconteceu e o que fazer; a saída bruta vem depois.
+                    error=f"{head}\n\n{test_out[-FAILURE_LOG_TAIL:]}",
                 )
                 await self.tracker.add_comment(
                     task.id,
@@ -465,6 +506,57 @@ class PainkillerOrchestrator:
 
         updated_task = await self.tracker.get_task(task.id)
         return updated_task or task
+
+    async def _run_agent(self, task: Task, project: Project, instructions: str, timeout: int) -> ExecutionResult:
+        """One agent container for the task; its usage is booked whatever the exit code."""
+        result = await self.sandbox.run_task(
+            task,
+            project.repo_path,
+            instructions,
+            timeout_seconds=timeout,
+            on_event=self.activity.publisher(task.id, asyncio.get_running_loop()),
+            harness=project.harness,
+            api_key=project.api_key,
+            model=project.model,
+            effort=project.effort,
+        )
+        self._note(task.id, tr("Agente encerrou com código {code}", code=result.exit_code))
+        await self._record_usage(task, result, project)
+        return result
+
+    async def _verify(self, task: Task, project: Project, timeout: int) -> tuple[int, str]:
+        """Run the repo's check (tests and build) in a worker; (exit code, redacted output)."""
+        self._note(task.id, tr("Executando a suíte de testes do repositório"))
+        # No worker, nunca no processo da API: a suíte é código do agente.
+        # O build do app recebe os VITE_* e o backend de teste; o agente, não.
+        app_secrets = await secret_values(self.tracker, project.id, SecretScope.APP)
+        test_code, test_out = await self.sandbox.run_tests(
+            task, project.repo_path, harness=project.harness, timeout_seconds=timeout,
+            base_branch=project.default_branch,
+            extra_env={**app_secrets, **backend_build_env(project, self.deployment, EnvironmentType.TEST)},
+        )
+        # Um teste que imprime o ambiente não pode levar um valor ao banco e ao Gitea.
+        return test_code, redact(test_out, app_secrets.values())
+
+    @staticmethod
+    def _fix_block(test_out: str, project: Project) -> str:
+        """Prompt block sending the agent back to fix what the check refused."""
+        tail = (test_out or "")[-TEST_FIX_OUTPUT_TAIL:]
+        if project_language(project) == "en-US":
+            return (
+                "\n\n## Check failed:\n"
+                "You already worked on this task on this branch, but Painkiller's automatic check "
+                "(tests and build) failed. Find the cause and fix it; do not delete, skip or weaken "
+                "tests to make it pass. Commit when done. End of the check's output:\n"
+                f"```\n{tail}\n```"
+            )
+        return (
+            "\n\n## Verificação reprovada:\n"
+            "Você já trabalhou nesta tarefa nesta branch, mas a verificação automática do Painkiller "
+            "(testes e build) falhou. Encontre a causa e corrija; não apague, pule nem enfraqueça "
+            "testes para passar. Faça commit ao terminar. Final da saída da verificação:\n"
+            f"```\n{tail}\n```"
+        )
 
     async def _park_leftovers(self, project: Project) -> None:
         """Leave the working tree ready for a checkout before a task starts.

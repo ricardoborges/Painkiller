@@ -363,6 +363,22 @@ EN_US: dict[str, str] = {
         "A task is already running in this project ({title}). Wait for it to finish or stop it "
         "before starting another.",
     "Só uma tarefa em revisão pode ser incorporada.": "Only a task in review can be merged.",
+    "Verificação reprovada: o agente vai corrigir (tentativa {n})":
+        "Check failed: the agent will fix it (attempt {n})",
+    "A verificação automática (testes e build) reprovou o trabalho do agente. Use Repetir para "
+    "ele continuar de onde parou; se falhar de novo, divida a tarefa em passos menores.":
+        "The automatic check (tests and build) rejected the agent's work. Use Retry so it "
+        "continues where it stopped; if it fails again, split the task into smaller steps.",
+    "A verificação automática (testes e build) reprovou o trabalho do agente, mesmo depois de ele "
+    "tentar corrigir. Use Repetir para ele continuar de onde parou; se falhar de novo, divida a "
+    "tarefa em passos menores.":
+        "The automatic check (tests and build) rejected the agent's work, even after it tried to "
+        "fix it. Use Retry so it continues where it stopped; if it fails again, split the task "
+        "into smaller steps.",
+    "A tarefa passou na verificação, mas o código dela conflita com o que já foi incorporado na "
+    "{branch}. Use Repetir: o agente resolve o conflito e a tarefa é verificada de novo.":
+        "The task passed the check, but its code conflicts with what is already merged into "
+        "{branch}. Use Retry: the agent resolves the conflict and the task is checked again.",
     "A fila deste projeto já está em execução.": "This project's queue is already running.",
     "Esta sessão já foi encerrada.": "This session is already closed.",
     "Esta tarefa já está em execução.": "This task is already running.",

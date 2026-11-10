@@ -153,3 +153,24 @@ def test_bundled_capacitor_scaffold_is_ready_to_build(tmp_path):
         assert b"\r\n" not in f.read()
     # Gerados pelo `cap sync`: entram na verificação, nunca no arcabouço.
     assert not any(w.startswith(("node_modules/", "dist/", "android/app/src/main/assets/public/")) for w in written)
+
+
+async def test_new_project_gets_its_own_app_name_and_id(app_client):
+    _, client = app_client
+    first = (await client.post("/api/projects", json={"name": "Lista de Compras", "api_key": "k"})).json()
+    second = (await client.post("/api/projects", json={"name": "Lista de Compras", "api_key": "k"})).json()
+
+    def app_id(project: dict) -> str:
+        with open(os.path.join(project["repo_path"], "capacitor.config.ts"), encoding="utf-8") as f:
+            config = f.read()
+        assert 'appName: "Lista de Compras"' in config
+        return config.split("appId: '")[1].split("'")[0]
+
+    # Mesmo nome, identificadores diferentes: os dois apps convivem no mesmo celular.
+    assert app_id(first).startswith("app.painkiller.listadecompras_")
+    assert app_id(first) != app_id(second)
+    # Entra no commit do arcabouço, não fica como alteração solta.
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=first["repo_path"], capture_output=True, text=True
+    ).stdout
+    assert status == ""

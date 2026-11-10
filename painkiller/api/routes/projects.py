@@ -26,6 +26,7 @@ from painkiller.core.domain.models import (
 from painkiller.core.i18n import SUPPORTED_LOCALES, get_locale, translate
 from painkiller.core.naming import compose_project_identity
 from painkiller.core.templates import DEFAULT_TEMPLATE_ID, builtin_template, has_uploaded_scaffold
+from painkiller.core.app_identity import app_id_for, personalize_scaffold
 from painkiller.core.scaffold import ScaffoldError, copy_scaffold_dir, extract_scaffold
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -174,6 +175,10 @@ async def create_project(req: CreateProjectRequest, request: Request, user: User
             if not req.repo_path:
                 shutil.rmtree(base_repo_path, ignore_errors=True)
             raise HTTPException(status_code=400, detail=f"O arcabouço do template é inválido: {e}")
+        # Nome e identificador próprios: de fábrica todo app seria com.example.myapp.
+        await asyncio.to_thread(
+            personalize_scaffold, base_repo_path, req.name, app_id_for(identity.name_slug, identity.code)
+        )
         # Commit próprio, antes do push: o Gitea já nasce com a estrutura em main.
         name = template.name if template else template_id
         await git.commit_wip(base_repo_path, f"chore: scaffold from template {name}")
