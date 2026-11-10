@@ -175,6 +175,45 @@ def verify_apk_key(project_id: str, build_id: str, key: str) -> bool:
     return hmac.compare_digest(signature, _apk_signature(project_id, build_id, expires))
 
 
+class AttemptLimiter:
+    """Failed attempts per key inside a sliding window, kept in memory.
+
+    Sem isto a senha do administrador e o código de verificação de 6 dígitos
+    (válido por 24 h) podiam ser testados sem limite. Fica na memória do
+    processo: um restart zera a contagem, o que só devolve as tentativas da janela.
+    """
+
+    def __init__(self, limit: int, window_seconds: int, max_keys: int = 10_000):
+        self.limit = limit
+        self.window = window_seconds
+        self.max_keys = max_keys
+        self._failures: dict[str, list[float]] = {}
+
+    def _recent(self, key: str) -> list[float]:
+        cutoff = time.monotonic() - self.window
+        recent = [t for t in self._failures.get(key, ()) if t > cutoff]
+        if recent:
+            self._failures[key] = recent
+        else:
+            self._failures.pop(key, None)
+        return recent
+
+    def blocked(self, key: str) -> bool:
+        return len(self._recent(key)) >= self.limit
+
+    def fail(self, key: str) -> None:
+        if key not in self._failures and len(self._failures) >= self.max_keys:
+            # Chaves são dados do cliente: descarta as vencidas antes de crescer sem fim.
+            for other in list(self._failures):
+                self._recent(other)
+            if len(self._failures) >= self.max_keys:
+                self._failures.pop(next(iter(self._failures)))
+        self._failures.setdefault(key, []).append(time.monotonic())
+
+    def reset(self, key: str) -> None:
+        self._failures.pop(key, None)
+
+
 def check_break_glass(username: str, password: str) -> bool:
     """Check the administrator's credentials; always False before the first access."""
     account = admin_account()

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from painkiller.api.security import (
     AUTH_COOKIE_NAME,
+    AttemptLimiter,
     BREAK_GLASS_ID,
     OAUTH_STATE_KIND,
     _bearer,
@@ -32,6 +33,37 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 #: Cookie que amarra o `state` do OAuth ao navegador que iniciou o login.
 STATE_COOKIE = "pk_oauth_state"
+
+
+TOO_MANY_ATTEMPTS = "Muitas tentativas. Aguarde alguns minutos e tente de novo."
+
+#: Limites usados quando o app não instalou os seus (create_app instala um por app).
+_login_attempts = AttemptLimiter(limit=10, window_seconds=300)
+_code_attempts = AttemptLimiter(limit=5, window_seconds=900)
+
+
+def _limiter(request: Request, name: str, fallback: AttemptLimiter) -> AttemptLimiter:
+    return getattr(request.app.state, name, None) or fallback
+
+
+def _client_key(request: Request, identity: str) -> str:
+    host = request.client.host if request.client else ""
+    return f"{host}|{identity.strip().lower()}"
+
+
+def set_session_cookie(request: Request, response: Response, token: str) -> None:
+    """The session cookie, which authenticates what cannot send headers (the /gitea pages)."""
+    platform = getattr(request.app.state, "platform", None)
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        max_age=7 * 86400,
+        httponly=True,
+        samesite="lax",
+        # Com a plataforma publicada em https o cookie nunca viaja em claro.
+        secure=bool(platform and platform.public_url().startswith("https://")),
+        path="/",
+    )
 
 
 class LoginRequest(BaseModel):
@@ -100,25 +132,23 @@ async def auth_config(request: Request):
     }
 
 
-def admin_session(response: Response) -> dict:
+def admin_session(request: Request, response: Response) -> dict:
     """Issue the administrator's token (bound to the current password) and set the cookie."""
     token = issue_token(BREAK_GLASS_ID, pw=break_glass_fingerprint())
-    response.set_cookie(
-        AUTH_COOKIE_NAME,
-        token,
-        max_age=7 * 86400,
-        httponly=True,
-        samesite="lax",
-        path="/",
-    )
+    set_session_cookie(request, response, token)
     return {"token": token, "user": user_payload(break_glass_user())}
 
 
 @router.post("/login")
 async def login(req: LoginRequest, request: Request, response: Response):
     """User login: admin break-glass or regular registered user."""
+    attempts = _limiter(request, "login_attempts", _login_attempts)
+    key = _client_key(request, req.username)
+    if attempts.blocked(key):
+        raise HTTPException(status_code=429, detail=TOO_MANY_ATTEMPTS)
     if check_break_glass(req.username, req.password):
-        return admin_session(response)
+        attempts.reset(key)
+        return admin_session(request, response)
 
     tracker = getattr(request.app.state, "tracker", None)
     if tracker:
@@ -130,18 +160,13 @@ async def login(req: LoginRequest, request: Request, response: Response):
                     detail="Sua conta ainda não foi ativada. Verifique o código enviado ao seu e-mail.",
                 )
             if verify_password(req.password, user.password_hash):
+                attempts.reset(key)
                 user = await ensure_gitea_account(request.app, user)
                 token = issue_token(user.id)
-                response.set_cookie(
-                    AUTH_COOKIE_NAME,
-                    token,
-                    max_age=7 * 86400,
-                    httponly=True,
-                    samesite="lax",
-                    path="/",
-                )
+                set_session_cookie(request, response, token)
                 return {"token": token, "user": user_payload(user)}
 
+    attempts.fail(key)
     raise HTTPException(status_code=401, detail="Usuário ou senha incorretos")
 
 
@@ -236,7 +261,12 @@ async def verify_code(req: VerifyCodeRequest, request: Request, response: Respon
         raise HTTPException(status_code=404, detail="Usuário não encontrado.")
 
     if not user.is_active:
-        if not user.verification_code or user.verification_code != code:
+        # Por e-mail, não por cliente: o que se protege é o código daquela conta.
+        attempts = _limiter(request, "code_attempts", _code_attempts)
+        if attempts.blocked(email):
+            raise HTTPException(status_code=429, detail=TOO_MANY_ATTEMPTS)
+        if not user.verification_code or not secrets.compare_digest(user.verification_code.encode("utf-8"), code.encode("utf-8")):
+            attempts.fail(email)
             raise HTTPException(status_code=400, detail="Código de verificação incorreto.")
         if _is_expired(user.verification_expires_at):
             raise HTTPException(status_code=400, detail="Código de verificação expirado.")
@@ -244,14 +274,7 @@ async def verify_code(req: VerifyCodeRequest, request: Request, response: Respon
 
     user = await ensure_gitea_account(request.app, user)
     token = issue_token(user.id)
-    response.set_cookie(
-        AUTH_COOKIE_NAME,
-        token,
-        max_age=7 * 86400,
-        httponly=True,
-        samesite="lax",
-        path="/",
-    )
+    set_session_cookie(request, response, token)
     return {"token": token, "user": user_payload(user)}
 
 
@@ -274,7 +297,7 @@ async def verify_link(request: Request, token: str = ""):
 
     user = await ensure_gitea_account(request.app, user)
     session_token = issue_token(user.id)
-    return _back_to_login({"verified": "true"}, token=session_token)
+    return _back_to_login({"verified": "true"}, token=session_token, request=request)
 
 
 @router.post("/resend-code")
@@ -331,21 +354,14 @@ async def first_access(req: FirstAccessRequest, request: Request, response: Resp
     except AdminAccountError as e:
         status = 409 if admin_account() is not None else 400
         raise HTTPException(status_code=status, detail=str(e))
-    return admin_session(response)
+    return admin_session(request, response)
 
 
 @router.get("/me")
 async def get_current_user(request: Request, response: Response, user: User = Depends(current_user)):
     token = _bearer(request)
     if token and request.cookies.get(AUTH_COOKIE_NAME) != token:
-        response.set_cookie(
-            AUTH_COOKIE_NAME,
-            token,
-            max_age=7 * 86400,
-            httponly=True,
-            samesite="lax",
-            path="/",
-        )
+        set_session_cookie(request, response, token)
     return user_payload(user)
 
 
@@ -376,19 +392,14 @@ async def google_login(request: Request):
     return response
 
 
-def _back_to_login(fragment: dict, token: Optional[str] = None) -> RedirectResponse:
+def _back_to_login(
+    fragment: dict, token: Optional[str] = None, request: Optional[Request] = None
+) -> RedirectResponse:
     # Fragmento, e não query: não vai para logs de servidor nem proxies.
     response = RedirectResponse(f"/login#{urllib.parse.urlencode(fragment)}", status_code=302)
     response.delete_cookie(STATE_COOKIE, path="/api/auth/google")
-    if token:
-        response.set_cookie(
-            AUTH_COOKIE_NAME,
-            token,
-            max_age=7 * 86400,
-            httponly=True,
-            samesite="lax",
-            path="/",
-        )
+    if token and request is not None:
+        set_session_cookie(request, response, token)
     return response
 
 
@@ -438,4 +449,4 @@ async def google_callback(
 
     user = await ensure_gitea_account(request.app, user)
     token = issue_token(user.id)
-    return _back_to_login({"token": token}, token=token)
+    return _back_to_login({"token": token}, token=token, request=request)

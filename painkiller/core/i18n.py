@@ -363,6 +363,8 @@ EN_US: dict[str, str] = {
         "A task is already running in this project ({title}). Wait for it to finish or stop it "
         "before starting another.",
     "Só uma tarefa em revisão pode ser incorporada.": "Only a task in review can be merged.",
+    "Muitas tentativas. Aguarde alguns minutos e tente de novo.":
+        "Too many attempts. Wait a few minutes and try again.",
     "Última mensagem do agente:": "Agent's last message:",
     "🚀 Tarefa aprovada e incorporada na branch principal ({branch}).":
         "🚀 Task approved and merged into the main branch ({branch}).",

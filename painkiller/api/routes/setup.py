@@ -173,7 +173,7 @@ async def update_admin_account(body: AdminAccountRequest, request: Request, resp
     except AdminAccountError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # A senha nova invalida o token atual: devolve outro para a sessão seguir.
-    return admin_session(response)
+    return admin_session(request, response)
 
 
 # ---- 1. Ambiente -----------------------------------------------------------

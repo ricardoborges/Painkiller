@@ -269,3 +269,37 @@ async def test_tasks_start_in_their_session_mode(tracker: SQLiteIssueTracker):
 
     assert in_first.use_superpowers is True
     assert in_direct.use_superpowers is False
+
+async def _stored_api_key(tracker: SQLiteIssueTracker, project_id: str) -> str:
+    async with tracker.engine.connect() as conn:
+        result = await conn.exec_driver_sql("SELECT api_key FROM projects WHERE id = ?", (project_id,))
+        return result.scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_project_api_key_is_sealed_at_rest(tracker: SQLiteIssueTracker):
+    proj = await tracker.create_project(name="App", repo_path="/tmp/app", api_key="sk-secreta-123")
+
+    assert proj.api_key == "sk-secreta-123"
+    assert (await tracker.get_project(proj.id)).api_key == "sk-secreta-123"
+    assert [p.api_key for p in await tracker.list_projects()] == ["sk-secreta-123"]
+    stored = await _stored_api_key(tracker, proj.id)
+    assert stored.startswith("enc:v1:") and "sk-secreta-123" not in stored
+
+    updated = await tracker.update_project(proj.id, api_key="sk-outra-456")
+    assert updated.api_key == "sk-outra-456"
+    assert "sk-outra-456" not in await _stored_api_key(tracker, proj.id)
+
+
+@pytest.mark.asyncio
+async def test_plaintext_api_keys_of_older_versions_are_sealed_on_startup(tracker: SQLiteIssueTracker):
+    proj = await tracker.create_project(name="App", repo_path="/tmp/app", api_key="x")
+    async with tracker.engine.begin() as conn:
+        await conn.exec_driver_sql("UPDATE projects SET api_key = 'sk-antiga' WHERE id = ?", (proj.id,))
+    # Linha antiga ainda é lida como está.
+    assert (await tracker.get_project(proj.id)).api_key == "sk-antiga"
+
+    await tracker.init_db()
+
+    assert (await _stored_api_key(tracker, proj.id)).startswith("enc:v1:")
+    assert (await tracker.get_project(proj.id)).api_key == "sk-antiga"

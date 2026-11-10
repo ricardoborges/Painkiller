@@ -59,7 +59,7 @@ from painkiller.core.ports.issue_tracker import IssueTrackerPort
 from painkiller.core.ports.usage_ledger import UsageLedgerPort
 from painkiller.core.ports.user_directory import UserDirectoryPort
 from painkiller.core.ports.platform_settings import PlatformSettingsPort
-from painkiller.adapters.issue_trackers.secret_box import SecretBox
+from painkiller.adapters.issue_trackers.secret_box import PREFIX as SECRET_PREFIX, SecretBox
 from painkiller.core.ports.project_secrets import ProjectSecretsPort
 
 Base = declarative_base()
@@ -324,6 +324,26 @@ class SQLiteIssueTracker(
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await conn.run_sync(self._migrate_columns)
+        await self._seal_project_keys()
+
+    async def _seal_project_keys(self) -> None:
+        """Seal the LLM keys that older versions stored in plain text."""
+        async with self.session_factory() as session:
+            rows = (await session.execute(
+                select(ProjectRecord.id, ProjectRecord.api_key).where(
+                    ProjectRecord.api_key.is_not(None),
+                    ProjectRecord.api_key != "",
+                    ProjectRecord.api_key.not_like(f"{SECRET_PREFIX}%"),
+                )
+            )).all()
+            if not rows:
+                return
+            box = await self._secret_box()
+            for project_id, key in rows:
+                await session.execute(
+                    update(ProjectRecord).where(ProjectRecord.id == project_id).values(api_key=box.seal(key))
+                )
+            await session.commit()
 
     @staticmethod
     def _migrate_columns(connection) -> None:
@@ -401,7 +421,8 @@ class SQLiteIssueTracker(
             repo_url=repo_url or "",
             owner_id=owner_id,
             harness=harness_val,
-            api_key=api_key or None,
+            # Cifrada com a chave da instalação, como os segredos do projeto.
+            api_key=(await self._secret_box()).seal(api_key or None),
             model=model or None,
             effort=effort or None,
             language=language or None,
@@ -411,7 +432,7 @@ class SQLiteIssueTracker(
         async with self.session_factory() as session:
             session.add(record)
             await session.commit()
-            return self._to_project_domain(record)
+            return self._to_project_domain(record, await self._secret_box())
 
     async def list_projects(self, owner_id: Optional[str] = None) -> list[Project]:
         stmt = select(ProjectRecord).order_by(ProjectRecord.created_at.desc())
@@ -420,7 +441,8 @@ class SQLiteIssueTracker(
         async with self.session_factory() as session:
             res = await session.execute(stmt)
             records = res.scalars().all()
-            return [self._to_project_domain(r) for r in records]
+            box = await self._secret_box()
+            return [self._to_project_domain(r, box) for r in records]
 
     async def get_project(self, project_id: str) -> Optional[Project]:
         async with self.session_factory() as session:
@@ -428,7 +450,7 @@ class SQLiteIssueTracker(
             record = res.scalar_one_or_none()
             if not record:
                 return None
-            return self._to_project_domain(record)
+            return self._to_project_domain(record, await self._secret_box())
 
     async def update_project(
         self,
@@ -464,7 +486,7 @@ class SQLiteIssueTracker(
         if harness is not None:
             values["harness"] = harness.value if isinstance(harness, HarnessType) else harness
         if api_key is not None:
-            values["api_key"] = api_key or None
+            values["api_key"] = (await self._secret_box()).seal(api_key or None)
         if model is not None:
             values["model"] = model or None
         if effort is not None:
@@ -484,7 +506,7 @@ class SQLiteIssueTracker(
             record = res.scalar_one_or_none()
             if not record:
                 raise ValueError(f"Project {project_id} not found")
-            return self._to_project_domain(record)
+            return self._to_project_domain(record, await self._secret_box())
 
     async def delete_project(self, project_id: str) -> None:
         from sqlalchemy import delete
@@ -506,7 +528,7 @@ class SQLiteIssueTracker(
             )
             await session.commit()
 
-    def _to_project_domain(self, record: ProjectRecord) -> Project:
+    def _to_project_domain(self, record: ProjectRecord, box: SecretBox) -> Project:
         return Project(
             id=record.id,
             name=record.name,
@@ -523,7 +545,7 @@ class SQLiteIssueTracker(
             test_url=getattr(record, "test_url", None) or None,
             production_url=getattr(record, "production_url", None) or None,
             harness=HarnessType(getattr(record, "harness", None) or "agy_superpowers") if getattr(record, "harness", None) in [h.value for h in HarnessType] else HarnessType.AGY_SUPERPOWERS,
-            api_key=getattr(record, "api_key", None) or None,
+            api_key=box.open(getattr(record, "api_key", None)) or None,
             model=getattr(record, "model", None) or None,
             effort=getattr(record, "effort", None) or None,
             # Projetos anteriores ao campo ficam no idioma em que foram feitos.
@@ -1149,7 +1171,12 @@ class SQLiteIssueTracker(
         return key
 
     async def _secret_box(self) -> SecretBox:
-        return SecretBox(await self.get_secret_key())
+        # Em cache: toda leitura de projeto abre a chave de LLM dele, e a chave
+        # da instalação não muda com o processo no ar.
+        box = getattr(self, "_box", None)
+        if box is None:
+            box = self._box = SecretBox(await self.get_secret_key())
+        return box
 
     async def get_platform_settings(self) -> PlatformSettings:
         value = await self._read_setting(PLATFORM_SETTINGS_KEY)

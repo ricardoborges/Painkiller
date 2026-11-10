@@ -19,6 +19,7 @@ from painkiller.core.domain.models import (
 )
 from painkiller.core.i18n import tr
 from painkiller.core.ports.agent_session import AgentSessionPort
+from painkiller.adapters.sandbox.limits import container_limits
 from painkiller.adapters.sandbox.paths import daemon_path
 
 logger = logging.getLogger(__name__)
@@ -287,6 +288,7 @@ class DockerAgentSession(AgentSessionPort):
                     extra_hosts={"host.docker.internal": "host-gateway"},
                     detach=True,
                     remove=False,
+                    **container_limits(),
                 ),
             )
         except docker.errors.ImageNotFound as e:

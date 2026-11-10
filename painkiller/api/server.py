@@ -35,7 +35,7 @@ from painkiller.engine.analysis import AnalysisOrchestrator
 from painkiller.engine.deployment_service import DeploymentService
 from painkiller.interrogation.wizard import InterrogationWizard
 from painkiller.api.platform import PlatformConfig
-from painkiller.api.security import current_user
+from painkiller.api.security import AttemptLimiter, current_user
 from painkiller.api.routes.auth import router as auth_router
 from painkiller.api.routes.projects import router as projects_router
 from painkiller.api.routes.tasks import router as tasks_router
@@ -254,6 +254,9 @@ def create_app(
     app.state.price_lookup = litellm_price
     app.state.balance_lookup = fetch_balances
     app.state.key_validator = validate_key
+    # Um contador por app (e não do módulo): cada banco de teste começa do zero.
+    app.state.login_attempts = AttemptLimiter(limit=10, window_seconds=300)
+    app.state.code_attempts = AttemptLimiter(limit=5, window_seconds=900)
     app.state.google_oauth = GoogleOAuthClient()
     app.state.coolify_bootstrap = CoolifyBootstrap()
     app.state.platform = PlatformConfig(store=tracker, state=app.state)

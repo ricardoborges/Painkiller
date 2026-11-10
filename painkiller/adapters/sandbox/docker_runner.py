@@ -31,6 +31,7 @@ from painkiller.core.i18n import tr
 from painkiller.core.test_plan import NO_TESTS_COLLECTED, build_test_script
 from painkiller.core.ports.sandbox import AgentEventCallback, SandboxPort
 from painkiller.adapters.sandbox.docker_agent_session import parse_agent_line, unreal_env
+from painkiller.adapters.sandbox.limits import container_limits
 from painkiller.adapters.sandbox.paths import daemon_path
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,7 @@ class DockerSandboxRunner(SandboxPort):
                 detach=True,
                 working_dir="/workspace",
                 remove=False,
+                **container_limits(),
             )
             self._running_containers[task.id] = container
 
@@ -371,6 +373,7 @@ class DockerSandboxRunner(SandboxPort):
                 detach=True,
                 working_dir="/workspace",
                 remove=False,
+                **container_limits(),
             )
             self._running_containers[task.id] = container
             timer = threading.Timer(timeout_seconds, self._kill_on_timeout, (container, task.id))
@@ -481,6 +484,7 @@ class DockerSandboxRunner(SandboxPort):
                 working_dir="/workspace",
                 network_disabled=network_disabled,
                 remove=False,
+                **container_limits(),
             )
         except docker.errors.ImageNotFound:
             return (1, tr(
