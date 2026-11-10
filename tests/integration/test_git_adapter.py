@@ -106,3 +106,74 @@ async def test_switch_branch_refuses_with_tracked_changes(temp_git_repo: str):
     assert code != 0
     assert "README.md" in out
     assert await adapter.current_branch(temp_git_repo) == "feature/t1"
+
+
+def _commit(repo: str, name: str, content: str, message: str) -> None:
+    with open(os.path.join(repo, name), "w", encoding="utf-8") as f:
+        f.write(content)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True, capture_output=True)
+
+
+def _conflicting_branches(repo: str) -> None:
+    """feature/a and main both rewrite README.md; the repo ends on feature/a."""
+    subprocess.run(["git", "checkout", "-b", "feature/a"], cwd=repo, check=True, capture_output=True)
+    _commit(repo, "README.md", "# Da tarefa\n", "task")
+    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+    _commit(repo, "README.md", "# Da principal\n", "main")
+    subprocess.run(["git", "checkout", "feature/a"], cwd=repo, check=True, capture_output=True)
+
+
+@pytest.mark.asyncio
+async def test_conflicting_merge_is_aborted_and_the_repo_stays_usable(temp_git_repo: str):
+    adapter = GitCliAdapter()
+    _conflicting_branches(temp_git_repo)
+
+    code, out = await adapter.merge_branch(temp_git_repo, source_branch="feature/a", target_branch="main")
+
+    assert code != 0 and "CONFLICT" in out
+    assert not os.path.exists(os.path.join(temp_git_repo, ".git", "MERGE_HEAD"))
+    assert await adapter.has_changes(temp_git_repo) is False
+    # Antes, todo checkout seguinte falhava com "resolve your current index first".
+    await adapter.create_branch(temp_git_repo, "feature/b", base_branch="main")
+    assert await adapter.current_branch(temp_git_repo) == "feature/b"
+    await adapter.create_branch(temp_git_repo, "feature/a", base_branch="main")
+    assert await adapter.current_branch(temp_git_repo) == "feature/a"
+
+
+@pytest.mark.asyncio
+async def test_abort_merge_heals_a_repo_left_mid_merge(temp_git_repo: str):
+    adapter = GitCliAdapter()
+    _conflicting_branches(temp_git_repo)
+    subprocess.run(["git", "checkout", "main"], cwd=temp_git_repo, check=True, capture_output=True)
+    subprocess.run(["git", "merge", "feature/a"], cwd=temp_git_repo, capture_output=True)
+
+    assert await adapter.abort_merge(temp_git_repo) is True
+    assert await adapter.abort_merge(temp_git_repo) is False
+    assert await adapter.has_changes(temp_git_repo) is False
+
+
+@pytest.mark.asyncio
+async def test_sync_branch_brings_the_default_branch_in(temp_git_repo: str):
+    adapter = GitCliAdapter()
+    await adapter.create_branch(temp_git_repo, "feature/a", base_branch="main")
+    subprocess.run(["git", "checkout", "main"], cwd=temp_git_repo, check=True, capture_output=True)
+    _commit(temp_git_repo, "novo.txt", "da principal\n", "main")
+    subprocess.run(["git", "checkout", "feature/a"], cwd=temp_git_repo, check=True, capture_output=True)
+
+    code, _ = await adapter.sync_branch(temp_git_repo, "main")
+
+    assert code == 0
+    assert os.path.exists(os.path.join(temp_git_repo, "novo.txt"))
+
+
+@pytest.mark.asyncio
+async def test_sync_branch_aborts_on_conflict(temp_git_repo: str):
+    adapter = GitCliAdapter()
+    _conflicting_branches(temp_git_repo)
+
+    code, out = await adapter.sync_branch(temp_git_repo, "main")
+
+    assert code != 0 and "CONFLICT" in out
+    assert await adapter.has_changes(temp_git_repo) is False
+    assert await adapter.current_branch(temp_git_repo) == "feature/a"

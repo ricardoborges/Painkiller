@@ -52,6 +52,16 @@ STOPPED_MESSAGE = (
     "use Repetir para continuar de onde parou."
 )
 
+RESTART_MESSAGE = (
+    "A plataforma foi reiniciada durante a execução desta tarefa. O trabalho parcial ficou na "
+    "branch {branch}: use Repetir para continuar de onde parou."
+)
+
+BUSY_MESSAGE = (
+    "Já há uma tarefa em execução neste projeto ({title}). Aguarde ela terminar ou pare-a "
+    "antes de iniciar outra."
+)
+
 TIMEOUT_MESSAGE = (
     "O agente excedeu o tempo limite de {minutes} min e o contêiner foi encerrado. "
     "O trabalho parcial ficou na branch {branch}: use Repetir para continuar de onde parou "
@@ -183,6 +193,10 @@ def task_timeout_seconds() -> int:
     return value if value > 0 else DEFAULT_TASK_TIMEOUT
 
 
+class ProjectBusyError(RuntimeError):
+    """Another task of the same project is running: they would share one working tree."""
+
+
 class PainkillerOrchestrator:
     """Coordinates task execution, git branches, docker containers, and status transitions."""
 
@@ -207,6 +221,16 @@ class PainkillerOrchestrator:
         # Tarefas cuja interrupção foi pedida durante uma execução deste processo:
         # o _dispatch registra a falha como interrupção, não como código 137.
         self._stop_requested: set[str] = set()
+        # Projeto -> (tarefa, título) em execução neste processo. O repositório
+        # tem uma árvore de trabalho só: dois agentes trocariam de branch um
+        # sob o outro.
+        self._busy: dict[str, tuple[str, str]] = {}
+
+    def ensure_project_free(self, project_id: str) -> None:
+        """Raise `ProjectBusyError` while a task of the project is being dispatched here."""
+        running = self._busy.get(project_id)
+        if running:
+            raise ProjectBusyError(BUSY_MESSAGE.format(title=running[1]))
 
     def _note(self, task_id: str, text: str) -> None:
         """Tell whoever watches the task what the orchestrator itself is doing."""
@@ -251,6 +275,9 @@ class PainkillerOrchestrator:
                 if not dep_task or dep_task.status != TaskStatus.COMPLETED:
                     raise RuntimeError(f"Cannot run task {task.id}: dependency {dep_id} is not completed")
 
+        # Sem await entre a checagem e a marca: dois despachos não passam juntos.
+        self.ensure_project_free(project.id)
+        self._busy[project.id] = (task.id, task.title)
         self._stop_requested.discard(task.id)
         self.activity.start(task.id)
         # O que o despacho grava na tarefa (erros, comentários, notas ao vivo)
@@ -264,6 +291,7 @@ class PainkillerOrchestrator:
             reset_locale(locale)
             self.activity.finish(task.id)
             self._stop_requested.discard(task.id)
+            self._busy.pop(project.id, None)
 
     async def _timed_dispatch(self, task: Task, project: Project) -> Task:
         """Run `_dispatch` and add its wall-clock time to the task, even if it raised."""
@@ -286,8 +314,10 @@ class PainkillerOrchestrator:
         retrying = task.status == TaskStatus.FAILED
         # Ensure feature branch
         branch_name = task.assigned_branch or f"feature/{task.id}"
+        await self._park_leftovers(project)
         await self.git.create_branch(project.repo_path, branch_name, project.default_branch)
         task.assigned_branch = branch_name
+        stale = not await self._sync_with_default(project, task.id)
         # O link da branch na UI aponta para o Gitea: sem este push ele dá 404
         # até a tarefa passar nos testes.
         await self._push(project.repo_path, branch_name, task.id)
@@ -306,7 +336,7 @@ class PainkillerOrchestrator:
         # aqui: sem isso a reexecução refaz a mesma pergunta (exit 42 em loop).
         history = await self._clarification_history(task.id)
         instructions = self._build_task_instructions(
-            task, project, retrying=retrying, clarifications=history,
+            task, project, retrying=retrying, stale=stale, clarifications=history,
             guidelines=await template_guidelines(self.tracker, project.template_id),
             secrets=await secret_names(self.tracker, project.id),
         )
@@ -329,7 +359,9 @@ class PainkillerOrchestrator:
         await self._record_usage(task, result, project)
         if result.exit_code != 0:
             # Pausa (o commit WIP do `painkiller ask`) ou falha: o que o agente
-            # commitou fica visível no Gitea. O sucesso envia antes do merge.
+            # fez fica commitado na branch e visível no Gitea, em vez de sobrar
+            # na árvore de trabalho para a próxima tarefa. O sucesso envia antes do merge.
+            await self._commit_leftovers(project, task)
             await self._push(project.repo_path, branch_name, task.id)
 
         # Handle exit codes
@@ -399,6 +431,9 @@ class PainkillerOrchestrator:
                         comment=tr("❌ Falha no auto-merge da branch {branch} na {base}:", branch=branch_name, base=project.default_branch) + f"\n{out_m}",
                     )
             else:
+                # O que o agente deixou sem commit fica na branch desta tarefa.
+                await self._commit_leftovers(project, task)
+                await self._push(project.repo_path, branch_name, task.id)
                 await self.tracker.update_task_status(
                     task.id,
                     TaskStatus.FAILED,
@@ -430,6 +465,45 @@ class PainkillerOrchestrator:
 
         updated_task = await self.tracker.get_task(task.id)
         return updated_task or task
+
+    async def _park_leftovers(self, project: Project) -> None:
+        """Leave the working tree ready for a checkout before a task starts.
+
+        Uma execução que morreu sem registro (API reiniciada, merge em conflito
+        de uma versão anterior) deixa o repositório no meio de um merge ou com
+        edições soltas na feature/ de outra tarefa: o checkout falharia, ou as
+        levaria para a branch desta.
+        """
+        repo = project.repo_path
+        try:
+            await self.git.abort_merge(repo)
+            current = await self.git.current_branch(repo)
+            if isinstance(current, str) and current and current != project.default_branch:
+                if await self.git.has_changes(repo) is True:
+                    await self.git.commit_wip(repo, "wip: trabalho parcial de execução interrompida")
+        except Exception as e:
+            logger.warning(f"Não foi possível preparar a árvore de {repo}: {e}")
+
+    async def _sync_with_default(self, project: Project, task_id: str) -> bool:
+        """Bring the default branch into the task's branch; False when they conflict.
+
+        A branch de uma tarefa repetida nasceu antes dos merges das outras: sem
+        isto os testes rodam sobre uma base velha e o auto-merge conflita toda vez.
+        """
+        try:
+            code, out = await self.git.sync_branch(project.repo_path, project.default_branch)
+        except Exception as e:
+            logger.debug(f"Branch da tarefa {task_id} não sincronizada: {e}")
+            return True
+        if code != 0:
+            logger.info(f"Tarefa {task_id}: conflito com {project.default_branch}, o agente resolve: {out[-300:]}")
+        return code == 0
+
+    async def _commit_leftovers(self, project: Project, task: Task) -> None:
+        try:
+            await self.git.commit_wip(project.repo_path, f"wip: {task.title}")
+        except Exception as e:
+            logger.warning(f"Trabalho parcial da tarefa {task.id} não commitado: {e}")
 
     async def _promote_preview(self, task: Task, project: Project) -> None:
         """Publish the web build the task's check left behind as the project's app preview."""
@@ -480,6 +554,32 @@ class PainkillerOrchestrator:
             comment=tr("💬 O analista respondeu: {answer}", answer=answer),
         )
         return await self.dispatch_task(clar.task_id)
+
+    async def recover_interrupted(self) -> list[str]:
+        """Fail every task left RUNNING by a previous process; returns their ids.
+
+        Chamado na subida: ninguém mais acompanha o contêiner dessas tarefas,
+        então ele é encerrado e a tarefa sai de RUNNING com o motivo, em vez de
+        ficar girando até alguém clicar em Parar.
+        """
+        recovered: list[str] = []
+        for project in await self.tracker.list_projects():
+            for task in await self.tracker.list_tasks(project.id):
+                if task.status != TaskStatus.RUNNING or self._is_live(task.id):
+                    continue
+                branch = task.assigned_branch or f"feature/{task.id}"
+                with use_locale(project_language(project)):
+                    try:
+                        await self.sandbox.stop_task(task.id)
+                    except Exception as e:
+                        logger.debug(f"Contêiner da tarefa {task.id} não encerrado: {e}")
+                    message = tr(RESTART_MESSAGE, branch=branch)
+                    await self.tracker.update_task_status(
+                        task.id, TaskStatus.FAILED, assigned_branch=branch, error=message
+                    )
+                    await self.tracker.add_comment(task.id, author="system", comment=message)
+                recovered.append(task.id)
+        return recovered
 
     async def stop_task(self, task_id: str) -> None:
         """Stop a running task by killing its container, and make sure its status moves.
@@ -545,6 +645,7 @@ class PainkillerOrchestrator:
         task: Task,
         project: Project,
         retrying: bool = False,
+        stale: bool = False,
         clarifications: Optional[list[ClarificationRequest]] = None,
         guidelines: str = "",
         secrets: Optional[list[ProjectSecret]] = None,
@@ -581,6 +682,18 @@ class PainkillerOrchestrator:
                 "An earlier attempt at this task failed or was interrupted on this same branch. "
                 "Before starting, inspect the current state (git status, git log, files already created) "
                 "and continue from what exists instead of starting over."
+            ))
+        if stale:
+            base = project.default_branch
+            instructions.append(L(
+                "\n## Branch desatualizada:\n"
+                f"A branch {base} recebeu mudanças que conflitam com esta branch. Antes de qualquer "
+                f"outra coisa, rode `git merge {base}`, resolva os conflitos preservando o que já "
+                f"está em {base} e faça o commit do merge.",
+                "\n## Stale branch:\n"
+                f"Branch {base} received changes that conflict with this branch. Before anything "
+                f"else, run `git merge {base}`, resolve the conflicts keeping what is already on "
+                f"{base} and commit the merge.",
             ))
         if task.target_files:
             instructions.append(L("\n## Arquivos Alvo:", "\n## Target Files:"))
@@ -678,6 +791,11 @@ class PainkillerOrchestrator:
         project = await self.tracker.get_project(task.project_id)
         if not project:
             raise ValueError(f"Project {task.project_id} not found")
+
+        # Só o que passou nos testes chega aqui; uma tarefa reprovada não entra na principal.
+        if task.status != TaskStatus.IN_REVIEW:
+            raise RuntimeError("Só uma tarefa em revisão pode ser incorporada.")
+        self.ensure_project_free(project.id)
 
         branch_name = task.assigned_branch or f"feature/{task.id}"
         # A branch da tarefa continua viva no Gitea após o merge: o botão

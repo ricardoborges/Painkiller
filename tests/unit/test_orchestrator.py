@@ -162,7 +162,10 @@ async def test_dispatch_task_pause_on_clarification(mock_tracker, mock_sandbox, 
 @pytest.mark.asyncio
 async def test_merge_task_success(mock_tracker, mock_sandbox, mock_git):
     project = Project(id="p1", name="App", repo_path="/repo", api_key="k", default_branch="main")
-    task = Task(id="t1", project_id="p1", title="Build Feature", description="Desc", assigned_branch="feature/t1")
+    task = Task(
+        id="t1", project_id="p1", title="Build Feature", description="Desc",
+        assigned_branch="feature/t1", status=TaskStatus.IN_REVIEW,
+    )
 
     mock_tracker.get_task.return_value = task
     mock_tracker.get_project.return_value = project
@@ -459,3 +462,133 @@ async def test_capacitor_project_gets_its_own_environment_and_guidelines(mock_tr
     mock_tracker.get_project_template.assert_awaited_with("capacitor-react")
     # A verificação compara a tarefa com a branch padrão do projeto.
     assert mock_sandbox.run_tests.call_args.kwargs["base_branch"] == "trunk"
+
+
+@pytest.mark.asyncio
+async def test_merge_refuses_a_task_that_is_not_in_review(mock_tracker, mock_sandbox, mock_git):
+    # Uma tarefa reprovada nos testes não pode chegar à branch padrão pela rota de merge.
+    mock_tracker.get_task.return_value = Task(
+        id="t1", project_id="p1", title="T", description="D", status=TaskStatus.FAILED,
+    )
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    with pytest.raises(RuntimeError, match="em revisão"):
+        await orchestrator.merge_task("t1")
+
+    mock_git.merge_branch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_second_dispatch_in_the_same_project_is_refused(mock_tracker, mock_sandbox, mock_git):
+    import asyncio
+    from painkiller.engine.orchestrator import ProjectBusyError
+
+    tasks = {
+        "t1": Task(id="t1", project_id="p1", title="Primeira", description="D"),
+        "t2": Task(id="t2", project_id="p1", title="Segunda", description="D"),
+    }
+    mock_tracker.get_task.side_effect = lambda task_id: tasks[task_id]
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def run_task(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return ExecutionResult(exit_code=0, logs="ok")
+
+    mock_sandbox.run_task.side_effect = run_task
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    first = asyncio.create_task(orchestrator.dispatch_task("t1"))
+    await started.wait()
+    with pytest.raises(ProjectBusyError, match="Primeira"):
+        await orchestrator.dispatch_task("t2")
+    release.set()
+    await first
+
+    # Liberado ao terminar: a seguinte roda normalmente.
+    await orchestrator.dispatch_task("t2")
+    assert mock_sandbox.run_task.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_run_commits_leftovers_on_the_task_branch(mock_tracker, mock_sandbox, mock_git):
+    # Sem o commit, o que o agente deixou na árvore iria para a branch da próxima tarefa.
+    mock_tracker.get_task.return_value = Task(id="t1", project_id="p1", title="Tela", description="D")
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=1, logs="boom")
+    mock_git.push.return_value = (0, "")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    await orchestrator.dispatch_task("t1")
+
+    mock_git.commit_wip.assert_awaited_once_with("/repo", "wip: Tela")
+
+
+@pytest.mark.asyncio
+async def test_failed_tests_commit_leftovers_on_the_task_branch(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(id="t1", project_id="p1", title="Tela", description="D")
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+    mock_sandbox.run_tests.return_value = (1, "1 failed")
+    mock_git.push.return_value = (0, "")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    await orchestrator.dispatch_task("t1")
+
+    mock_git.commit_wip.assert_awaited_once_with("/repo", "wip: Tela")
+    mock_git.merge_branch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_parks_leftovers_of_another_branch_before_checkout(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(id="t2", project_id="p1", title="Nova", description="D")
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+    mock_git.current_branch.return_value = "feature/t1"
+    mock_git.has_changes.return_value = True
+    calls: list[str] = []
+    mock_git.abort_merge.side_effect = lambda *a, **k: calls.append("abort_merge")
+    mock_git.commit_wip.side_effect = lambda *a, **k: calls.append("commit_wip")
+    mock_git.create_branch.side_effect = lambda *a, **k: calls.append("create_branch")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    await orchestrator.dispatch_task("t2")
+
+    assert calls[:3] == ["abort_merge", "commit_wip", "create_branch"]
+
+
+@pytest.mark.asyncio
+async def test_branch_conflicting_with_default_is_handed_to_the_agent(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.get_task.return_value = Task(
+        id="t1", project_id="p1", title="T", description="D", status=TaskStatus.FAILED,
+    )
+    mock_tracker.get_project.return_value = Project(id="p1", name="App", repo_path="/repo", api_key="k")
+    mock_sandbox.run_task.return_value = ExecutionResult(exit_code=0, logs="ok")
+    mock_git.sync_branch.return_value = (1, "CONFLICT (content): Merge conflict in src/App.tsx")
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    await orchestrator.dispatch_task("t1")
+
+    mock_git.sync_branch.assert_awaited_once_with("/repo", "main")
+    prompt = mock_sandbox.run_task.call_args.args[2]
+    assert "git merge main" in prompt
+
+
+@pytest.mark.asyncio
+async def test_recover_interrupted_fails_tasks_left_running(mock_tracker, mock_sandbox, mock_git):
+    mock_tracker.list_projects.return_value = [Project(id="p1", name="App", repo_path="/repo", api_key="k")]
+    mock_tracker.list_tasks.return_value = [
+        Task(id="t1", project_id="p1", title="A", description="D", status=TaskStatus.RUNNING,
+             assigned_branch="feature/t1"),
+        Task(id="t2", project_id="p1", title="B", description="D", status=TaskStatus.COMPLETED),
+    ]
+    orchestrator = PainkillerOrchestrator(tracker=mock_tracker, sandbox=mock_sandbox, git=mock_git)
+
+    assert await orchestrator.recover_interrupted() == ["t1"]
+
+    mock_sandbox.stop_task.assert_awaited_once_with("t1")
+    call = mock_tracker.update_task_status.call_args
+    assert call.args == ("t1", TaskStatus.FAILED)
+    assert "reiniciada" in call.kwargs["error"]

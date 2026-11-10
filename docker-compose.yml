@@ -59,9 +59,11 @@ services:
       PAINKILLER_AGENT_UNREAL_IMAGE: painkiller-agent-unreal:latest
 
 
-      # O contentor do agente nasce IRMAO, pelo socket do host, entao nao entra
-      # na rede do compose sozinho.
-      PAINKILLER_AGENT_NETWORK: ${PAINKILLER_AGENT_NETWORK:-painkiller_default}
+      # O contentor do agente nasce IRMAO, pelo socket do host, e fica FORA da
+      # rede do compose (vazio = bridge padrao do Docker, como os workers): ele
+      # so precisa de saida para a internet, e nesta rede alcancaria o Gitea, o
+      # banco e o Redis do Coolify e a ponte SSH do host.
+      PAINKILLER_AGENT_NETWORK: ${PAINKILLER_AGENT_NETWORK:-}
 
       # Raiz de ./storage dentro do contentor (segue o WORKDIR da imagem); o
       # lado do host e detectado ou salvo no wizard.
@@ -71,6 +73,9 @@ services:
       # Conta de servico, senha e URL externa do Gitea sao geridas pela api
       # (senha gerada e guardada no banco; URL = URL publica + /gitea).
       PAINKILLER_GITEA_INTERNAL_URL: http://gitea:3000
+      # O proxy /gitea fala com o Gitea pela rede gitea-auth, de IP fixo: e o
+      # unico endereco de onde o Gitea aceita o cabecalho X-WEBAUTH-USER.
+      PAINKILLER_GITEA_PROXY_URL: http://gitea-auth:3000
 
       # Integracao com Coolify on-premise
       COOLIFY_API_URL: ${COOLIFY_API_URL:-http://coolify:8080}
@@ -89,6 +94,11 @@ services:
       # entao monta-lo por cima servia 404 em "/".
 
       - painkiller-db:/data
+
+    networks:
+      default:
+      gitea-auth:
+        ipv4_address: 10.213.77.2
 
 
   # Nao sao servicos que rodam: existem so para o compose construir as imagens
@@ -189,7 +199,10 @@ services:
       - GITEA__service__ENABLE_REVERSE_PROXY_AUTO_REGISTRATION=true
       - GITEA__security__REVERSE_PROXY_AUTHENTICATION_USER=X-WEBAUTH-USER
       - GITEA__security__REVERSE_PROXY_AUTHENTICATION_EMAIL=X-WEBAUTH-EMAIL
-      - GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES=painkiller-api,127.0.0.1,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
+      # So a api (IP fixo na rede gitea-auth). Com as faixas privadas inteiras,
+      # qualquer contentor ou maquina da LAN virava qualquer usuario do Gitea
+      # mandando o cabecalho X-WEBAUTH-USER para a porta publicada.
+      - GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES=10.213.77.2
       # Cada usuario do Painkiller tem uma conta aqui (criada pela api) e so ele
       # ve os proprios repositorios: repo e perfil nascem privados, sem excecao.
       - GITEA__repository__FORCE_PRIVATE=true
@@ -201,6 +214,12 @@ services:
       - "2222:22"
     volumes:
       - gitea-data:/data
+    networks:
+      default:
+      gitea-auth:
+        ipv4_address: 10.213.77.3
+        aliases:
+          - gitea-auth
     # O Coolify clona e builda em containers auxiliares na rede "coolify". A
     # api cria essa rede se faltar e conecta o Gitea nela (alias gitea) na
     # subida e antes de cada deploy (GiteaAdapter.ensure_deploy_network): como
@@ -338,6 +357,14 @@ services:
 
 networks:
   coolify-ssh:
+  # Canal api -> Gitea do login por cabecalho (ver REVERSE_PROXY_TRUSTED_PROXIES).
+  # Sub-rede fixa para o IP da api ser conhecido; troque as tres ocorrencias de
+  # 10.213.77. se colidir com uma rede sua.
+  gitea-auth:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.213.77.0/29
 
 
 volumes:

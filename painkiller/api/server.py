@@ -144,6 +144,16 @@ async def _scrub_remote_credentials(tracker: SQLiteIssueTracker, git: GitCliAdap
             logger.warning(f"Could not scrub git remote of {project.id}: {e}")
 
 
+async def _recover_interrupted_tasks(orchestrator: PainkillerOrchestrator) -> None:
+    """Tasks left RUNNING by the previous process have nobody behind them: say so."""
+    try:
+        recovered = await orchestrator.recover_interrupted()
+        if recovered:
+            logger.warning(f"Tarefas interrompidas pela reinicialização: {', '.join(recovered)}")
+    except Exception as e:
+        logger.warning(f"Could not recover interrupted tasks: {e}")
+
+
 def create_app(
     db_url: str = "sqlite+aiosqlite:///painkiller.db",
     docker_image: str = "painkiller-worker:latest",
@@ -169,6 +179,7 @@ def create_app(
         asyncio.create_task(_bootstrap_gitea(app.state.platform))
         asyncio.create_task(_align_project_repo_urls(tracker, vcs))
         asyncio.create_task(_scrub_remote_credentials(tracker, app.state.git))
+        asyncio.create_task(_recover_interrupted_tasks(app.state.orchestrator))
 
         # Limpeza de contêineres órfãos deixados por execuções anteriores
         agent = getattr(app.state, "agent", None)

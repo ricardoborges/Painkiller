@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from painkiller.api.security import require_task
 from painkiller.core.domain.models import AgentEvent, AgentEventType, TaskStatus
+from painkiller.engine.orchestrator import ProjectBusyError
 
 # Toda rota daqui tem {task_id}: a checagem de dono vale para o router inteiro.
 router = APIRouter(prefix="/api/tasks", tags=["tasks"], dependencies=[Depends(require_task)])
@@ -33,6 +34,8 @@ async def dispatch_task(task_id: str, request: Request):
     try:
         updated_task = await orchestrator.dispatch_task(task_id)
         return updated_task
+    except ProjectBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -191,6 +194,13 @@ async def reply_clarification(task_id: str, req: ClarificationReplyRequest, requ
     clar = await tracker.get_pending_clarification(task_id)
     if not clar:
         raise HTTPException(status_code=404, detail="Nenhuma pendência de esclarecimento para esta tarefa")
+    # Antes de gravar a resposta: recusada depois, a tarefa ficaria sem pendência e sem execução.
+    task = await tracker.get_task(task_id)
+    if task:
+        try:
+            orchestrator.ensure_project_free(task.project_id)
+        except ProjectBusyError as e:
+            raise HTTPException(status_code=409, detail=str(e))
 
     updated_task = await orchestrator.reply_clarification(clar.id, req.answer)
     return updated_task
@@ -202,6 +212,8 @@ async def merge_task(task_id: str, request: Request):
     try:
         updated_task = await orchestrator.merge_task(task_id)
         return updated_task
+    except ProjectBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

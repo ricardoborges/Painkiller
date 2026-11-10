@@ -370,7 +370,23 @@ class GitCliAdapter(GitPort):
             f"Merge branch '{source_branch}' into {target_branch}",
             source_branch,
         )
+        if code_merge != 0:
+            # Sem isto a branch de destino fica com o índice em conflito e todo
+            # checkout seguinte falha ("you need to resolve your current index first").
+            await self.abort_merge(repo_path)
         return code_merge, (out + "\n" + err_m).strip()
+
+    async def abort_merge(self, repo_path: str) -> bool:
+        if not os.path.exists(os.path.join(repo_path, ".git", "MERGE_HEAD")):
+            return False
+        code, _, _ = await self._run_git(repo_path, "merge", "--abort")
+        return code == 0
+
+    async def sync_branch(self, repo_path: str, base_branch: str) -> tuple[int, str]:
+        code, out, err = await self._run_git(repo_path, "merge", "--no-edit", base_branch)
+        if code != 0:
+            await self.abort_merge(repo_path)
+        return code, (out + "\n" + err).strip()
 
     async def delete_branch(
         self,

@@ -41,7 +41,12 @@ EXCLUDED_RESPONSE_HEADERS = {
 
 
 def _get_gitea_internal_url() -> str:
-    return os.environ.get("PAINKILLER_GITEA_INTERNAL_URL", "http://gitea:3000").rstrip("/")
+    # PAINKILLER_GITEA_PROXY_URL: no compose, o endereço do Gitea na rede em que
+    # só a API é proxy confiável (o X-WEBAUTH-USER só vale vindo do IP dela).
+    return (
+        os.environ.get("PAINKILLER_GITEA_PROXY_URL")
+        or os.environ.get("PAINKILLER_GITEA_INTERNAL_URL", "http://gitea:3000")
+    ).rstrip("/")
 
 
 async def _resolve_gitea_identity(request: Request) -> tuple[Optional[str], Optional[str]]:

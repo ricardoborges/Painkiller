@@ -354,6 +354,15 @@ EN_US: dict[str, str] = {
         "The partial work is on branch {branch}: use Retry to continue where it stopped "
         "or raise PAINKILLER_TASK_TIMEOUT.",
     "O agente encerrou com código {code}.": "The agent exited with code {code}.",
+    "A plataforma foi reiniciada durante a execução desta tarefa. O trabalho parcial ficou na "
+    "branch {branch}: use Repetir para continuar de onde parou.":
+        "The platform restarted while this task was running. The partial work is on branch "
+        "{branch}: use Retry to continue where it stopped.",
+    "Já há uma tarefa em execução neste projeto ({title}). Aguarde ela terminar ou pare-a "
+    "antes de iniciar outra.":
+        "A task is already running in this project ({title}). Wait for it to finish or stop it "
+        "before starting another.",
+    "Só uma tarefa em revisão pode ser incorporada.": "Only a task in review can be merged.",
     "Última mensagem do agente:": "Agent's last message:",
     "🚀 Tarefa aprovada e incorporada na branch principal ({branch}).":
         "🚀 Task approved and merged into the main branch ({branch}).",

@@ -61,7 +61,20 @@ class GitPort(ABC):
 
     @abstractmethod
     async def merge_branch(self, repo_path: str, source_branch: str, target_branch: str = "main") -> tuple[int, str]:
-        """Checkout target branch and merge source branch into it."""
+        """Checkout target branch and merge source branch into it.
+
+        A merge that fails is aborted, so the target branch is left clean.
+        """
+        pass
+
+    @abstractmethod
+    async def abort_merge(self, repo_path: str) -> bool:
+        """Abort a merge left in progress, if any; True when one was aborted."""
+        pass
+
+    @abstractmethod
+    async def sync_branch(self, repo_path: str, base_branch: str) -> tuple[int, str]:
+        """Merge ``base_branch`` into the checked-out branch; a conflicting merge is aborted."""
         pass
 
     @abstractmethod

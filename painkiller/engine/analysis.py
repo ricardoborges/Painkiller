@@ -603,6 +603,15 @@ class AnalysisOrchestrator:
         if self.git is None or not project.repo_path:
             return
         try:
+            # Uma tarefa rodando está na feature/ dela, e com a árvore limpa a
+            # troca passaria: o agente da tarefa perderia a branch no meio do trabalho.
+            tasks = await self.tracker.list_tasks(project.id)
+            if any(getattr(t, "status", None) == TaskStatus.RUNNING for t in tasks):
+                logger.info(f"Análise segue na branch atual de {project.repo_path}: há tarefa em execução")
+                return
+        except Exception as e:
+            logger.debug(f"Tarefas de {project.id} não consultadas antes da troca de branch: {e}")
+        try:
             code, out = await self.git.switch_branch(project.repo_path, project.default_branch)
             if code != 0:
                 logger.warning(
