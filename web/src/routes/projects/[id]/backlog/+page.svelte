@@ -7,6 +7,7 @@
     STATUS_META,
     STATUS_ORDER,
     type Task,
+    type QueueState,
     type EnvironmentStatusResponse,
     type DeploymentRecord
   } from '$lib/types';
@@ -27,7 +28,7 @@
   import DeployTerminal from '$lib/components/DeployTerminal.svelte';
   import { deploys, isDeployActive, deployStage, lastLogLine } from '$lib/stores/deploys.svelte';
   import { formatDuration, formatTokens, taskTotals } from '$lib/metrics';
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
 
   let { data } = $props();
 
@@ -59,7 +60,8 @@
   let togglingSuperpowers = $state(false);
 
   // Fila sequencial (Executar Todas)
-  let isQueueRunning = $state(false);
+  let queue = $state<QueueState | null>(null);
+  const isQueueRunning = $derived(queue?.running ?? false);
   let queueMessage = $state<string | null>(null);
 
   // Deploys (Coolify)
@@ -451,6 +453,9 @@
     if (activeSession?.id || !sessionStore.loading) {
       load();
       loadEnvStatus();
+      // Reencontra uma fila que ficou rodando no servidor. Fora do rastreio:
+      // syncQueue lê o estado da fila, e cada leitura dela reexecutaria este efeito.
+      untrack(() => void syncQueue());
     }
   });
 
@@ -565,11 +570,9 @@
   async function stopTask(id: string) {
     if (stoppingTaskId === id) return;
     stoppingTaskId = id;
-    if (isQueueRunning) {
-      isQueueRunning = false;
-      queueMessage = t('backlog.queue.stopped');
-    }
     try {
+      // Parar a tarefa da fila também pausa a fila: senão a próxima começaria.
+      if (isQueueRunning) applyQueue(await api.pauseQueue(data.project.id));
       await api.stopTask(id);
     } catch (e) {
       console.error('Failed to stop task:', e);
@@ -577,108 +580,104 @@
       setTimeout(() => {
         if (stoppingTaskId === id) stoppingTaskId = null;
         load();
+        void syncQueue();
       }, 1500);
     }
   }
 
-  /**
-   * Executador Sequencial da Fila ("Executar Todas").
-   * Roda estritamente 1 tarefa por vez na ordem de execução.
-   */
-  async function toggleRunAll() {
-    if (isQueueRunning) {
-      isQueueRunning = false;
-      queueMessage = t('backlog.queue.paused');
-      return;
+  /* "Executar Todas" roda no servidor (uma fila por projeto): aqui só se pede
+     o início ou a pausa e se acompanha o estado. Fechar a página não a para,
+     e voltar a ela reencontra a fila em andamento. */
+  const QUEUE_POLL_MS = 2500;
+  const QUEUE_KEYS = {
+    starting: 'backlog.queue.starting',
+    running: 'backlog.queue.running',
+    merging: 'backlog.queue.merging',
+    paused: 'backlog.queue.paused',
+    all_done: 'backlog.queue.allTasksDone',
+    question: 'backlog.queue.question',
+    blocked: 'backlog.queue.blocked',
+    failed: 'backlog.queue.failed',
+    run_failed: 'backlog.queue.runFailed',
+    merge_failed: 'backlog.queue.mergeFailed',
+    budget: 'backlog.queue.budget'
+  } as const;
+
+  let queueTimer: ReturnType<typeof setTimeout> | null = null;
+  let queueBusy = $state(false);
+  let revealedByQueue: string | null = null;
+  let destroyed = false;
+
+  function queueText(q: QueueState): string | null {
+    if (!q.reason) return null;
+    if (q.pausing) return t('backlog.queue.pausing');
+    const text = t(QUEUE_KEYS[q.reason], { title: q.task_title, deps: q.blocked_by.join(', ') });
+    return q.detail ? `${text} ${q.detail}` : text;
+  }
+
+  function applyQueue(next: QueueState) {
+    queue = next;
+    // O recado de uma fila parada de outra sessão não diz respeito a esta tela.
+    if (next.running || !next.session_id || next.session_id === activeSession?.id) {
+      queueMessage = queueText(next);
     }
-
-    isQueueRunning = true;
-    queueMessage = t('backlog.queue.starting');
-
-    try {
-      while (isQueueRunning) {
-        // Encontra a próxima tarefa não concluída na ordem de execução
-        const uncompleted = ordered.filter((t) => t.status !== 'COMPLETED');
-        if (uncompleted.length === 0) {
-          queueMessage = t('backlog.queue.allDone');
-          isQueueRunning = false;
-          break;
-        }
-
-        const candidate = uncompleted[0];
-
-        // Caso a tarefa já esteja em revisão (ex: rodou e aguarda merge)
-        if (candidate.status === 'IN_REVIEW') {
-          queueMessage = t('backlog.queue.merging', { title: candidate.title });
-          const merged = await merge(candidate);
-          if (!merged) {
-            queueMessage = t('backlog.queue.mergeFailed', { title: candidate.title });
-            isQueueRunning = false;
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 600));
-          continue;
-        }
-
-        // Caso a tarefa esteja esperando esclarecimento humano
-        if (candidate.status === 'AWAITING_ANALYST') {
-          queueMessage = t('backlog.queue.needsClarification', { title: candidate.title });
-          isQueueRunning = false;
-          break;
-        }
-
-        // Verifica bloqueios de dependência
-        const stuck = blockers(candidate);
-        if (stuck.length > 0) {
-          queueMessage = t('backlog.queue.blocked', { title: candidate.title, deps: stuck.map((s) => s.title).join(', ') });
-          isQueueRunning = false;
-          break;
-        }
-
-        // Despacha a tarefa no contêiner
-        queueMessage = t('backlog.queue.running', { title: candidate.title });
-        // A fila avança sozinha: leva o leitor até a tarefa que começou.
-        const started = dispatch(candidate);
-        void reveal(candidate.id);
-        const updated = await started;
-
-        if (!isQueueRunning) break; // Usuário pausou durante a execução
-
-        if (!updated) {
-          queueMessage = t('backlog.queue.runFailed', { title: candidate.title });
-          isQueueRunning = false;
-          break;
-        }
-
-        // Processa o resultado
-        if (updated.status === 'IN_REVIEW') {
-          // dispatch() já tentou o merge; se voltou IN_REVIEW, ele falhou
-          queueMessage = t('backlog.queue.autoMergeError', { title: updated.title });
-          isQueueRunning = false;
-          break;
-        } else if (updated.status === 'AWAITING_ANALYST') {
-          queueMessage = t('backlog.queue.question', { title: updated.title });
-          isQueueRunning = false;
-          break;
-        } else if (updated.status === 'FAILED') {
-          queueMessage = t('backlog.queue.failed', { title: updated.title });
-          isQueueRunning = false;
-          break;
-        }
-
-        // Pausa breve entre execuções
-        await new Promise((r) => setTimeout(r, 600));
-      }
-    } finally {
-      if (ordered.length > 0 && ordered.every((t) => t.status === 'COMPLETED')) {
-        queueMessage = t('backlog.queue.allTasksDone');
-        isQueueRunning = false;
-      }
+    // A fila avança sozinha: leva o leitor até a tarefa que começou.
+    if (next.running && next.reason === 'running' && next.task_id && next.task_id !== revealedByQueue) {
+      revealedByQueue = next.task_id;
+      if (byId.has(next.task_id)) void reveal(next.task_id);
     }
   }
 
+  /** Relê as tarefas sem o esqueleto de carregamento: é o que a fila mudou. */
+  async function refreshTasks() {
+    try {
+      tasks = activeSession?.id
+        ? await api.listSessionTasks(data.project.id, activeSession.id)
+        : await api.listTasks(data.project.id);
+      pending.refresh();
+    } catch {
+      /* a próxima leitura tenta de novo */
+    }
+  }
+
+  async function syncQueue() {
+    if (queueTimer) clearTimeout(queueTimer);
+    queueTimer = null;
+    const wasRunning = isQueueRunning;
+    try {
+      const next = await api.getQueue(data.project.id);
+      if (destroyed) return;
+      if (next.running || wasRunning) await refreshTasks();
+      applyQueue(next);
+    } catch {
+      /* rede instável: mantém o último estado e tenta de novo abaixo */
+    }
+    if (!destroyed && isQueueRunning) queueTimer = setTimeout(syncQueue, QUEUE_POLL_MS);
+  }
+
+  async function toggleRunAll() {
+    if (queueBusy) return;
+    queueBusy = true;
+    try {
+      if (isQueueRunning) {
+        applyQueue(await api.pauseQueue(data.project.id));
+      } else {
+        dispatchError = null;
+        applyQueue(await api.startQueue(data.project.id, activeSession?.id));
+        // O servidor passa a sessão de BACKLOG para IN_SPRINT ao começar.
+        if (activeSession?.status === 'BACKLOG') void sessionStore.loadSessions(activeSession.id);
+      }
+    } catch (e) {
+      queueMessage = e instanceof Error ? e.message : t('backlog.dispatchFailed');
+    } finally {
+      queueBusy = false;
+    }
+    void syncQueue();
+  }
+
   onDestroy(() => {
-    isQueueRunning = false;
+    destroyed = true;
+    if (queueTimer) clearTimeout(queueTimer);
   });
 </script>
 
@@ -798,7 +797,7 @@
             type="button"
             class="btn {isQueueRunning ? 'btn-line' : 'btn-solid'} btn-sm"
             onclick={toggleRunAll}
-            disabled={tasks.length === 0 || (allDone && !isQueueRunning)}
+            disabled={tasks.length === 0 || (allDone && !isQueueRunning) || queueBusy || !!queue?.pausing || (!isQueueRunning && !!dispatching)}
             title={isQueueRunning ? t('backlog.pauseQueueTitle') : t('backlog.runAllTitle')}
           >
             {#if isQueueRunning}
@@ -941,7 +940,10 @@
         {:else}
           <Icon name="info" size={12} />
         {/if}
-        <span class="mono">{queueMessage ?? issuesNote}</span>
+        <span class="mono">
+          {queueMessage ?? issuesNote}{#if isQueueRunning && queueMessage && !queue?.pausing}
+            {' '}{t('backlog.queue.background')}{/if}
+        </span>
       </div>
     {:else if activeSession && (sessionClosed || (allDone && branchesAlive))}
       <div class="runbar-line">
@@ -1174,7 +1176,14 @@
 
               {#if isAwaiting && !isRunning}
                 <div class="clar">
-                  <ClarificationPanel {task} onresolved={replace} />
+                  <ClarificationPanel
+                    {task}
+                    onresolved={(updated) => {
+                      replace(updated);
+                      // Respondida a dúvida que parou a fila, o servidor a retoma.
+                      void syncQueue();
+                    }}
+                  />
                 </div>
               {/if}
             </div>

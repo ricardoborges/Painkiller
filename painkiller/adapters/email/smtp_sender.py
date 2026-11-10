@@ -61,6 +61,14 @@ class EmailSender:
 
         await asyncio.to_thread(self._dispatch_smtp, to_email, subject, text_body, html_body)
 
+    async def send_notification(self, to_email: str, subject: str, text_body: str) -> bool:
+        """Send a plain notice (the run queue stopped); False when SMTP is not configured."""
+        if not self.settings.smtp_host:
+            logger.debug(f"E-mail não enviado (SMTP não configurado): {subject}")
+            return False
+        await asyncio.to_thread(self._dispatch_smtp, to_email, subject, text_body)
+        return True
+
     async def test_connection(self, to_email: str) -> None:
         """Send a test email to verify SMTP configuration."""
         subject = "Teste de configuração SMTP — Painkiller"

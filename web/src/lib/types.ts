@@ -186,6 +186,35 @@ export interface IterationSession {
   updated_at: string;
 }
 
+/** Estado da fila "Executar Todas", que roda no servidor (uma por projeto). */
+export type QueueReason =
+  | 'starting'
+  | 'running'
+  | 'merging'
+  | 'paused'
+  | 'all_done'
+  | 'question'
+  | 'blocked'
+  | 'failed'
+  | 'run_failed'
+  | 'merge_failed'
+  | 'budget';
+
+export interface QueueState {
+  running: boolean;
+  /** Pausa pedida: para quando a tarefa atual terminar. */
+  pausing: boolean;
+  session_id: string | null;
+  reason: QueueReason | null;
+  task_id: string | null;
+  task_title: string;
+  blocked_by: string[];
+  /** Mensagem do servidor para `run_failed`/`merge_failed`, já traduzida. */
+  detail: string;
+  started_at: string | null;
+  updated_at: string | null;
+}
+
 export interface Task {
   id: string;
   project_id: string;

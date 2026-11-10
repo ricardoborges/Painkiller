@@ -13,6 +13,7 @@ import type {
   ProviderBalance,
   SessionStatus,
   Task,
+  QueueState,
   TaskStreamState,
   UsageEntry,
   UsageSettings,
@@ -386,6 +387,19 @@ export const api = {
    * durante toda a execução do agente no contêiner. Pode levar minutos.
    */
   dispatchTask: (id: string) => request<Task>(`/tasks/${id}/dispatch`, { method: 'POST' }),
+
+  /** "Executar Todas" roda no servidor: estas chamadas voltam na hora. */
+  getQueue: (projectId: string) => request<QueueState>(`/projects/${projectId}/queue`),
+
+  startQueue: (projectId: string, sessionId?: string) =>
+    request<QueueState>(`/projects/${projectId}/queue`, {
+      method: 'POST',
+      ...json({ session_id: sessionId ?? null })
+    }),
+
+  /** Para depois da tarefa em execução; ela não é interrompida. */
+  pauseQueue: (projectId: string) =>
+    request<QueueState>(`/projects/${projectId}/queue`, { method: 'DELETE' }),
 
   stopTask: (id: string) =>
     request<{ status: string; task_id: string }>(`/tasks/${id}/stop`, { method: 'POST' }),

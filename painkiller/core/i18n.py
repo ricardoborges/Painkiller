@@ -363,6 +363,21 @@ EN_US: dict[str, str] = {
         "A task is already running in this project ({title}). Wait for it to finish or stop it "
         "before starting another.",
     "Só uma tarefa em revisão pode ser incorporada.": "Only a task in review can be merged.",
+    "A fila deste projeto já está em execução.": "This project's queue is already running.",
+    "Esta sessão já foi encerrada.": "This session is already closed.",
+    "Esta tarefa já está em execução.": "This task is already running.",
+    "Painkiller: {project} terminou as tarefas": "Painkiller: {project} finished its tasks",
+    "Todas as tarefas da sessão foram concluídas e incorporadas.":
+        "Every task of the session was completed and merged.",
+    "Painkiller: {project} espera a sua resposta": "Painkiller: {project} is waiting for your answer",
+    "O agente tem uma dúvida na tarefa \"{title}\" e a execução está parada até você responder.":
+        "The agent has a question on task \"{title}\" and the run is stopped until you answer.",
+    "Painkiller: {project} atingiu o orçamento": "Painkiller: {project} reached its budget",
+    "A execução foi pausada antes da tarefa \"{title}\": o orçamento do projeto foi atingido.":
+        "The run was paused before task \"{title}\": the project's budget was reached.",
+    "Painkiller: {project} parou em uma tarefa": "Painkiller: {project} stopped on a task",
+    "A execução parou: a tarefa \"{title}\" não foi concluída.":
+        "The run stopped: task \"{title}\" was not completed.",
     "Muitas tentativas. Aguarde alguns minutos e tente de novo.":
         "Too many attempts. Wait a few minutes and try again.",
     "Última mensagem do agente:": "Agent's last message:",

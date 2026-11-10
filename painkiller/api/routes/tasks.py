@@ -203,6 +203,10 @@ async def reply_clarification(task_id: str, req: ClarificationReplyRequest, requ
             raise HTTPException(status_code=409, detail=str(e))
 
     updated_task = await orchestrator.reply_clarification(clar.id, req.answer)
+    # A fila que parou nesta dúvida segue sozinha quando a tarefa passa.
+    queue = getattr(request.app.state, "run_queue", None)
+    if queue is not None:
+        await queue.resume_after_answer(updated_task)
     return updated_task
 
 

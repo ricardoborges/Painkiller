@@ -53,6 +53,9 @@ from painkiller.api.routes.setup import router as setup_router
 from painkiller.api.routes.preview import router as preview_router, public_router as preview_public_router
 from painkiller.api.routes.apk import router as apk_router, public_router as apk_public_router
 from painkiller.engine.apk_builds import ApkBuildService
+from painkiller.engine.run_queue import QueueRun, RunQueueService, notification_text
+from painkiller.api.routes.queue import router as queue_router
+from painkiller.core.usage import project_pricing, summarize
 from painkiller.core.i18n import normalize_locale, parse_accept_language, reset_locale, set_locale, translate
 
 
@@ -195,6 +198,10 @@ def create_app(
         yield
         # Shutdown
         try:
+            await app.state.run_queue.shutdown()
+        except Exception:
+            pass
+        try:
             if agent and hasattr(agent, "stop_all"):
                 await agent.stop_all()
         except Exception:
@@ -250,6 +257,34 @@ def create_app(
     app.state.deployment = deployment
     app.state.deployment_service = deployment_service
     app.state.apk_builds = ApkBuildService(tracker=tracker, sandbox=sandbox, deployment=deployment)
+
+    async def over_budget(project) -> bool:
+        """Whether the project already spent its budget (no budget = never)."""
+        budget = await usage.get_project_budget(project.id)
+        if not budget:
+            return False
+        summary = summarize(
+            await usage.list_usage(project_id=project.id),
+            project_pricing(await usage.get_usage_settings(), project.harness),
+            fallback=app.state.price_lookup,
+            budget_usd=budget,
+            overrides=await usage.get_project_prices(project.id),
+        )
+        return summary["budget"]["spent_usd"] >= budget
+
+    async def notify_queue(project, run: QueueRun) -> None:
+        """E-mail the project's owner when the queue stops and needs them (SMTP configured)."""
+        text = notification_text(project, run)
+        owner = await tracker.get_user(project.owner_id) if project.owner_id else None
+        if text is None or owner is None or "@" not in (owner.email or ""):
+            return
+        subject, body = text
+        link = f"{app.state.platform.public_url()}/projects/{project.id}/backlog"
+        await app.state.email_sender.send_notification(owner.email, subject, f"{body}\n\n{link}\n")
+
+    app.state.run_queue = RunQueueService(
+        tracker=tracker, orchestrator=orchestrator, over_budget=over_budget, notify=notify_queue
+    )
     # Injetáveis para os testes não dependerem do catálogo do LiteLLM nem da rede.
     app.state.price_lookup = litellm_price
     app.state.balance_lookup = fetch_balances
@@ -281,6 +316,7 @@ def create_app(
     app.include_router(preview_router, dependencies=signed_in)
     app.include_router(apk_router, dependencies=signed_in)
     app.include_router(secrets_router, dependencies=signed_in)
+    app.include_router(queue_router, dependencies=signed_in)
     # A prévia é carregada por um iframe, sem cabeçalhos: a chave na URL a autoriza.
     app.include_router(preview_public_router)
     # O APK do QR code é baixado pelo celular, sem sessão: idem, chave na URL.
