@@ -28,6 +28,19 @@ APKS_RELATIVE = ".painkiller/apks"
 APK_FILE = "app.apk"
 UNSIGNED_FILE = "unsigned.apk"
 
+#: Android App Bundle do release: o formato que a Play Store exige de apps novos.
+AAB_FILE = "app.aab"
+UNSIGNED_AAB_FILE = "unsigned.aab"
+
+#: Arquivos da chave no volume de assinatura, e os marcadores da exportação.
+KEYSTORE_FILE = "release.jks"
+KEYSTORE_PASSWORD_FILE = "password"
+KEY_ALIAS = "release"
+KEY_EXPORT_BEGIN = "PAINKILLER_KEY_BEGIN"
+KEY_EXPORT_END = "PAINKILLER_KEY_END"
+#: Saída do script de exportação quando o projeto ainda não tem chave.
+KEY_EXPORT_MISSING = 3
+
 #: Linha que o script imprime com o commit montado.
 COMMIT_MARKER = "PAINKILLER_COMMIT="
 
@@ -49,6 +62,10 @@ def build_dir(repo_path: str, build_id: str) -> str:
 
 def apk_path(repo_path: str, build_id: str) -> str:
     return os.path.join(build_dir(repo_path, build_id), APK_FILE)
+
+
+def aab_path(repo_path: str, build_id: str) -> str:
+    return os.path.join(build_dir(repo_path, build_id), AAB_FILE)
 
 
 def is_android_project(repo_path: str) -> bool:
@@ -96,11 +113,44 @@ def _debug_http_lines() -> list[str]:
     ]
 
 
-def build_apk_script(repo_path: str, build_id: str, variant: str, branch: str) -> Optional[str]:
+def _version_code_lines(version_code: int) -> list[str]:
+    """Stamp the release's versionCode into the clone's Gradle file (Groovy or Kotlin DSL).
+
+    A loja recusa um envio com um versionCode já usado, e o do repositório é
+    fixo. Mexe só no clone em /tmp/src; quem numera é o Painkiller, por build.
+    """
+    code = int(version_code)
+    return [
+        f"echo '=== versionCode {code}'",
+        "for f in app/build.gradle app/build.gradle.kts; do",
+        f"  [ -f \"$f\" ] && sed -i -E 's/(versionCode[ =]+)[0-9]+/\\1{code}/' \"$f\"",
+        "done",
+        f"grep -Eqs 'versionCode[ =]+{code}([^0-9]|$)' app/build.gradle app/build.gradle.kts "
+        "|| echo 'aviso: versionCode não encontrado no build.gradle; o do repositório foi mantido'",
+    ]
+
+
+def _bundle_lines(out: str) -> list[str]:
+    """Also build the release's App Bundle; never fails the build (the APK is already out)."""
+    return [
+        "echo '=== gradle bundleRelease'",
+        "if sh ./gradlew --no-daemon --console=plain bundleRelease; then",
+        "  aab=$(find . -path '*/build/outputs/bundle/release/*.aab' | head -n 1)",
+        f'  if [ -n "$aab" ]; then cp "$aab" {out}/{UNSIGNED_AAB_FILE}; echo \'=== AAB: \'"$aab"; fi',
+        "else",
+        "  echo 'aviso: o pacote AAB (Play Store) não foi gerado; o APK segue normalmente'",
+        "fi",
+    ]
+
+
+def build_apk_script(
+    repo_path: str, build_id: str, variant: str, branch: str, version_code: Optional[int] = None
+) -> Optional[str]:
     """POSIX sh script that builds the APK of ``branch``; None when the repo has no Android build.
 
     Debug sai assinado com a chave de debug do SDK (instalável direto); release
-    sai sem assinatura, como ``unsigned.apk``, para o passo de assinatura.
+    sai sem assinatura, como ``unsigned.apk``, para o passo de assinatura — com
+    o ``versionCode`` dado e, junto, o App Bundle (``unsigned.aab``).
     """
     capacitor = is_capacitor_project(repo_path)
     if not capacitor and not is_gradle_project(repo_path):
@@ -131,6 +181,8 @@ def build_apk_script(repo_path: str, build_id: str, variant: str, branch: str) -
         lines += [
             "cd android || exit 1",
         ]
+    if variant == "release" and version_code:
+        lines += _version_code_lines(version_code)
     lines += [
         f"echo '=== gradle {task}'",
         # sh ./gradlew: o bit de execução se perde num bind mount vindo do Windows.
@@ -141,6 +193,8 @@ def build_apk_script(repo_path: str, build_id: str, variant: str, branch: str) -
         f'cp "$apk" {out}/{target} || exit $?',
         f"echo '=== APK: '\"$apk\"",
     ]
+    if variant == "release":
+        lines += _bundle_lines(out)
     return "\n".join(lines) + "\n"
 
 
@@ -175,8 +229,59 @@ def sign_apk_script() -> str:
         f'"$bt/apksigner" verify {OUT_MOUNT}/{APK_FILE} || exit $?',
         f"rm -f {OUT_MOUNT}/{UNSIGNED_FILE} {OUT_MOUNT}/aligned.apk {OUT_MOUNT}/{APK_FILE}.idsig",
         "echo '=== APK assinado'",
+        # O bundle é assinado como um JAR (a Play Store o reassina na entrega).
+        # Falhar aqui não derruba o release: o APK já está assinado.
+        f"if [ -f {OUT_MOUNT}/{UNSIGNED_AAB_FILE} ]; then",
+        "  echo '=== jarsigner (AAB)'",
+        f"  if jarsigner -keystore {SIGNING_MOUNT}/{KEYSTORE_FILE} -storetype PKCS12 "
+        f"-storepass:file {SIGNING_MOUNT}/{KEYSTORE_PASSWORD_FILE} "
+        "-sigalg SHA256withRSA -digestalg SHA-256 "
+        f"-signedjar {OUT_MOUNT}/{AAB_FILE} {OUT_MOUNT}/{UNSIGNED_AAB_FILE} {KEY_ALIAS} > /dev/null; then",
+        "    echo '=== AAB assinado'",
+        "  else",
+        f"    rm -f {OUT_MOUNT}/{AAB_FILE}",
+        "    echo 'aviso: o AAB não pôde ser assinado'",
+        "  fi",
+        f"  rm -f {OUT_MOUNT}/{UNSIGNED_AAB_FILE}",
+        "fi",
     ]
     return "\n".join(lines) + "\n"
+
+
+def export_key_script() -> str:
+    """POSIX sh script printing the project's keystore and password as base64 between markers."""
+    lines = [
+        f"[ -f {SIGNING_MOUNT}/{KEYSTORE_FILE} ] || exit {KEY_EXPORT_MISSING}",
+        f"echo {KEY_EXPORT_BEGIN}",
+        f"tar -C {SIGNING_MOUNT} -cf - {KEYSTORE_FILE} {KEYSTORE_PASSWORD_FILE} | base64 || exit $?",
+        f"echo {KEY_EXPORT_END}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def parse_exported_key(logs: str) -> Optional[dict[str, bytes]]:
+    """``{file name: content}`` of an `export_key_script` run, or None when it carries no key."""
+    import base64
+    import binascii
+    import io
+    import tarfile
+
+    text = logs or ""
+    start, end = text.find(KEY_EXPORT_BEGIN), text.find(KEY_EXPORT_END)
+    if start < 0 or end < start:
+        return None
+    try:
+        raw = base64.b64decode("".join(text[start + len(KEY_EXPORT_BEGIN):end].split()), validate=True)
+        files: dict[str, bytes] = {}
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            for name in (KEYSTORE_FILE, KEYSTORE_PASSWORD_FILE):
+                member = archive.extractfile(name)
+                if member is None:
+                    return None
+                files[name] = member.read()
+    except (binascii.Error, tarfile.TarError, KeyError, OSError, ValueError):
+        return None
+    return files
 
 
 def signing_env(app_name: str) -> dict[str, str]:

@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from painkiller.core.apk import KEEP_BUILDS, apk_path, is_android_project, parse_commit, prune_builds
+from painkiller.core.apk import KEEP_BUILDS, aab_path, apk_path, is_android_project, parse_commit, prune_builds
 from painkiller.core.backend import API_URL_ENV, backend_build_env, has_backend
 from painkiller.core.domain.models import (
     ApkBuild,
@@ -80,11 +80,23 @@ class ApkBuildService:
             project_id=project.id,
             variant=variant,
             branch=project.default_branch or "main",
+            version_code=await self._next_version_code(project) if variant == ApkVariant.RELEASE else None,
         ))
         job = asyncio.create_task(self._run(project, build, env))
         self._jobs[build.id] = job
         job.add_done_callback(lambda _: self._jobs.pop(build.id, None))
         return build
+
+    async def _next_version_code(self, project: Project) -> int:
+        """versionCode of the next release: always above every earlier one.
+
+        Releases anteriores a este campo saíram com o valor fixo do repositório
+        (1): contá-los garante que o próximo já seja maior que qualquer um deles.
+        """
+        builds = await self.tracker.list_apk_builds(project.id, limit=500)
+        releases = [b for b in builds if b.variant == ApkVariant.RELEASE]
+        highest = max((b.version_code or 0 for b in releases), default=0)
+        return max(highest, len(releases)) + 1
 
     async def _build_env(self, project: Project, variant: ApkVariant) -> dict[str, str]:
         """The app's VITE_* secrets plus the backend address: test for debug, production for release.
@@ -128,6 +140,7 @@ class ApkBuildService:
                     harness=project.harness,
                     timeout_seconds=self.timeout_seconds,
                     extra_env=env or None,
+                    version_code=build.version_code,
                 )
             except Exception as e:  # noqa: BLE001 — o registro não pode ficar BUILDING
                 logger.exception("APK build %s crashed", build.id)
@@ -179,6 +192,7 @@ class ApkBuildService:
         build.available = build.status == ApkBuildStatus.SUCCESS and os.path.isfile(
             apk_path(project.repo_path, build.id)
         )
+        build.aab_available = build.available and os.path.isfile(aab_path(project.repo_path, build.id))
         return build
 
     async def list_builds(self, project: Project, limit: int = 20) -> list[ApkBuild]:

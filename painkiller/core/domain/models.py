@@ -296,6 +296,10 @@ class ApkBuild(BaseModel):
     error: Optional[str] = None
     #: O arquivo ainda está no disco (builds antigos são podados).
     available: bool = False
+    #: versionCode gravado no release: a loja exige um maior a cada envio.
+    version_code: Optional[int] = None
+    #: O App Bundle (.aab) assinado deste release está no disco.
+    aab_available: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: Optional[datetime] = None
 

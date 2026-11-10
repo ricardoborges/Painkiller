@@ -556,6 +556,10 @@ export interface ApkBuild {
   error?: string | null;
   /** O arquivo ainda existe no disco (builds antigos são podados). */
   available: boolean;
+  /** versionCode do release: a loja exige um maior a cada envio. */
+  version_code?: number | null;
+  /** O App Bundle (.aab) assinado deste release está no disco. */
+  aab_available?: boolean;
   created_at: string;
   finished_at?: string | null;
 }

@@ -64,12 +64,19 @@ class SandboxPort(ABC):
         harness: Optional[Any] = None,
         timeout_seconds: int = 2400,
         extra_env: Optional[dict[str, str]] = None,
+        version_code: Optional[int] = None,
     ) -> tuple[int, str]:
         """Build the APK of ``branch`` into ``core.apk.apk_path``; return (exit code, output).
 
         A ``release`` build is signed with the project's own key in a separate
-        step that never runs the repo's code.
+        step that never runs the repo's code; it carries ``version_code`` and
+        also leaves the signed App Bundle at ``core.apk.aab_path`` when it builds.
         """
+        pass
+
+    @abstractmethod
+    async def export_signing_key(self, project_id: str) -> Optional[dict[str, bytes]]:
+        """The project's release keystore and its password, by file name; None before the first release."""
         pass
 
     @abstractmethod

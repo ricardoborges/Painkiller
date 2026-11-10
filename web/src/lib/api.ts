@@ -571,6 +571,16 @@ export const api = {
 };
 
 /** Link de download do APK (o token vai na query, como nos demais downloads). */
+/** O App Bundle (.aab) do release: o formato que a Play Store recebe. */
+export function aabDownloadUrl(build: ApkBuild): string {
+  return authedUrl(`/projects/${build.project_id}/apk-builds/${build.id}/download-aab`);
+}
+
+/** Cópia de segurança da chave de assinatura do projeto (zip com keystore e senha). */
+export function signingKeyUrl(projectId: string): string {
+  return authedUrl(`/projects/${projectId}/apk-builds/signing-key`);
+}
+
 export function apkDownloadUrl(build: ApkBuild): string {
   return authedUrl(`/projects/${build.project_id}/apk-builds/${build.id}/download`);
 }

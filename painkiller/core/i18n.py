@@ -379,6 +379,10 @@ EN_US: dict[str, str] = {
     "{branch}. Use Repetir: o agente resolve o conflito e a tarefa é verificada de novo.":
         "The task passed the check, but its code conflicts with what is already merged into "
         "{branch}. Use Retry: the agent resolves the conflict and the task is checked again.",
+    "Este projeto ainda não tem chave de assinatura: ela é criada no primeiro APK de produção.":
+        "This project has no signing key yet: it is created with the first production APK.",
+    "Este build não tem pacote AAB; gere o APK de produção de novo.":
+        "This build has no AAB package; build the production APK again.",
     "A fila deste projeto já está em execução.": "This project's queue is already running.",
     "Esta sessão já foi encerrada.": "This session is already closed.",
     "Esta tarefa já está em execução.": "This task is already running.",

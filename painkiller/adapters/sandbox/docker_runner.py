@@ -23,6 +23,8 @@ from painkiller.core.apk import (
     SIGNING_MOUNT,
     build_apk_script,
     build_dir,
+    export_key_script,
+    parse_exported_key,
     sign_apk_script,
     signing_env,
     signing_volume,
@@ -407,9 +409,10 @@ class DockerSandboxRunner(SandboxPort):
         harness: Optional[Any] = None,
         timeout_seconds: int = 2400,
         extra_env: Optional[dict[str, str]] = None,
+        version_code: Optional[int] = None,
     ) -> tuple[int, str]:
         """Build (and, for release, sign) the APK in worker containers."""
-        script = build_apk_script(repo_path, build_id, variant, branch)
+        script = build_apk_script(repo_path, build_id, variant, branch, version_code=version_code)
         if script is None:
             return (1, tr("O repositório não tem um build Android (Gradle ou Capacitor)."))
         loop = asyncio.get_running_loop()
@@ -461,6 +464,23 @@ class DockerSandboxRunner(SandboxPort):
             network_disabled=True,
         )
         return sign_code, f"{logs}\n{sign_logs}"
+
+    async def export_signing_key(self, project_id: str) -> Optional[dict[str, bytes]]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._export_signing_key_sync, project_id)
+
+    def _export_signing_key_sync(self, project_id: str) -> Optional[dict[str, bytes]]:
+        # Sem rede e só leitura: o contêiner só empacota os dois arquivos do volume.
+        code, logs = self._run_script_sync(
+            f"pk-apk-key-{uuid.uuid4().hex[:8]}",
+            self._apk_image("agy_superpowers"),
+            export_key_script(),
+            volumes={signing_volume(project_id): {"bind": SIGNING_MOUNT, "mode": "ro"}},
+            environment={},
+            timeout_seconds=120,
+            network_disabled=True,
+        )
+        return parse_exported_key(logs) if code == 0 else None
 
     def _run_script_sync(
         self,

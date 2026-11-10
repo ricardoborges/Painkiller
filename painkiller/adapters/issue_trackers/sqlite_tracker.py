@@ -247,6 +247,7 @@ class ApkBuildRow(Base):
     size_bytes = Column(Integer, nullable=True)
     logs = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
+    version_code = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     finished_at = Column(DateTime, nullable=True)
 
@@ -1423,6 +1424,7 @@ class SQLiteIssueTracker(
             size_bytes=row.size_bytes,
             logs=row.logs or None,
             error=row.error or None,
+            version_code=getattr(row, "version_code", None),
             created_at=row.created_at,
             finished_at=row.finished_at,
         )
@@ -1437,6 +1439,7 @@ class SQLiteIssueTracker(
             size_bytes=build.size_bytes,
             logs=build.logs,
             error=build.error,
+            version_code=build.version_code,
             created_at=build.created_at,
             finished_at=build.finished_at,
         )

@@ -352,3 +352,134 @@ async def test_apk_build_gets_app_secrets_and_its_log_hides_them(env):
     assert sandbox.calls[0]["extra_env"] == {"VITE_MAPS_KEY": value}
     build = (await client.get(f"/api/projects/{project.id}/apk-builds/{res.json()['id']}", headers=admin_headers())).json()
     assert value not in (build.get("logs") or "")
+
+
+async def _release(app, client, project) -> dict:
+    res = await client.post(
+        f"/api/projects/{project.id}/apk-builds", json={"variant": "release"}, headers=admin_headers()
+    )
+    assert res.status_code == 200, res.text
+    await app.state.apk_builds.drain()
+    return (await client.get(
+        f"/api/projects/{project.id}/apk-builds/{res.json()['id']}", headers=admin_headers()
+    )).json()
+
+
+async def test_each_release_gets_a_higher_version_code(env):
+    app, client, project, sandbox = env
+    # Um release de antes do campo saiu com o versionCode fixo do repositório (1).
+    from painkiller.core.domain.models import ApkBuild, ApkBuildStatus, ApkVariant
+    await app.state.tracker.save_apk_build(ApkBuild(
+        id="apk-antigo", project_id=project.id, variant=ApkVariant.RELEASE, status=ApkBuildStatus.SUCCESS,
+    ))
+
+    first = await _release(app, client, project)
+    second = await _release(app, client, project)
+    debug = (await client.post(f"/api/projects/{project.id}/apk-builds", json={}, headers=admin_headers())).json()
+    await app.state.apk_builds.drain()
+
+    assert (first["version_code"], second["version_code"]) == (2, 3)
+    assert [c["version_code"] for c in sandbox.calls] == [2, 3, None]
+    assert debug["version_code"] is None
+
+
+def test_release_script_stamps_the_version_code_and_builds_the_bundle(tmp_path):
+    repo = _capacitor_repo(tmp_path)
+    release = build_apk_script(repo, "b1", "release", "main", version_code=7)
+    debug = build_apk_script(repo, "b1", "debug", "main", version_code=7)
+
+    assert "versionCode[ =]+)[0-9]+/\\17/" in release
+    # O número entra antes do Gradle; o bundle, depois do APK, sem derrubar o build.
+    assert release.index("versionCode 7") < release.index("assembleRelease") < release.index("bundleRelease")
+    assert "unsigned.aab" in release and "|| exit" not in release.split("bundleRelease", 1)[1]
+    assert "versionCode" not in debug and "bundleRelease" not in debug
+
+
+def test_signing_script_signs_the_bundle_without_failing_the_release():
+    script = sign_apk_script()
+    bundle = script.split("=== APK assinado", 1)[1]
+    assert "jarsigner" in bundle and "-storepass:file /signing/password" in bundle
+    assert "-signedjar /out/app.aab /out/unsigned.aab release" in bundle
+    assert "exit" not in bundle
+
+
+async def test_release_bundle_can_be_downloaded_when_it_was_built(env):
+    app, client, project, sandbox = env
+    build = await _release(app, client, project)
+    url = f"/api/projects/{project.id}/apk-builds/{build['id']}/download-aab"
+    assert build["aab_available"] is False
+    assert (await client.get(url, headers=admin_headers())).status_code == 404
+
+    with open(os.path.join(build_dir(project.repo_path, build["id"]), "app.aab"), "wb") as f:
+        f.write(b"PK-aab")
+    listed = (await client.get(f"/api/projects/{project.id}/apk-builds", headers=admin_headers())).json()
+    assert listed[0]["aab_available"] is True
+    res = await client.get(url, headers=admin_headers())
+    assert res.status_code == 200 and res.content == b"PK-aab"
+    assert 'filename="Meu-App-release-deadbee.aab"' in res.headers["content-disposition"]
+
+
+async def test_signing_key_backup_is_a_zip_with_keystore_and_password(env):
+    import io
+    import zipfile
+    from unittest.mock import AsyncMock
+
+    app, client, project, _ = env
+    url = f"/api/projects/{project.id}/apk-builds/signing-key"
+    app.state.sandbox = AsyncMock()
+    app.state.sandbox.export_signing_key.return_value = None
+    assert (await client.get(url, headers=admin_headers())).status_code == 404
+
+    app.state.sandbox.export_signing_key.return_value = {"release.jks": b"\x00jks", "password": b"s3nha"}
+    res = await client.get(url, headers=admin_headers())
+
+    assert res.status_code == 200 and res.headers["cache-control"] == "no-store"
+    app.state.sandbox.export_signing_key.assert_awaited_with(project.id)
+    archive = zipfile.ZipFile(io.BytesIO(res.content))
+    assert sorted(archive.namelist()) == ["LEIA-ME.txt", "password.txt", "release.jks"]
+    assert archive.read("release.jks") == b"\x00jks" and archive.read("password.txt") == b"s3nha"
+    assert "Meu App" in archive.read("LEIA-ME.txt").decode("utf-8")
+    # Sem sessão não há chave.
+    assert (await client.get(url)).status_code == 401
+
+
+def test_exported_key_round_trip_and_garbage():
+    import base64
+    import io
+    import tarfile
+
+    from painkiller.core.apk import KEY_EXPORT_BEGIN, KEY_EXPORT_END, parse_exported_key
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        for name, data in (("release.jks", b"\x01\x02jks"), ("password", b"segredo")):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    encoded = base64.encodebytes(buffer.getvalue()).decode("ascii")
+
+    files = parse_exported_key(f"ruído do contêiner\n{KEY_EXPORT_BEGIN}\n{encoded}{KEY_EXPORT_END}\n")
+    assert files == {"release.jks": b"\x01\x02jks", "password": b"segredo"}
+    assert parse_exported_key("") is None
+    assert parse_exported_key(f"{KEY_EXPORT_BEGIN}\nnão é base64\n{KEY_EXPORT_END}") is None
+
+
+def test_runner_exports_the_key_from_a_read_only_offline_container():
+    from unittest.mock import MagicMock
+
+    from painkiller.adapters.sandbox.docker_runner import DockerSandboxRunner
+    from painkiller.core.apk import KEY_EXPORT_MISSING
+
+    client = MagicMock()
+    container = MagicMock()
+    container.logs.return_value = [b""]
+    container.wait.return_value = {"StatusCode": KEY_EXPORT_MISSING}
+    client.containers.run.return_value = container
+    runner = DockerSandboxRunner(client=client)
+
+    assert runner._export_signing_key_sync("proj-1") is None
+
+    kwargs = client.containers.run.call_args.kwargs
+    assert kwargs["network_disabled"] is True
+    assert kwargs["volumes"] == {"painkiller-signing-proj-1": {"bind": "/signing", "mode": "ro"}}
+    container.remove.assert_called_once()

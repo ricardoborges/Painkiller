@@ -8,7 +8,7 @@
    */
   import { onMount } from 'svelte';
   import { t, formatDate } from '$lib/i18n/index.svelte';
-  import { apkDownloadUrl } from '$lib/api';
+  import { aabDownloadUrl, apkDownloadUrl, signingKeyUrl } from '$lib/api';
   import { apkBuilds, formatApkSize } from '$lib/stores/apk.svelte';
   import type { ApkBuild } from '$lib/types';
   import Icon from './Icon.svelte';
@@ -48,6 +48,11 @@
     return build.variant === 'release' ? t('apk.release') : t('apk.debug');
   }
 
+  /** A chave publica em nome do app: confirma antes de entregá-la. */
+  function confirmKeyDownload(event: MouseEvent) {
+    if (!confirm(t('apk.keyConfirm'))) event.preventDefault();
+  }
+
   onMount(() => {
     void apkBuilds.load(projectId);
   });
@@ -71,6 +76,7 @@
         <span>{when(release.finished_at ?? release.created_at)}</span>
         {#if release.commit_sha}<span>{release.commit_sha}</span>{/if}
         {#if release.size_bytes}<span>{formatApkSize(release.size_bytes)}</span>{/if}
+        {#if release.version_code}<span>{t('apk.versionCode', { code: release.version_code })}</span>{/if}
       </p>
     {:else}
       <p class="release-meta">{t('apk.releaseNone')}</p>
@@ -81,6 +87,11 @@
         <a class="btn release-download" href={apkDownloadUrl(release)}>
           <Icon name="download" size={12} /> {t('apk.downloadRelease')}
         </a>
+        {#if release.aab_available}
+          <a class="btn release-build" href={aabDownloadUrl(release)} title={t('apk.downloadAabTitle')}>
+            <Icon name="download" size={12} /> {t('apk.downloadAab')}
+          </a>
+        {/if}
         <button type="button" class="btn release-build" onclick={() => showQr(release)} title={t('apk.qrTitle')}>
           <Icon name="qr" size={12} /> {t('apk.qr')}
         </button>
@@ -102,6 +113,14 @@
       </button>
     </div>
   </div>
+
+  {#if release}
+    <!-- A chave nasce no primeiro release e só existe nesta máquina. -->
+    <p class="small faint key-note">
+      {t('apk.keyHelp')}
+      <a class="link" href={signingKeyUrl(projectId)} onclick={confirmKeyDownload}>{t('apk.keyDownload')}</a>
+    </p>
+  {/if}
 
   <!-- APK de teste -->
   <div class="debug">
@@ -188,6 +207,10 @@
   .sub {
     margin-top: var(--s5);
     color: var(--ink-3);
+  }
+
+  .key-note {
+    margin-top: var(--s3);
   }
 
   /* Bloco invertido: o único artefato que sai para o mundo. */
